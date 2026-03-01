@@ -1,9 +1,6 @@
-import { Router } from '../core/router.js';
 import { StreamHandler } from '../streaming/sse.js';
 
-export function createChatHandler(config, sessionStore) {
-    const router = new Router(config, sessionStore);
-
+export function createChatHandler(router, sessionStore) {
     return async (req, res, next) => {
         try {
             const result = await router.route(req.body, req.headers);

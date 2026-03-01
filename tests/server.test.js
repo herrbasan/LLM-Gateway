@@ -110,7 +110,7 @@ describe('Server Routing & API Architecture', () => {
                     messages: [{ role: 'user', content: 'test' }]
                 });
              expect(response.status).to.equal(500); // Fails fast in the router, handled by express global error
-             expect(response.body.error).to.include('Internal Server Error');
+             expect(response.body.error).to.include('[Router] 404 Session Not Found');
         });
 
         it('should delete a session', async () => {

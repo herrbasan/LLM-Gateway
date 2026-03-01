@@ -1,8 +1,4 @@
-import { Router } from '../core/router.js';
-
-export function createModelsHandler(config) {
-    const router = new Router(config);
-
+export function createModelsHandler(router) {
     return async (req, res, next) => {
         try {
             const result = await router.routeModels(req.headers);

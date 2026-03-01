@@ -2,6 +2,33 @@ import { createLmStudioAdapter } from './lmstudio.js';
 import { createOllamaAdapter } from './ollama.js';
 import { createGeminiAdapter } from './gemini.js';
 import { createOpenAIAdapter } from './openai.js';
+import { CircuitBreaker } from '../core/circuit-breaker.js';
+
+function wrapWithCircuitBreaker(providerName, adapter) {
+    const breaker = new CircuitBreaker(providerName);
+    
+    // We attach the breaker to the adapter so we can read metrics later on via /health
+    adapter.circuitBreaker = breaker;
+
+    const wrappedAdapter = Object.create(adapter);
+
+    const methodsToWrap = ['predict', 'embedText', 'listModels', 'resolveModel'];
+    const streamMethodsToWrap = ['streamComplete'];
+
+    for (const method of methodsToWrap) {
+        if (typeof adapter[method] === 'function') {
+            wrappedAdapter[method] = (...args) => breaker.fire(() => adapter[method].apply(adapter, args));
+        }
+    }
+
+    for (const method of streamMethodsToWrap) {
+        if (typeof adapter[method] === 'function') {
+            wrappedAdapter[method] = (...args) => breaker.fireStream(() => adapter[method].apply(adapter, args));
+        }
+    }
+
+    return wrappedAdapter;
+}
 
 export function createAdapters(configProviders) {
     const registry = new Map();
@@ -25,7 +52,9 @@ export function createAdapters(configProviders) {
              continue;
         }
 
-        registry.set(providerName, factory(providerConfig));
+        const rawAdapter = factory(providerConfig);
+        const resilientAdapter = wrapWithCircuitBreaker(providerName, rawAdapter);
+        registry.set(providerName, resilientAdapter);
     }
 
     return registry;
