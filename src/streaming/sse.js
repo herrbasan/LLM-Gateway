@@ -43,7 +43,13 @@ export class StreamHandler {
                 if (!this.isActive) break;
                 
                 const delta = chunk.choices?.[0]?.delta;
-                if (delta?.content) fullContent += delta.content;
+                if (delta?.content) {
+                    // Prevent memory exhaustion attacks on session storage
+                    // Usually 128K tokens is < 500KB. We clamp at 5MB as an absolute safety bound.
+                    if (fullContent.length < 5 * 1024 * 1024) {
+                        fullContent += delta.content;
+                    }
+                }
                 if (delta?.role) role = delta.role;
 
                 const payloadStr = `data: ${JSON.stringify(chunk)}\n\n`;
@@ -52,9 +58,17 @@ export class StreamHandler {
                 const canContinue = this.res.write(payloadStr);
                 if (!canContinue) {
                     await new Promise(resolve => {
-                        this.res.once('drain', resolve);
-                        this.res.once('close', resolve);
-                        this.res.once('error', resolve);
+                        const cleanup = () => {
+                            this.res.off('drain', resolveHandler);
+                            this.res.off('close', resolveHandler);
+                            this.res.off('error', resolveHandler);
+                            resolve();
+                        };
+                        const resolveHandler = () => cleanup();
+
+                        this.res.once('drain', resolveHandler);
+                        this.res.once('close', resolveHandler);
+                        this.res.once('error', resolveHandler);
                     });
                 }
             }
