@@ -940,6 +940,7 @@ src/
 
 ### Testing Pattern (Meaningful Tests)
 - Write meaningful integration and unit tests for every functional unit
+- **Automatically run the tests (`npm test`) to verify the work before moving on to the next phase.**
 - **Avoid mock data whenever possible**: Test against real configurations, local files, and real data workflows.
 - If mocks must be used (e.g., to simulate external API responses before an integration exists), **remove mock data as soon as real data workflows become available**. 
 - Tests should validate true end-to-end behavior inside the environment boundary.
