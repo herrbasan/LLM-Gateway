@@ -932,9 +932,22 @@ src/
 
 ---
 
-## Key Decisions
+## Development Philosophy
 
-1. **OpenAI Compatibility First**: Default behavior always returns standard 200 responses. The 202/ticket system is opt-in via `X-Async: true`. Standard SDKs must never see unexpected response shapes.
+### Fail-Fast
+- Uncaught exceptions reveal bugs - no defensive catches
+- Fix the cause, not the symptom
+
+### Testing Pattern (Meaningful Tests)
+- Write meaningful integration and unit tests for every functional unit
+- **Avoid mock data whenever possible**: Test against real configurations, local files, and real data workflows.
+- If mocks must be used (e.g., to simulate external API responses before an integration exists), **remove mock data as soon as real data workflows become available**. 
+- Tests should validate true end-to-end behavior inside the environment boundary.
+
+### Code Style
+- No comments - code must be self-evident
+- Functional preference
+- Reliability > Performance > Human Readability
 2. **Streaming First**: All adapters must support streaming from the start
 3. **Fail-Fast**: Uncaught exceptions reveal bugs - no defensive catches
 4. **No Comments**: Code must be self-evident
