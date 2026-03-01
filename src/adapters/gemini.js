@@ -213,7 +213,7 @@ export function createGeminiAdapter(config) {
         },
         
         async embedText(input, requestedModel) {
-            const model = requestedModel || config.embeddingModel || 'text-embedding-004';
+            const model = requestedModel || config.embeddingModel || 'gemini-embedding-001';
             const texts = Array.isArray(input) ? input : [input];
             
             // Build batch-specific requests inside one REST call utilizing `batchEmbedContents`

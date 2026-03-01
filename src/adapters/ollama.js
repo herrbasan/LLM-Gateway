@@ -4,7 +4,7 @@ import { request } from '../utils/http.js';
 export function createOllamaAdapter(config) {
     const defaultCapabilities = {
         embeddings: true,
-        structuredOutput: false, // Ollama does not natively support structured outputs mapping standardly
+        structuredOutput: true,
         streaming: true,
         ...config.capabilities
     };
@@ -27,7 +27,7 @@ export function createOllamaAdapter(config) {
     };
 
     // Translates standard predict schema to Ollama's specific /api/chat schema
-    const buildPayload = ({ prompt, systemPrompt, maxTokens, temperature, messages, stream }, requestedModel = 'auto') => {
+    const buildPayload = ({ prompt, systemPrompt, maxTokens, temperature, schema, messages, stream }, requestedModel = 'auto') => {
         const payload = {
             model: getModelOrThrow(requestedModel),
             messages: formatMessages(messages, prompt, systemPrompt),
@@ -37,6 +37,7 @@ export function createOllamaAdapter(config) {
         
         if (maxTokens) payload.options.num_predict = maxTokens;
         if (typeof temperature === 'number') payload.options.temperature = temperature;
+        if (schema && defaultCapabilities.structuredOutput) payload.format = schema;
 
         return payload;
     };
