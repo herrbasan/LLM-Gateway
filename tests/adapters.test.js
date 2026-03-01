@@ -3,6 +3,7 @@ import { createAdapters } from '../src/adapters/index.js';
 import { createLmStudioAdapter } from '../src/adapters/lmstudio.js';
 import { createOllamaAdapter } from '../src/adapters/ollama.js';
 import { createGeminiAdapter } from '../src/adapters/gemini.js';
+import { createOpenAIAdapter } from '../src/adapters/openai.js';
 
 describe('Provider Adapters', () => {
 
@@ -28,6 +29,7 @@ describe('Provider Adapters', () => {
          const lmAdapter = createLmStudioAdapter({ type: 'lmstudio', endpoint: 'http://mock', model: 'test' });
          const ollamaAdapter = createOllamaAdapter({ type: 'ollama', endpoint: 'http://mock', model: 'test' });
          const geminiAdapter = createGeminiAdapter({ type: 'gemini', apiKey: 'test_key', model: 'test' });
+         const openaiAdapter = createOpenAIAdapter({ type: 'openai', apiKey: 'test_key', model: 'test' });
 
          const verifyAdapterShape = adapter => {
              expect(adapter).to.have.property('name');
@@ -43,11 +45,13 @@ describe('Provider Adapters', () => {
          it('LM Studio obeys the interface contract', () => verifyAdapterShape(lmAdapter));
          it('Ollama obeys the interface contract', () => verifyAdapterShape(ollamaAdapter));
          it('Gemini obeys the interface contract', () => verifyAdapterShape(geminiAdapter));
+         it('OpenAI obeys the interface contract', () => verifyAdapterShape(openaiAdapter));
 
          it('Adapters properly resolve the "auto" model identifier', async () => {
               expect(await lmAdapter.resolveModel('auto')).to.equal('test');
               expect(await ollamaAdapter.resolveModel('auto')).to.equal('test');
               expect(await geminiAdapter.resolveModel('auto')).to.equal('test');
+              expect(await openaiAdapter.resolveModel('auto')).to.equal('test');
          });
     });
 

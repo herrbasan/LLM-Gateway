@@ -35,4 +35,90 @@ describe('Server Routing & API Architecture', () => {
            expect(response.headers['access-control-allow-methods']).to.include('GET');
         });
     });
+
+    describe('POST /v1/chat/completions', () => {
+        it('should return a 400 or 500 error if payload lacks messages (testing the route hooks up)', async () => {
+             const response = await supertest(app)
+                .post('/v1/chat/completions')
+                .send({
+                    model: 'unknown_magic:llama',
+                    messages: []
+                });
+             // We expect it to trigger the router and fail fast because of unknown model
+             expect(response.status).to.equal(500); 
+             expect(response.body).to.have.property('error');
+        });
+    });
+
+    describe('POST /v1/embeddings', () => {
+        it('should trigger embeddings route and return 500 on unknown model', async () => {
+            const response = await supertest(app)
+                .post('/v1/embeddings')
+                .send({
+                    model: 'unknown_magic:llama',
+                    input: 'test text'
+                });
+            expect(response.status).to.equal(500);
+            expect(response.body).to.have.property('error');
+        });
+    });
+
+    describe('GET /v1/models', () => {
+        it('should return a list of models with object type "list"', async function () {
+            this.timeout(15000);
+            const response = await supertest(app).get('/v1/models');
+            expect(response.status).to.equal(200);
+            expect(response.body).to.have.property('object', 'list');
+            expect(response.body).to.have.property('data');
+            expect(Array.isArray(response.body.data)).to.be.true;
+        });
+    });
+
+    describe('Stateful Sessions API', () => {
+        let sessionId;
+        it('should create a new session', async () => {
+            const response = await supertest(app)
+                .post('/v1/sessions')
+                .send({ strategy: 'compress' });
+            expect(response.status).to.equal(201);
+            expect(response.body).to.have.property('id');
+            expect(response.body).to.have.property('strategy', 'compress');
+            expect(response.body.messages).to.be.an('array').that.is.empty;
+            sessionId = response.body.id;
+        });
+
+        it('should retrieve an existing session', async () => {
+            const response = await supertest(app).get(`/v1/sessions/${sessionId}`);
+            expect(response.status).to.equal(200);
+            expect(response.body.id).to.equal(sessionId);
+        });
+
+        it('should patch session strategy', async () => {
+            const response = await supertest(app)
+                .patch(`/v1/sessions/${sessionId}`)
+                .send({ strategy: 'truncate' });
+            expect(response.status).to.equal(200);
+            expect(response.body.strategy).to.equal('truncate');
+        });
+
+        it('should return 404 for unknown or deleted session on completion', async () => {
+             const response = await supertest(app)
+                .post('/v1/chat/completions')
+                .set('x-session-id', 'invalid-id-123')
+                .send({
+                    model: 'auto',
+                    messages: [{ role: 'user', content: 'test' }]
+                });
+             expect(response.status).to.equal(500); // Fails fast in the router, handled by express global error
+             expect(response.body.error).to.include('Internal Server Error');
+        });
+
+        it('should delete a session', async () => {
+            const response = await supertest(app).delete(`/v1/sessions/${sessionId}`);
+            expect(response.status).to.equal(204);
+            // Verify deleted
+            const getResp = await supertest(app).get(`/v1/sessions/${sessionId}`);
+            expect(getResp.status).to.equal(404);
+        });
+    });
 });

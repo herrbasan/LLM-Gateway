@@ -75,6 +75,52 @@
         "structuredOutput": true,
         "streaming": true
       }
+    },
+    "grok": {
+      "type": "openai",
+      "endpoint": "${GROK_ENDPOINT}",
+      "apiKey": "${GROK_API_KEY}",
+      "model": "${GROK_MODEL}",
+      "embeddingModel": "${GROK_EMBEDDING_MODEL}",
+      "capabilities": {
+        "embeddings": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "kimi": {
+      "type": "openai",
+      "endpoint": "${KIMI_ENDPOINT}",
+      "apiKey": "${KIMI_API_KEY}",
+      "model": "${KIMI_MODEL}",
+      "embeddingModel": "${KIMI_EMBEDDING_MODEL}",
+      "capabilities": {
+        "embeddings": false,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "glm": {
+      "type": "openai",
+      "endpoint": "${GLM_ENDPOINT}",
+      "apiKey": "${GLM_API_KEY}",
+      "model": "${GLM_MODEL}",
+      "capabilities": {
+        "embeddings": false,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "minimax": {
+      "type": "openai",
+      "endpoint": "${MINIMAX_ENDPOINT}",
+      "apiKey": "${MINIMAX_API_KEY}",
+      "model": "${MINIMAX_MODEL}",
+      "capabilities": {
+        "embeddings": false,
+        "structuredOutput": true,
+        "streaming": true
+      }
     }
   }
 }

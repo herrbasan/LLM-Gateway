@@ -1,6 +1,7 @@
 import { createLmStudioAdapter } from './lmstudio.js';
 import { createOllamaAdapter } from './ollama.js';
 import { createGeminiAdapter } from './gemini.js';
+import { createOpenAIAdapter } from './openai.js';
 
 export function createAdapters(configProviders) {
     const registry = new Map();
@@ -8,7 +9,8 @@ export function createAdapters(configProviders) {
     const factories = {
         lmstudio: createLmStudioAdapter,
         ollama: createOllamaAdapter,
-        gemini: createGeminiAdapter
+        gemini: createGeminiAdapter,
+        openai: createOpenAIAdapter
     };
 
     for (const [providerName, providerConfig] of Object.entries(configProviders)) {

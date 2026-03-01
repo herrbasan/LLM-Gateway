@@ -93,6 +93,26 @@ export function createGeminiAdapter(config) {
             }));
         },
 
+        async countTokens(text, requestedModel = 'auto') {
+            const model = getModelOrThrow(requestedModel);
+            try {
+                const res = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:countTokens?key=${apiKey}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        contents: [{
+                            role: 'user',
+                            parts: [{ text }]
+                        }]
+                    })
+                });
+                const data = await res.json();
+                if (data.error) return null;
+                return Math.ceil(data.totalTokens || 0);
+            } catch (err) {
+                return null;
+            }
+        },
+
         async predict(opts, requestedModel = 'auto') {
             const model = getModelOrThrow(requestedModel);
             const payload = buildPayload(opts);

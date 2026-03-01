@@ -1,8 +1,14 @@
 import express from 'express';
 import { createHealthHandler } from './routes/health.js';
+import { createChatHandler } from './routes/chat.js';
+import { createEmbeddingsHandler } from './routes/embeddings.js';
+import { createModelsHandler } from './routes/models.js';
+import { createSessionsHandler, createSessionIdHandler } from './routes/sessions.js';
+import { SessionStore } from './core/session.js';
 
 export function createServer(config) {
   const app = express();
+  const sessionStore = new SessionStore(config);
 
   // Basic middleware
   app.use(express.json({ limit: '10mb' }));
@@ -21,12 +27,21 @@ export function createServer(config) {
   // Basic health endpoint
   app.get('/health', createHealthHandler(config));
 
-  // Placeholder for future routes
-  // app.post('/v1/chat/completions', chatHandler);
-  // app.post('/v1/embeddings', embeddingsHandler);
-  // app.get('/v1/models', modelsHandler);
-  // app.post('/v1/sessions', sessionsHandler);
-  
+  // Chat completions endpoint
+  app.post('/v1/chat/completions', createChatHandler(config, sessionStore));
+
+  // Embeddings endpoint
+  app.post('/v1/embeddings', createEmbeddingsHandler(config));
+
+  // Models endpoint
+  app.get('/v1/models', createModelsHandler(config));
+
+  // Sessions endpoints
+  app.post('/v1/sessions', createSessionsHandler(sessionStore));
+  app.get('/v1/sessions/:id', createSessionIdHandler(sessionStore));
+  app.patch('/v1/sessions/:id', createSessionIdHandler(sessionStore));
+  app.delete('/v1/sessions/:id', createSessionIdHandler(sessionStore));
+
   // Non-existent routes
   app.use((req, res) => {
     res.status(404).json({ error: 'Not Found' });
