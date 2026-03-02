@@ -66,7 +66,7 @@ const isConnectionOrApiError = (err) => {
     });
 
     it('should override provider via HTTP header', async function () {
-        this.timeout(15000);
+        this.timeout(5000);
         const config = createTestConfig();
         const router = new Router(config);
         
@@ -75,11 +75,19 @@ const isConnectionOrApiError = (err) => {
             messages: [{ role: 'user', content: 'hello' }]
         };
 
-        try {
-            await router.route(payload, { 'x-provider': 'ollama' });
-        } catch (error) {
-            expect(true, 'Expected connection/API error - ' + error.message).to.be.true;
-        }
+        let calledProvider = null;
+        router.adapters.get('lmstudio').predict = async () => {
+            throw new Error('Default provider should not be called when x-provider is set');
+        };
+        router.adapters.get('ollama').predict = async () => {
+            calledProvider = 'ollama';
+            return { choices: [{ message: { role: 'assistant', content: 'ok' } }] };
+        };
+
+        const result = await router.route(payload, { 'x-provider': 'ollama' });
+
+        expect(calledProvider).to.equal('ollama');
+        expect(result).to.have.property('choices');
     });
 
     it('should override provider via namespaced model parameter', async function () {

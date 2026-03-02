@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 
+import { snakeToCamel } from '../utils/format.js';
+
 export class SessionStore {
     constructor(config) {
         this.config = config;
@@ -14,14 +16,27 @@ export class SessionStore {
 
     createSession(options = {}) {
         const id = crypto.randomUUID();
+        let contextStrategy = {};
+        if (options.context_strategy) {
+            contextStrategy = snakeToCamel(options.context_strategy);
+        }
+
         const session = {
             id,
             created_at: Date.now(),
             last_accessed: Date.now(),
-            strategy: options.strategy || this.config.compaction?.mode || 'truncate',
-            preserveSystemPrompt: options.preserveSystemPrompt ?? this.config.compaction?.preserveSystemPrompt ?? true,
-            messages: []
+            ttl_minutes: options.ttl_minutes || this.ttlMinutes,
+            context_strategy: {
+                mode: contextStrategy.mode || options.strategy || this.config.compaction?.mode || 'truncate',
+                preserveSystemPrompt: contextStrategy.preserveSystemPrompt ?? options.preserveSystemPrompt ?? this.config.compaction?.preserveSystemPrompt ?? true,
+                ...contextStrategy
+            },
+            messages: [],
+            compression_count: 0
         };
+        // Backwards compatibility for internal access to string 'strategy'
+        session.strategy = session.context_strategy.mode;
+
         this.sessions.set(id, session);
         return session;
     }
@@ -38,8 +53,23 @@ export class SessionStore {
         const session = this.getSession(id);
         if (!session) throw new Error("Session not found");
         
-        if (updates.strategy) session.strategy = updates.strategy;
-        if (updates.preserveSystemPrompt !== undefined) session.preserveSystemPrompt = updates.preserveSystemPrompt;
+        let contextStrategyUpdates = {};
+        if (updates.context_strategy) {
+            contextStrategyUpdates = snakeToCamel(updates.context_strategy);
+        }
+
+        if (updates.strategy || contextStrategyUpdates.mode) {
+            session.context_strategy.mode = contextStrategyUpdates.mode || updates.strategy;
+            session.strategy = session.context_strategy.mode;
+        }
+        if (updates.preserveSystemPrompt !== undefined || contextStrategyUpdates.preserveSystemPrompt !== undefined) {
+            session.context_strategy.preserveSystemPrompt = contextStrategyUpdates.preserveSystemPrompt ?? updates.preserveSystemPrompt;
+        }
+
+        session.context_strategy = {
+            ...session.context_strategy,
+            ...contextStrategyUpdates
+        };
         
         return session;
     }
@@ -59,6 +89,7 @@ export class SessionStore {
         if (!session) throw new Error("Session not found");
         
         session.messages = filteredMessages;
+        session.compression_count = (session.compression_count || 0) + 1;
         return session;
     }
 

@@ -71,7 +71,8 @@ export function createLmStudioAdapter(config) {
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
-            return data; // Return full standard OpenAI response cleanly
+            data.provider = 'lmstudio';
+            return data;
         },
 
         async *streamComplete(opts, requestedModel = 'auto') {
@@ -104,7 +105,9 @@ export function createLmStudioAdapter(config) {
                             const data = trimmed.slice(6);
                             if (data === '[DONE]') return;
                             try {
-                                yield JSON.parse(data);
+                                const parsed = JSON.parse(data);
+                                parsed.provider = 'lmstudio';
+                                yield parsed;
                             } catch(e) {
                                 // Ignore broken json frames inside a streaming loop
                             }

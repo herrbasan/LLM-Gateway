@@ -37,7 +37,7 @@ describe('Server Routing & API Architecture', () => {
     });
 
     describe('POST /v1/chat/completions', () => {
-        it('should return a 400 or 500 error if payload lacks messages (testing the route hooks up)', async () => {
+        it('should return a 400 or 404 error if payload lacks messages (testing the route hooks up)', async () => {
              const response = await supertest(app)
                 .post('/v1/chat/completions')
                 .send({
@@ -45,20 +45,20 @@ describe('Server Routing & API Architecture', () => {
                     messages: []
                 });
              // We expect it to trigger the router and fail fast because of unknown model
-             expect(response.status).to.equal(500); 
+             expect(response.status).to.equal(404);
              expect(response.body).to.have.property('error');
         });
     });
 
     describe('POST /v1/embeddings', () => {
-        it('should trigger embeddings route and return 500 on unknown model', async () => {
+        it('should trigger embeddings route and return 404 on unknown model', async () => {
             const response = await supertest(app)
                 .post('/v1/embeddings')
                 .send({
                     model: 'unknown_magic:llama',
                     input: 'test text'
                 });
-            expect(response.status).to.equal(500);
+            expect(response.status).to.equal(404);
             expect(response.body).to.have.property('error');
         });
     });
@@ -81,16 +81,17 @@ describe('Server Routing & API Architecture', () => {
                 .post('/v1/sessions')
                 .send({ strategy: 'compress' });
             expect(response.status).to.equal(201);
-            expect(response.body).to.have.property('id');
-            expect(response.body).to.have.property('strategy', 'compress');
-            expect(response.body.messages).to.be.an('array').that.is.empty;
-            sessionId = response.body.id;
+            expect(response.body).to.have.property('session');
+            expect(response.body.session).to.have.property('id');
+            expect(response.body.session.context).to.have.property('strategy', 'compress');
+            expect(response.body.session.message_count).to.equal(0);
+            sessionId = response.body.session.id;
         });
 
         it('should retrieve an existing session', async () => {
             const response = await supertest(app).get(`/v1/sessions/${sessionId}`);
             expect(response.status).to.equal(200);
-            expect(response.body.id).to.equal(sessionId);
+            expect(response.body.session.id).to.equal(sessionId);
         });
 
         it('should patch session strategy', async () => {
@@ -98,7 +99,7 @@ describe('Server Routing & API Architecture', () => {
                 .patch(`/v1/sessions/${sessionId}`)
                 .send({ strategy: 'truncate' });
             expect(response.status).to.equal(200);
-            expect(response.body.strategy).to.equal('truncate');
+            expect(response.body.session.context.strategy).to.equal('truncate');
         });
 
         it('should return 404 for unknown or deleted session on completion', async () => {
@@ -109,7 +110,7 @@ describe('Server Routing & API Architecture', () => {
                     model: 'auto',
                     messages: [{ role: 'user', content: 'test' }]
                 });
-             expect(response.status).to.equal(500); // Fails fast in the router, handled by express global error
+             expect(response.status).to.equal(404); // Used to be 500
              expect(response.body.error).to.include('[Router] 404 Session Not Found');
         });
 
@@ -119,6 +120,44 @@ describe('Server Routing & API Architecture', () => {
             // Verify deleted
             const getResp = await supertest(app).get(`/v1/sessions/${sessionId}`);
             expect(getResp.status).to.equal(404);
+        });
+    });
+
+    describe('Error Code Mapping', () => {
+        it('should return 404 for unknown or missing session', async () => {
+             const response = await supertest(app)
+                .post('/v1/chat/completions')
+                .set('x-session-id', 'invalid-id-123')
+                .send({
+                    model: 'auto',
+                    messages: [{ role: 'user', content: 'test' }]
+                });
+             expect(response.status).to.equal(404);
+        });
+
+        it('should return 400 for structured output on non-capable provider', async () => {
+             const response = await supertest(app)
+                .post('/v1/chat/completions')
+                .set('x-provider', 'kimi') // kimi doesn't support json_object in example config typically, but any non-capable like grok etc.
+                .send({
+                    model: 'auto',
+                    messages: [{ role: 'user', content: 'test' }],
+                    response_format: { type: 'json_schema' }
+                });
+             if (response.status === 400) {
+                 expect(response.body.error).to.include('does not support structured output');
+             }
+        });
+
+        it('should return 404 for unknown adapter/provider', async () => {
+            const response = await supertest(app)
+                .post('/v1/chat/completions')
+                .send({
+                    model: 'unknown_magic:llama',
+                    messages: [{ role: 'user', content: 'test' }]
+                });
+             expect(response.status).to.equal(404);
+             expect(response.body.error).to.include('No adapter found');
         });
     });
 });

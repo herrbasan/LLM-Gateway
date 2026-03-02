@@ -3,6 +3,7 @@ import { Router } from '../src/core/router.js';
 import { loadConfig } from '../src/config.js';
 import { TokenEstimator } from '../src/context/estimator.js';
 import { ContextManager } from '../src/context/strategy.js';
+import { TicketRegistry } from '../src/core/ticket-registry.js';
 
 describe('Phase 4: Context Window Management', function() {
     this.timeout(15000);
@@ -36,14 +37,19 @@ describe('Phase 4: Context Window Management', function() {
 
         const router = new Router(testConfig);
         
-        // Mock the adapter's getContextWindow so we trigger truncate
+        // Mock adapter token boundaries to trigger truncate deterministically
         const defaultAdapter = router.adapters.get(router.defaultProvider);
         const originalGetContextWindow = defaultAdapter.getContextWindow.bind(defaultAdapter);
-        defaultAdapter.getContextWindow = async () => 50; // VERY low
+        const originalCountTokens = defaultAdapter.countTokens ? defaultAdapter.countTokens.bind(defaultAdapter) : null;
+        defaultAdapter.getContextWindow = async () => 2000;
+        defaultAdapter.countTokens = async (text) => {
+            if (text === 'System rules here. This is important.') return 40;
+            return 2050;
+        };
         
         const payload = {
             model: 'auto',
-            max_tokens: 10,
+            max_tokens: 256,
             messages: [
                 { role: 'system', content: 'System rules here. This is important.' }, // ~8 tokens
                 { role: 'user', content: 'First message, very long, a b c d e f g' },
@@ -65,6 +71,7 @@ describe('Phase 4: Context Window Management', function() {
         
         // Restore
         defaultAdapter.getContextWindow = originalGetContextWindow;
+        defaultAdapter.countTokens = originalCountTokens;
     });
 
     it('should trigger compress strategy correctly', async () => {
@@ -83,7 +90,9 @@ describe('Phase 4: Context Window Management', function() {
         
         const defaultAdapter = router.adapters.get(router.defaultProvider);
         const originalGetContextWindow = defaultAdapter.getContextWindow.bind(defaultAdapter);
-        defaultAdapter.getContextWindow = async () => 50;
+        const originalCountTokens = defaultAdapter.countTokens ? defaultAdapter.countTokens.bind(defaultAdapter) : null;
+        defaultAdapter.getContextWindow = async () => 2000;
+        defaultAdapter.countTokens = async () => 2050;
         
         let adapterCalled = 0;
         defaultAdapter.predict = async (opts) => {
@@ -99,7 +108,7 @@ describe('Phase 4: Context Window Management', function() {
 
         const payload = {
             model: 'auto',
-            max_tokens: 10,
+            max_tokens: 256,
             messages: [
                 { role: 'system', content: 'System rules.' },
                 { role: 'user', content: 'First very long message that gets compressed.' },
@@ -113,5 +122,282 @@ describe('Phase 4: Context Window Management', function() {
         expect(adapterCalled).to.equal(2);
         
         defaultAdapter.getContextWindow = originalGetContextWindow;
+        defaultAdapter.countTokens = originalCountTokens;
+    });
+
+    it('should not compact when tokens exceed available but are below minTokensToCompact', async () => {
+        const testConfig = {
+            ...config,
+            compaction: {
+                enabled: true,
+                minTokensToCompact: 2000,
+                preserveSystemPrompt: true,
+                preserveLastN: 1,
+                mode: 'truncate'
+            }
+        };
+
+        const router = new Router(testConfig);
+        const defaultAdapter = router.adapters.get(router.defaultProvider);
+        const originalGetContextWindow = defaultAdapter.getContextWindow.bind(defaultAdapter);
+        const originalCountTokens = defaultAdapter.countTokens ? defaultAdapter.countTokens.bind(defaultAdapter) : null;
+
+        defaultAdapter.getContextWindow = async () => 1200;
+        defaultAdapter.countTokens = async () => 900;
+
+        let capturedOpts = null;
+        defaultAdapter.predict = async (opts) => {
+            capturedOpts = opts;
+            return { choices: [{ message: { role: 'assistant', content: 'ok' } }] };
+        };
+
+        const payload = {
+            model: 'auto',
+            max_tokens: 400,
+            messages: [
+                { role: 'system', content: 'System rules here.' },
+                { role: 'user', content: 'Message one' },
+                { role: 'assistant', content: 'Message two' },
+                { role: 'user', content: 'Message three' }
+            ]
+        };
+
+        await router.route(payload);
+
+        expect(capturedOpts.messages).to.have.length(4);
+
+        defaultAdapter.getContextWindow = originalGetContextWindow;
+        defaultAdapter.countTokens = originalCountTokens;
+    });
+
+    it('should not compact when tokens are above minTokensToCompact but still fit context', async () => {
+        const testConfig = {
+            ...config,
+            compaction: {
+                enabled: true,
+                minTokensToCompact: 2000,
+                preserveSystemPrompt: true,
+                preserveLastN: 1,
+                mode: 'truncate'
+            }
+        };
+
+        const router = new Router(testConfig);
+        const defaultAdapter = router.adapters.get(router.defaultProvider);
+        const originalGetContextWindow = defaultAdapter.getContextWindow.bind(defaultAdapter);
+        const originalCountTokens = defaultAdapter.countTokens ? defaultAdapter.countTokens.bind(defaultAdapter) : null;
+
+        defaultAdapter.getContextWindow = async () => 4000;
+        defaultAdapter.countTokens = async () => 2500;
+
+        let capturedOpts = null;
+        defaultAdapter.predict = async (opts) => {
+            capturedOpts = opts;
+            return { choices: [{ message: { role: 'assistant', content: 'ok' } }] };
+        };
+
+        const payload = {
+            model: 'auto',
+            max_tokens: 500,
+            messages: [
+                { role: 'system', content: 'System rules here.' },
+                { role: 'user', content: 'Message one' },
+                { role: 'assistant', content: 'Message two' },
+                { role: 'user', content: 'Message three' }
+            ]
+        };
+
+        await router.route(payload);
+
+        expect(capturedOpts.messages).to.have.length(4);
+
+        defaultAdapter.getContextWindow = originalGetContextWindow;
+        defaultAdapter.countTokens = originalCountTokens;
+    });
+
+    it('should honor per-request context_strategy mode none with 413 when over context', async () => {
+        const testConfig = {
+            ...config,
+            compaction: {
+                enabled: true,
+                minTokensToCompact: 10,
+                preserveSystemPrompt: true,
+                preserveLastN: 1,
+                mode: 'truncate'
+            }
+        };
+
+        const router = new Router(testConfig);
+        const defaultAdapter = router.adapters.get(router.defaultProvider);
+        const originalGetContextWindow = defaultAdapter.getContextWindow.bind(defaultAdapter);
+        const originalCountTokens = defaultAdapter.countTokens ? defaultAdapter.countTokens.bind(defaultAdapter) : null;
+
+        defaultAdapter.getContextWindow = async () => 1200;
+        defaultAdapter.countTokens = async () => 1000;
+
+        const payload = {
+            model: 'auto',
+            max_tokens: 300,
+            context_strategy: { mode: 'none' },
+            messages: [
+                { role: 'user', content: 'Message one' },
+                { role: 'assistant', content: 'Message two' },
+                { role: 'user', content: 'Message three' }
+            ]
+        };
+
+        let err;
+        try {
+            await router.route(payload);
+        } catch (e) {
+            err = e;
+        }
+
+        expect(err).to.exist;
+        expect(err.status).to.equal(413);
+
+        defaultAdapter.getContextWindow = originalGetContextWindow;
+        defaultAdapter.countTokens = originalCountTokens;
+    });
+
+    it('should honor per-request context_strategy truncate overriding global none', async () => {
+        const testConfig = {
+            ...config,
+            compaction: {
+                enabled: true,
+                minTokensToCompact: 10,
+                preserveSystemPrompt: true,
+                preserveLastN: 1,
+                mode: 'none'
+            }
+        };
+
+        const router = new Router(testConfig);
+        const defaultAdapter = router.adapters.get(router.defaultProvider);
+        const originalGetContextWindow = defaultAdapter.getContextWindow.bind(defaultAdapter);
+        const originalCountTokens = defaultAdapter.countTokens ? defaultAdapter.countTokens.bind(defaultAdapter) : null;
+
+        defaultAdapter.getContextWindow = async () => 2000;
+        defaultAdapter.countTokens = async (text) => {
+            if (text === 'System rules here.') return 40;
+            return 2050;
+        };
+
+        let capturedOpts = null;
+        defaultAdapter.predict = async (opts) => {
+            capturedOpts = opts;
+            return { choices: [{ message: { role: 'assistant', content: 'ok' } }] };
+        };
+
+        const payload = {
+            model: 'auto',
+            max_tokens: 256,
+            context_strategy: {
+                mode: 'truncate',
+                preserve_recent: 1
+            },
+            messages: [
+                { role: 'system', content: 'System rules here.' },
+                { role: 'user', content: 'First very long message' },
+                { role: 'assistant', content: 'Acknowledged' },
+                { role: 'user', content: 'Keep this message' }
+            ]
+        };
+
+        await router.route(payload);
+
+        expect(capturedOpts.messages).to.have.length.lessThan(4);
+        expect(capturedOpts.messages[0].role).to.equal('system');
+
+        defaultAdapter.getContextWindow = originalGetContextWindow;
+        defaultAdapter.countTokens = originalCountTokens;
+    });
+
+    it('should attach context metadata in non-streaming response', async () => {
+        const testConfig = {
+            ...config,
+            compaction: {
+                enabled: true,
+                minTokensToCompact: 10,
+                preserveSystemPrompt: true,
+                preserveLastN: 1,
+                mode: 'truncate'
+            }
+        };
+
+        const router = new Router(testConfig);
+        const defaultAdapter = router.adapters.get(router.defaultProvider);
+        const originalGetContextWindow = defaultAdapter.getContextWindow.bind(defaultAdapter);
+        const originalCountTokens = defaultAdapter.countTokens ? defaultAdapter.countTokens.bind(defaultAdapter) : null;
+
+        defaultAdapter.getContextWindow = async () => 2000;
+        defaultAdapter.countTokens = async () => 200;
+        defaultAdapter.predict = async () => ({
+            choices: [{ message: { role: 'assistant', content: 'ok' } }]
+        });
+
+        const payload = {
+            model: 'auto',
+            max_tokens: 256,
+            messages: [
+                { role: 'user', content: 'small prompt' }
+            ]
+        };
+
+        const result = await router.route(payload);
+
+        expect(result.context).to.exist;
+        expect(result.context).to.have.property('window_size', 2000);
+        expect(result.context).to.have.property('used_tokens');
+        expect(result.context).to.have.property('available_tokens');
+        expect(result.context).to.have.property('strategy_applied', false);
+
+        defaultAdapter.getContextWindow = originalGetContextWindow;
+        defaultAdapter.countTokens = originalCountTokens;
+    });
+
+    it('should return accepted async ticket when X-Async is true and compaction is needed', async () => {
+        const testConfig = {
+            ...config,
+            compaction: {
+                enabled: true,
+                minTokensToCompact: 10,
+                preserveSystemPrompt: true,
+                preserveLastN: 1,
+                mode: 'truncate'
+            }
+        };
+
+        const ticketRegistry = new TicketRegistry();
+        const router = new Router(testConfig, null, ticketRegistry);
+        const defaultAdapter = router.adapters.get(router.defaultProvider);
+        const originalGetContextWindow = defaultAdapter.getContextWindow.bind(defaultAdapter);
+        const originalCountTokens = defaultAdapter.countTokens ? defaultAdapter.countTokens.bind(defaultAdapter) : null;
+
+        defaultAdapter.getContextWindow = async () => 1200;
+        defaultAdapter.countTokens = async () => 1200;
+        defaultAdapter.predict = async () => ({
+            choices: [{ message: { role: 'assistant', content: 'ok' } }]
+        });
+
+        const payload = {
+            model: 'auto',
+            max_tokens: 300,
+            messages: [
+                { role: 'user', content: 'message one' },
+                { role: 'assistant', content: 'message two' },
+                { role: 'user', content: 'message three' }
+            ]
+        };
+
+        const result = await router.route(payload, { 'x-async': 'true' });
+
+        expect(result.isAsyncTicket).to.equal(true);
+        expect(result.ticketData).to.have.property('object', 'chat.completion.task');
+        expect(result.ticketData).to.have.property('status', 'accepted');
+        expect(result.ticketData).to.have.property('ticket');
+
+        defaultAdapter.getContextWindow = originalGetContextWindow;
+        defaultAdapter.countTokens = originalCountTokens;
     });
 });

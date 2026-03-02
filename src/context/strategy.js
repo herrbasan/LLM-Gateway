@@ -16,12 +16,13 @@ export class ContextManager {
      * @param {Object} estimator - Token estimator instance.
      * @param {Object} adapter - The adapter to use for estimating tokens.
      */
-    async truncate(messages, availableTokens, estimator, adapter) {
+    async truncate(messages, availableTokens, estimator, adapter, strategyConfig = {}, onProgress = null) {
+        const config = { ...this.config, ...strategyConfig };
         let systemPromptMsg = null;
         let otherMessages = [];
 
         // Separate system prompt if we want to preserve it
-        if (this.config.preserveSystemPrompt && messages.length > 0 && messages[0].role === 'system') {
+        if (config.preserveSystemPrompt && messages.length > 0 && messages[0].role === 'system') {
             systemPromptMsg = messages[0];
             otherMessages = messages.slice(1);
         } else {
@@ -37,7 +38,7 @@ export class ContextManager {
         let targetTokensForMessages = availableTokens - systemTokens;
         
         // Preserve last N exchanges (each exchange is typically User + Assistant, but we just keep N messages)
-        let nToKeep = this.config.preserveLastN || 4;
+        let nToKeep = config.preserveLastN ?? 4;
         nToKeep = Math.min(nToKeep, otherMessages.length);
         
         let keptMessages = [];
@@ -88,7 +89,8 @@ export class ContextManager {
     /**
      * Applies Single-pass Summarization to compress all non-system history into one message
      */
-    async compress(messages, availableTokens, estimator, adapter) {
+    async compress(messages, availableTokens, estimator, adapter, strategyConfig = {}, onProgress = null) {
+        const config = { ...this.config, ...strategyConfig };
         // Find messages to compress (exclude system and maybe keep very last user query)
         const systemMsg = messages[0]?.role === 'system' ? messages[0] : null;
         let msgsToCompress = systemMsg ? messages.slice(1) : messages;
@@ -111,7 +113,7 @@ export class ContextManager {
         const summaryOpts = {
             prompt,
             systemPrompt: "You are a highly efficient assistant summarizing conversation history.",
-            maxTokens: Math.floor(availableTokens * (this.config.targetRatio || 0.3)),
+            maxTokens: Math.floor(availableTokens * (config.targetRatio || 0.3)),
             temperature: 0.1
         };
 
@@ -134,7 +136,8 @@ export class ContextManager {
     /**
      * Applies Rolling Compression across chunks
      */
-    async rolling(messages, availableTokens, estimator, adapter) {
+    async rolling(messages, availableTokens, estimator, adapter, strategyConfig = {}, onProgress = null) {
+        const config = { ...this.config, ...strategyConfig };
         // Implement chained summaries. For now it aggregates chunks.
         const systemMsg = messages[0]?.role === 'system' ? messages[0] : null;
         let msgsToCompress = systemMsg ? messages.slice(1) : messages;
@@ -146,14 +149,19 @@ export class ContextManager {
 
         const combinedText = msgsToCompress.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n');
         
-        const chunkSizeChars = (this.config.chunkSize || 3000) * 3; 
+        const chunkSizeChars = (config.chunkSize || 3000) * 3; 
         const chunks = [];
         for (let i = 0; i < combinedText.length; i += chunkSizeChars) {
             chunks.push(combinedText.substring(i, i + chunkSizeChars));
         }
 
         let previousSummary = "";
-        for (const chunk of chunks) {
+        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+            const chunk = chunks[chunkIndex];
+            if (onProgress) {
+                onProgress({ type: 'compaction.progress', data: { chunk: chunkIndex + 1, total: chunks.length } });
+            }
+
             const prompt = previousSummary 
                 ? `Previous Summary: ${previousSummary}\n\n---NEW CONTENT---\n\n${chunk}\n\nPlease update the summary incorporating the new content.`
                 : `Please summarize the following content:\n\n${chunk}`;
@@ -161,7 +169,7 @@ export class ContextManager {
             const summaryOpts = {
                 prompt,
                 systemPrompt: "You are an assistant summarizing long documents incrementally.",
-                maxTokens: Math.floor(availableTokens * (this.config.targetRatio || 0.3)),
+                maxTokens: Math.floor(availableTokens * (config.targetRatio || 0.3)),
                 temperature: 0.1
             };
 

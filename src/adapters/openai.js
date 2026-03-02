@@ -86,6 +86,7 @@ export function createOpenAIAdapter(config) {
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
+            data.provider = config.type || 'openai';
             return data; // Return full standard OpenAI response cleanly        
         },
 
@@ -118,7 +119,9 @@ export function createOpenAIAdapter(config) {
                             const data = trimmed.slice(6);
                             if (data === '[DONE]') return;
                             try {
-                                yield JSON.parse(data);
+                                const parsed = JSON.parse(data);
+                                parsed.provider = config.type || 'openai';
+                                yield parsed;
                             } catch(e) {
                                 // Ignore broken json frames inside a streaming loop
                             }

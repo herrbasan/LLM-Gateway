@@ -1,13 +1,18 @@
 export class StreamHandler {
-    constructor(res, sessionStore = null, sessionId = null) {
+    constructor(res, sessionStore = null, sessionId = null, config = {}) {
         this.res = res;
         this.sessionStore = sessionStore;
         this.sessionId = sessionId;
+        this.config = config;
+        this.heartbeatIntervalMs = config.compaction?.heartbeatIntervalMs || 15000;
         this.heartbeatInterval = null;
         this.isActive = true;
+        this.started = false;
     }
 
     start() {
+        if (this.started) return;
+        this.started = true;
         this.res.setHeader('Content-Type', 'text/event-stream');
         this.res.setHeader('Cache-Control', 'no-cache');
         this.res.setHeader('Connection', 'keep-alive');
@@ -18,11 +23,17 @@ export class StreamHandler {
             if (this.isActive) {
                 this.res.write(': heartbeat\n\n');
             }
-        }, 15000);
+        }, this.heartbeatIntervalMs);
 
         this.res.on('close', () => {
             this.cleanup();
         });
+    }
+
+    emitEvent(type, data) {
+        if (!this.isActive) return;
+        if (!this.started) this.start();
+        this.res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     }
 
     cleanup() {
@@ -33,7 +44,7 @@ export class StreamHandler {
         }
     }
 
-    async process(chunkGenerator) {
+    async process(chunkGenerator, contextPayload = null) {
         this.start();
         let fullContent = '';
         let role = 'assistant';
@@ -74,6 +85,9 @@ export class StreamHandler {
             }
 
             if (this.isActive) {
+                if (contextPayload) {
+                    this.res.write(`event: context.status\ndata: ${JSON.stringify(contextPayload)}\n\n`);
+                }
                 this.res.write('data: [DONE]\n\n');
             }
         } catch (err) {

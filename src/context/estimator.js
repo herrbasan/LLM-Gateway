@@ -1,6 +1,10 @@
+import { getEncoding } from 'js-tiktoken';
+
 export class TokenEstimator {
     constructor(config) {
         this.fallbackRatio = config?.tokenEstimation?.fallbackRatio || 0.25;
+        this.cl100k = getEncoding('cl100k_base');
+        this.o200k = getEncoding('o200k_base');
     }
 
     /**
@@ -22,7 +26,16 @@ export class TokenEstimator {
             }
         }
 
-        // 2. Character heuristic
+        // 2. tiktoken
+        try {
+            const isO200k = typeof requestedModel === 'string' && (requestedModel.includes('gpt-4o') || requestedModel.includes('o1'));
+            const encoding = isO200k ? this.o200k : this.cl100k;
+            return encoding.encode(text).length;
+        } catch (e) {
+            // Silently swallow
+        }
+
+        // 3. Character heuristic
         return Math.ceil(text.length * this.fallbackRatio);
     }
 }

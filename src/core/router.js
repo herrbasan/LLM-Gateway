@@ -1,18 +1,206 @@
 import { createAdapters } from '../adapters/index.js';
 import { TokenEstimator } from '../context/estimator.js';
 import { ContextManager } from '../context/strategy.js';
+import { snakeToCamel } from '../utils/format.js';
 
 export class Router {
-    constructor(config, sessionStore = null) {
+    constructor(config, sessionStore = null, ticketRegistry = null) {
         if (!config) {
             throw new Error("Router requires a configuration object");
         }
         this.config = config;
         this.sessionStore = sessionStore;
+        this.ticketRegistry = ticketRegistry;
         this.adapters = createAdapters(config.providers || {});
         this.defaultProvider = config.routing?.defaultProvider || 'lmstudio';
         this.tokenEstimator = new TokenEstimator(config);
         this.contextManager = new ContextManager(config);
+    }
+
+    _isAsyncRequest(headers = {}) {
+        return String(headers['x-async'] || headers['X-Async'] || '').toLowerCase() === 'true';
+    }
+
+    async _estimateMessagesTokens(messages, adapter, requestedModel) {
+        const messageString = (messages || []).map(m => m.content).join('');
+        return this.tokenEstimator.estimate(messageString, adapter, requestedModel);
+    }
+
+    _resolveCompactionConfig(payload, activeSession) {
+        const globalConfig = {
+            mode: this.config.compaction?.mode || 'truncate',
+            preserveSystemPrompt: this.config.compaction?.preserveSystemPrompt,
+            preserveLastN: this.config.compaction?.preserveLastN,
+            targetRatio: this.config.compaction?.targetRatio,
+            chunkSize: this.config.compaction?.chunkSize
+        };
+
+        const sessionConfig = activeSession?.context_strategy || (activeSession?.strategy ? { mode: activeSession.strategy } : {});
+        const requestConfig = payload?.context_strategy ? snakeToCamel(payload.context_strategy) : {};
+
+        const strategyConfig = {
+            ...globalConfig,
+            ...sessionConfig,
+            ...requestConfig
+        };
+
+        return {
+            mode: strategyConfig.mode || 'truncate',
+            strategyConfig
+        };
+    }
+
+    _estimateCompactionChunks(messages, mode, strategyConfig = {}) {
+        if (mode !== 'rolling') return 1;
+
+        const systemOffset = messages[0]?.role === 'system' ? 1 : 0;
+        const bodyMessages = messages.slice(systemOffset);
+        const combinedText = bodyMessages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n');
+        const chunkSizeChars = (strategyConfig.chunkSize || this.config.compaction?.chunkSize || 3000) * 3;
+        return Math.max(1, Math.ceil(combinedText.length / chunkSizeChars));
+    }
+
+    _buildContextPayload(contextWindow, usedTokens, strategyApplied) {
+        return {
+            window_size: contextWindow,
+            used_tokens: usedTokens,
+            available_tokens: Math.max(0, contextWindow - usedTokens),
+            strategy_applied: strategyApplied
+        };
+    }
+
+    _createProgressEmitter(onProgress, ticketId = null) {
+        return (event) => {
+            if (typeof onProgress === 'function') {
+                onProgress(event);
+            }
+            if (ticketId && this.ticketRegistry) {
+                this.ticketRegistry.addEvent(ticketId, event);
+            }
+        };
+    }
+
+    async _applyCompaction(messages, availableTokens, estimatedTokens, adapter, requestedModel, mode, strategyConfig, onProgress) {
+        const emitProgress = this._createProgressEmitter(onProgress);
+        const estimatedChunks = this._estimateCompactionChunks(messages, mode, strategyConfig);
+
+        emitProgress({ type: 'compaction.start', data: { estimated_chunks: estimatedChunks } });
+        if (mode !== 'rolling') {
+            emitProgress({ type: 'compaction.progress', data: { chunk: 1, total: estimatedChunks } });
+        }
+
+        const strategyFn = typeof this.contextManager[mode] === 'function'
+            ? this.contextManager[mode].bind(this.contextManager)
+            : this.contextManager.truncate.bind(this.contextManager);
+
+        const compactedMessages = await strategyFn(
+            messages,
+            availableTokens,
+            this.tokenEstimator,
+            adapter,
+            strategyConfig,
+            emitProgress
+        );
+
+        const finalTokens = await this._estimateMessagesTokens(compactedMessages, adapter, requestedModel);
+        emitProgress({
+            type: 'compaction.complete',
+            data: {
+                original_tokens: estimatedTokens,
+                final_tokens: finalTokens
+            }
+        });
+
+        return { compactedMessages, finalTokens, estimatedChunks };
+    }
+
+    _createAcceptedTicketPayload(ticket) {
+        return {
+            object: 'chat.completion.task',
+            ticket: ticket.id,
+            status: 'accepted',
+            estimated_chunks: ticket.estimated_chunks,
+            stream_url: `/v1/tasks/${ticket.id}/stream`
+        };
+    }
+
+    _runAsyncCompletionTask(taskArgs) {
+        const {
+            ticket,
+            adapter,
+            requestedModel,
+            opts,
+            payload,
+            estimatedTokens,
+            contextWindow,
+            availableTokens,
+            needsCompaction,
+            mode,
+            strategyConfig,
+            activeSession,
+            sessionId
+        } = taskArgs;
+
+        setImmediate(async () => {
+            try {
+                this.ticketRegistry.updateTicketStatus(ticket.id, 'processing');
+
+                const emitProgress = this._createProgressEmitter(null, ticket.id);
+                let finalMessages = [...opts.messages];
+                let finalTokens = estimatedTokens;
+                let strategyApplied = false;
+
+                if (needsCompaction && mode !== 'none') {
+                    const compaction = await this._applyCompaction(
+                        opts.messages,
+                        availableTokens,
+                        estimatedTokens,
+                        adapter,
+                        requestedModel,
+                        mode,
+                        strategyConfig,
+                        emitProgress
+                    );
+                    finalMessages = compaction.compactedMessages;
+                    finalTokens = compaction.finalTokens;
+                    strategyApplied = true;
+
+                    if (activeSession && this.sessionStore && sessionId) {
+                        this.sessionStore.replaceMessages(sessionId, finalMessages);
+                    }
+                }
+
+                const context = this._buildContextPayload(contextWindow, finalTokens, strategyApplied);
+                const finalOpts = { ...opts, messages: finalMessages };
+
+                if (payload.stream) {
+                    const generator = adapter.streamComplete(finalOpts, requestedModel);
+                    for await (const chunk of generator) {
+                        this.ticketRegistry.addEvent(ticket.id, { type: 'chunk', data: chunk });
+                    }
+                    this.ticketRegistry.addEvent(ticket.id, { type: 'context.status', data: context });
+                    this.ticketRegistry.addEvent(ticket.id, { type: 'done', data: {} });
+                    this.ticketRegistry.updateTicketStatus(ticket.id, 'complete', {
+                        result: { stream: true, context }
+                    });
+                    return;
+                }
+
+                const result = await adapter.predict(finalOpts, requestedModel);
+                result.context = context;
+
+                if (activeSession && this.sessionStore && sessionId) {
+                    const assistantMessage = result.choices?.[0]?.message;
+                    if (assistantMessage) {
+                        this.sessionStore.appendMessages(sessionId, [assistantMessage]);
+                    }
+                }
+
+                this.ticketRegistry.updateTicketStatus(ticket.id, 'complete', { result });
+            } catch (error) {
+                this.ticketRegistry.updateTicketStatus(ticket.id, 'failed', { error });
+            }
+        });
     }
 
     _resolveProviderAndModel(modelString, headers = {}) {
@@ -89,10 +277,12 @@ export class Router {
     /**
      * Routes an incoming OpenAI standard chat completion payload to the appropriate adapter.
      */
-    async route(payload, headers = {}) {
+    async route(payload, headers = {}, runtime = {}) {
         if (!payload) {
             throw new Error("[Router] Missing request payload");
         }
+
+        const onProgress = runtime.onProgress;
 
         const { adapter, requestedModel } = this._resolveProviderAndModel(payload.model, headers);
 
@@ -120,7 +310,9 @@ export class Router {
         if (sessionId && this.sessionStore) {
             activeSession = this.sessionStore.getSession(sessionId);
             if (!activeSession) {
-                throw new Error(`[Router] 404 Session Not Found: ${sessionId}`);
+                const err = new Error(`[Router] 404 Session Not Found: ${sessionId}`);
+                err.status = 404;
+                throw err;
             }
             if (payload.messages && payload.messages.length > 0) {
                 this.sessionStore.appendMessages(sessionId, payload.messages);
@@ -132,36 +324,99 @@ export class Router {
 
         // --- Context Window Management Interceptor ---
         if (this.config.compaction?.enabled && opts.messages.length > 0) {
-            // Get string representation to estimate
-            const messageString = opts.messages.map(m => m.content).join('');
-            const estimatedTokens = await this.tokenEstimator.estimate(messageString, adapter, requestedModel);
-            
+            let estimatedTokens = await this._estimateMessagesTokens(opts.messages, adapter, requestedModel);
             const contextWindow = await adapter.getContextWindow();
-            const outputBuffer = opts.maxTokens || 1024; // safe default buffer
+            const outputBuffer = opts.maxTokens !== undefined ? opts.maxTokens : 1024; // safe default buffer
             const availableTokens = contextWindow - outputBuffer;
+            const exceedsAvailableTokens = estimatedTokens > availableTokens;
 
-            // Trigger mitigation if we exceed limit or pass minTokensToCompact
             const minTokens = this.config.compaction.minTokensToCompact || 2000;
-            if (estimatedTokens > availableTokens || estimatedTokens > minTokens) {
-                // Apply defined mode: 'truncate' | 'compress' | 'rolling', fallback to truncate
-                const mode = activeSession ? activeSession.strategy : (this.config.compaction.mode || 'truncate');
-                if (typeof this.contextManager[mode] === 'function') {
-                    opts.messages = await this.contextManager[mode](opts.messages, availableTokens, this.tokenEstimator, adapter);
-                } else if (mode !== 'none') {
-                    opts.messages = await this.contextManager.truncate(opts.messages, availableTokens, this.tokenEstimator, adapter);
-                } else if (estimatedTokens > availableTokens && mode === 'none') {
-                    throw new Error(`[Router] 413 Payload Too Large: Input tokens (${estimatedTokens}) exceed available context window (${availableTokens}).`);
-                }
-                
+            const shouldCompact = estimatedTokens >= minTokens && exceedsAvailableTokens;
+            const { mode, strategyConfig } = this._resolveCompactionConfig(payload, activeSession);
+
+            if (mode === 'none' && exceedsAvailableTokens) {
+                const err = new Error(`[Router] 413 Payload Too Large: Input tokens (${estimatedTokens}) exceed available context window (${availableTokens}).`);
+                err.status = 413;
+                throw err;
+            }
+
+            const isAsync = this._isAsyncRequest(headers);
+            if (isAsync && shouldCompact && this.ticketRegistry) {
+                const estimatedChunks = this._estimateCompactionChunks(opts.messages, mode, strategyConfig);
+                const ticket = this.ticketRegistry.createTicket(estimatedChunks);
+
+                this._runAsyncCompletionTask({
+                    ticket,
+                    adapter,
+                    requestedModel,
+                    opts,
+                    payload,
+                    estimatedTokens,
+                    contextWindow,
+                    availableTokens,
+                    needsCompaction: shouldCompact,
+                    mode,
+                    strategyConfig,
+                    activeSession,
+                    sessionId
+                });
+
+                return {
+                    isAsyncTicket: true,
+                    ticketData: this._createAcceptedTicketPayload(ticket)
+                };
+            }
+
+            let strategyApplied = false;
+            if (shouldCompact && mode !== 'none') {
+                const compaction = await this._applyCompaction(
+                    opts.messages,
+                    availableTokens,
+                    estimatedTokens,
+                    adapter,
+                    requestedModel,
+                    mode,
+                    strategyConfig,
+                    onProgress
+                );
+
+                opts.messages = compaction.compactedMessages;
+                estimatedTokens = compaction.finalTokens;
+                strategyApplied = true;
+
                 if (activeSession && this.sessionStore) {
                     this.sessionStore.replaceMessages(sessionId, opts.messages);
                 }
             }
+
+            const context = this._buildContextPayload(contextWindow, estimatedTokens, strategyApplied);
+
+            if (payload.stream) {
+                return {
+                    stream: true,
+                    generator: adapter.streamComplete(opts, requestedModel),
+                    context
+                };
+            }
+
+            const result = await adapter.predict(opts, requestedModel);
+            result.context = context;
+            if (activeSession && this.sessionStore) {
+                const assistantMessage = result.choices?.[0]?.message;
+                if (assistantMessage) {
+                    this.sessionStore.appendMessages(sessionId, [assistantMessage]);
+                }
+            }
+            return result;
         }
         // ---------------------------------------------
 
         if (payload.stream) {
-            return adapter.streamComplete(opts, requestedModel);
+            return {
+                stream: true,
+                generator: adapter.streamComplete(opts, requestedModel),
+                context: null
+            };
         } else {
             const result = await adapter.predict(opts, requestedModel);
             if (activeSession && this.sessionStore) {
@@ -170,6 +425,7 @@ export class Router {
                     this.sessionStore.appendMessages(sessionId, [assistantMessage]);
                 }
             }
+            result.context = null;
             return result;
         }
     }
