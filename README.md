@@ -4,10 +4,12 @@
 
 The **LLM Gateway** is a centralized, OpenAI-compatible service that transparently routes requests and mitigates context window limitations for massive text inputs. It supports fallback precedence routing, structured output limitation blocks, stateful sessions, and advanced metrics to protect your downstream local or remote endpoints from large contexts, enforcing load bounds efficiently.
 
+---
+
 ## Features
 
 - **OpenAI-Compatible HTTP API** - Seamlessly works with existing OpenAI SDKs (standard `200` responses by default).
-- **Multi-Provider Routing** - First-class adapter support for LM Studio, Ollama, Gemini, OpenAI, Grok, GLM, Kimi, and Minimax.
+- **Multi-Provider Routing** - First-class adapter support for LM Studio, Ollama, Gemini, OpenAI, Grok, GLM, Kimi, Minimax, and Qwen.
 - **Unified Streaming Architecture** - Manages keep-alives via `heartbeat`, efficiently tracks Node backpressure limits with sliding window buffers (`drain` handler), and outputs standard OpenAI SSE streaming.
 - **Context Mitigation Strategies** - Enforces `truncate`, `compress`, and `rolling` reduction behaviors on large inputs transparently to prevent downstream `413 Payload Too Large` errors.
 - **Stateful Sessions** - `SessionStore` utilizing in-memory TTL with sliding windows tracking multi-turn context (1hr default TTL).
@@ -40,10 +42,19 @@ npm start
 ```
 
 ### Running Tests
-Tests execute real workflows against live backend instances using endpoints established in `.env` (no purely synthetic unit tests).
 
 ```bash
+# Unit tests (no server required)
 npm test
+
+# Integration tests (requires running server)
+npm run test:integration
+
+# Provider tests (tests all configured providers)
+npm run test:providers
+
+# All tests
+npm run test:all
 ```
 
 ---
@@ -81,8 +92,66 @@ docker run -d \
   llm-gateway
 ```
 
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [API Documentation](./docs/api_documentation.md) | Complete API reference, endpoint details, response patterns, and usage examples |
+| [Developer Notes](./docs/dev-notes.md) | Architecture, project structure, adapter development, and technical implementation details |
+
+---
+
 ## Configuration Guide
 
 The `config.json` supports environment variable substitution automatically. For instance, putting `${MY_KEY}` in the JSON file will evaluate `process.env.MY_KEY` at runtime.
 
 Providers and specific fallback routing rules are declared directly inside `config.json`. Refer to the `config.example.json` to review structure configurations.
+
+### Quick Configuration Example
+
+```json
+{
+  "port": 3400,
+  "routing": {
+    "defaultProvider": "lmstudio"
+  },
+  "providers": {
+    "lmstudio": {
+      "type": "lmstudio",
+      "endpoint": "http://localhost:1234",
+      "model": "qwen2.5-14b",
+      "capabilities": {
+        "embeddings": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    }
+  }
+}
+```
+
+---
+
+## Supported Providers
+
+| Provider | Type | Embeddings | Streaming | Structured Output |
+|----------|------|------------|-----------|-------------------|
+| Gemini | `gemini` | ✅ | ✅ | ✅ |
+| LM Studio | `lmstudio` | ✅ | ✅ | ✅ |
+| Ollama | `ollama` | ✅ | ✅ | ❌ |
+| OpenAI | `openai` | ✅ | ✅ | ✅ |
+| Grok (xAI) | `openai` | ❌ | ✅ | ✅ |
+| GLM | `openai` | ❌ | ✅ | ✅ |
+| MiniMax | `minimax` | ❌ | ❌ | ✅ |
+| Kimi | `kimi-cli` | ❌ | Simulated | ❌ |
+| Qwen | `openai` | ❌ | ✅ | ✅ |
+
+See [Provider Adapters Documentation](./src/adapters/adapters.md) for detailed configuration of each provider.
+
+---
+
+## License
+
+MIT
