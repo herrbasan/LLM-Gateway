@@ -61,7 +61,20 @@ export function createServer(config) {
 
   // Global error handler
   app.use((err, req, res, next) => {
-    console.error('Unhandled server error:', err.message || err);
+    const isExpectedError = err.status && err.status >= 400 && err.status < 500;
+    const isProviderFallback = err.message?.includes('model "auto" not found') || 
+                                err.message?.includes('is not found for API version');
+    
+    // Log expected errors (like 404s from provider fallbacks) as warnings
+    // Log unexpected errors as errors
+    if (isProviderFallback || (isExpectedError && err.status === 404)) {
+      console.warn(`[${err.status || 502}] ${err.message || 'Provider fallback'}`);
+    } else if (isExpectedError) {
+      console.warn(`[${err.status}] ${err.message || 'Client error'}`);
+    } else {
+      console.error('Unhandled server error:', err.message || err);
+    }
+    
     if (res.headersSent) {
       return next(err);
     }

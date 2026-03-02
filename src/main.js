@@ -7,9 +7,10 @@ import { createServer } from './server.js';
 async function main() {
   try {
     const config = await loadConfig();
-    const server = createServer(config);
+    const app = createServer(config);
     
-    server.listen(config.port, config.host, () => {
+    // app.listen() returns the HTTP server instance
+    const server = app.listen(config.port, config.host, () => {
       console.log(`LLM Gateway running on http://${config.host}:${config.port}`);
     });
 
