@@ -58,7 +58,7 @@ export function createOllamaAdapter(config) {
             return (json.models || []).map(m => ({
                 id: m.name,
                 object: 'model',
-                owned_by: 'ollama',
+                owned_by: config.providerName || 'ollama',
                 capabilities: defaultCapabilities
             }));
         },
@@ -77,7 +77,7 @@ export function createOllamaAdapter(config) {
                 object: "chat.completion",
                 created: Math.floor(Date.now() / 1000),
                 model: payload.model,
-                provider: "ollama",
+                provider: config.providerName || 'ollama',
                 choices: [{
                     index: 0,
                     message: data.message || { role: "assistant", content: "" },

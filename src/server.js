@@ -1,4 +1,8 @@
 import express from 'express';
+import cors from 'cors';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { createHealthHandler } from './routes/health.js';
 import { createChatHandler } from './routes/chat.js';
 import { createEmbeddingsHandler } from './routes/embeddings.js';
@@ -17,18 +21,115 @@ export function createServer(config) {
   // Centralized Router so Adapters/Circuit-Breakers are shared across routes
   const router = new Router(config, sessionStore, ticketRegistry);
 
+  // CORS middleware - MUST be first, before all routes and other middleware
+  const corsOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : true;
+  app.use(cors({
+    origin: corsOrigins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Provider', 'X-Session-Id', 'X-Async']
+  }));
+
   // Basic middleware
   app.use(express.json({ limit: '10mb' }));
+
+  // Help endpoint - serves API documentation
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
   
-  // CORS could be added here if needed, keeping it simple for now as requested
-  app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Provider, X-Session-Id, X-Async');
-    if (req.method === 'OPTIONS') {
-      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE');
-      return res.status(200).json({});
+  app.get('/help', (req, res) => {
+    try {
+      const docsPath = join(__dirname, '..', 'docs', 'api_documentation.md');
+      const content = readFileSync(docsPath, 'utf-8');
+      
+      // Simple HTML wrapper with markdown-like styling
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Gateway API Documentation</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
     }
-    next();
+    .container {
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    h2 { color: #34495e; margin-top: 30px; border-bottom: 1px solid #ecf0f1; padding-bottom: 8px; }
+    h3 { color: #7f8c8d; }
+    code {
+      background: #f8f9fa;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 0.9em;
+      color: #e74c3c;
+    }
+    pre {
+      background: #2d2d2d;
+      color: #f8f8f2;
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      line-height: 1.4;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 12px;
+      text-align: left;
+    }
+    th {
+      background: #3498db;
+      color: white;
+    }
+    tr:nth-child(even) { background: #f8f9fa; }
+    blockquote {
+      border-left: 4px solid #3498db;
+      margin: 20px 0;
+      padding: 10px 20px;
+      background: #ecf0f1;
+      color: #555;
+    }
+    hr { border: none; border-top: 1px solid #ecf0f1; margin: 30px 0; }
+    a { color: #3498db; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    ul, ol { padding-left: 25px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <pre style="background: transparent; color: #333; white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.8;">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+  </div>
+</body>
+</html>`;
+      
+      res.setHeader('Content-Type', 'text/html');
+      res.send(html);
+    } catch (err) {
+      res.status(500).json({ error: 'Documentation not available' });
+    }
   });
 
   // Basic health endpoint

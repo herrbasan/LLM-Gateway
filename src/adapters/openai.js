@@ -76,7 +76,7 @@ export function createOpenAIAdapter(config) {
             return (json.data || []).map(m => ({
                 id: m.id,
                 object: 'model',
-                owned_by: config.type || 'openai',
+                owned_by: config.providerName || config.type || 'openai',
                 capabilities: defaultCapabilities
             }));
         },
@@ -89,7 +89,7 @@ export function createOpenAIAdapter(config) {
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
-            data.provider = config.type || 'openai';
+            data.provider = config.providerName || config.type || 'openai';
             return data; // Return full standard OpenAI response cleanly        
         },
 

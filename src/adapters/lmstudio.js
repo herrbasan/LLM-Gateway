@@ -62,7 +62,7 @@ export function createLmStudioAdapter(config) {
             return json.data.map(m => ({
                 id: m.id,
                 object: 'model',
-                owned_by: 'lmstudio',
+                owned_by: config.providerName || 'lmstudio',
                 capabilities: defaultCapabilities
             }));
         },
@@ -74,7 +74,7 @@ export function createLmStudioAdapter(config) {
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
-            data.provider = 'lmstudio';
+            data.provider = config.providerName || 'lmstudio';
             return data;
         },
 

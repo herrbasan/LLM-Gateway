@@ -1,6 +1,35 @@
 import { createBaseAdapter } from './base.js';
 import { request } from '../utils/http.js';
 
+// Static Minimax models list - ensures models are always available even if API fetch fails
+// Note: owned_by is set dynamically in listModels() using config.providerName
+const MINIMAX_MODELS = [
+    {
+        id: "minimax-text-01",
+        object: "model",
+        capabilities: {
+            context_window: 8192,
+            structured_output: true
+        }
+    },
+    {
+        id: "minimax-pro",
+        object: "model",
+        capabilities: {
+            context_window: 16384,
+            structured_output: true
+        }
+    },
+    {
+        id: "MiniMax-M2.5",
+        object: "model",
+        capabilities: {
+            context_window: 8192,
+            structured_output: true
+        }
+    }
+];
+
 export function createMiniMaxAdapter(config) {
     const { apiKey, endpoint, model } = config;
     
@@ -104,7 +133,7 @@ export function createMiniMaxAdapter(config) {
                 object: "chat.completion",
                 created: Math.floor(Date.now() / 1000),
                 model: model,
-                provider: "minimax",
+                provider: config.providerName || "minimax",
                 choices: [{
                     index: 0,
                     message: { role: "assistant", content: content },
@@ -139,19 +168,44 @@ export function createMiniMaxAdapter(config) {
         },
 
         async listModels() {
+            // Always return static models as the primary source
+            // This ensures consistent model listing with proper metadata
+            const providerName = config.providerName || 'minimax';
+            const staticModels = MINIMAX_MODELS.map(m => ({
+                ...m,
+                owned_by: providerName,
+                capabilities: {
+                    ...m.capabilities,
+                    embeddings: base.capabilities.embeddings,
+                    streaming: base.capabilities.streaming
+                }
+            }));
+
+            // Try to fetch additional models from API, but don't fail if unavailable
             try {
                 const res = await request(`${endpoint}/v1/models`, {
                     headers: buildHeaders()
                 });
                 const data = await res.json();
-                return (data.data || []).map(m => ({
+                const apiModels = (data.data || []).map(m => ({
                     id: m.id,
                     object: 'model',
-                    owned_by: 'minimax',
-                    capabilities: base.capabilities
+                    owned_by: config.providerName || 'minimax',
+                    capabilities: {
+                        context_window: m.context_window || 8192,
+                        structured_output: base.capabilities.structuredOutput,
+                        embeddings: base.capabilities.embeddings,
+                        streaming: base.capabilities.streaming
+                    }
                 }));
+                
+                // Merge API models with static models (avoiding duplicates)
+                const existingIds = new Set(staticModels.map(m => m.id));
+                const newModels = apiModels.filter(m => !existingIds.has(m.id));
+                return [...staticModels, ...newModels];
             } catch (err) {
-                return [];
+                // Return static models if API fetch fails
+                return staticModels;
             }
         },
 

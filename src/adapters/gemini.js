@@ -96,7 +96,7 @@ export function createGeminiAdapter(config) {
             return (json.models || []).map(m => ({
                 id: m.name.replace('models/', ''),
                 object: 'model',
-                owned_by: 'gemini',
+                owned_by: config.providerName || 'gemini',
                 capabilities: defaultCapabilities
             }));
         },

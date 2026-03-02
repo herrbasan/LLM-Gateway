@@ -13,7 +13,7 @@ export function createKimiCliAdapter(config) {
   
   const cliTimeout = timeout || 120000;
   
-  const base = createBaseAdapter('kimi-cli', config, {
+  const base = createBaseAdapter('kimi', config, {
     embeddings: false,
     structuredOutput: false,
     streaming: false
@@ -184,7 +184,7 @@ export function createKimiCliAdapter(config) {
         object: "chat.completion",
         created: Math.floor(Date.now() / 1000),
         model: model,
-        provider: "kimi-cli",
+        provider: "kimi",
         choices: [{
           index: 0,
           message: { role: "assistant", content: content },
@@ -223,7 +223,7 @@ export function createKimiCliAdapter(config) {
         { 
           id: model, 
           object: 'model',
-          owned_by: 'moonshot',
+          owned_by: 'kimi',
           capabilities: base.capabilities
         }
       ];

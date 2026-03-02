@@ -56,7 +56,7 @@ export function createAdapters(configProviders) {
              continue;
         }
 
-        const rawAdapter = factory(providerConfig);
+        const rawAdapter = factory({ ...providerConfig, providerName });
         const resilientAdapter = wrapWithCircuitBreaker(providerName, rawAdapter);
         registry.set(providerName, resilientAdapter);
     }
