@@ -42,6 +42,11 @@
       "contextWindow": 32768,
       "maxConcurrentCalls": 2,
       "stripThinking": true,
+      "// stripThinking (advanced)": {
+        "enabled": true,
+        "tags": ["think", "thinking", "thought", "reasoning", "analysis"],
+        "orphanCloseAsSeparator": true
+      },
       "capabilities": {
         "embeddings": true,
         "structuredOutput": true,

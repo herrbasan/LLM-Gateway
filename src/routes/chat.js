@@ -28,7 +28,9 @@ export function createChatHandler(router, sessionStore) {
                 }
                 const generator = result.stream ? result.generator : result;
                 const context = result.stream ? result.context : null;
-                await streamHandler.process(generator, context);
+                const stripThinking = result.stream ? result.stripThinking : false;
+                const thinkingConfig = result.stream ? result.thinkingConfig : undefined;
+                await streamHandler.process(generator, context, stripThinking, thinkingConfig);
             } else {
                 res.status(200).json(result);
             }

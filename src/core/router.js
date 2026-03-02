@@ -1,7 +1,7 @@
 import { createAdapters } from '../adapters/index.js';
 import { TokenEstimator } from '../context/estimator.js';
 import { ContextManager } from '../context/strategy.js';
-import { snakeToCamel } from '../utils/format.js';
+import { snakeToCamel, stripThinking } from '../utils/format.js';
 
 export class Router {
     constructor(config, sessionStore = null, ticketRegistry = null) {
@@ -138,7 +138,9 @@ export class Router {
             mode,
             strategyConfig,
             activeSession,
-            sessionId
+            sessionId,
+            stripThinking: shouldStripThinking,
+            thinkingConfig
         } = taskArgs;
 
         setImmediate(async () => {
@@ -188,6 +190,11 @@ export class Router {
 
                 const result = await adapter.predict(finalOpts, requestedModel);
                 result.context = context;
+                
+                // Strip thinking content if configured
+                if (shouldStripThinking && result.choices?.[0]?.message?.content) {
+                    result.choices[0].message.content = stripThinking(result.choices[0].message.content, thinkingConfig);
+                }
 
                 if (activeSession && this.sessionStore && sessionId) {
                     const assistantMessage = result.choices?.[0]?.message;
@@ -284,7 +291,19 @@ export class Router {
 
         const onProgress = runtime.onProgress;
 
-        const { adapter, requestedModel } = this._resolveProviderAndModel(payload.model, headers);
+        const { adapter, providerName, requestedModel } = this._resolveProviderAndModel(payload.model, headers);
+        const providerConfig = this.config.providers?.[providerName] || {};
+        
+        // Parse stripThinking configuration
+        // Can be: boolean true, or object { enabled: true, tags: [...], orphanCloseAsSeparator: true }
+        const stripThinkingConfig = providerConfig.stripThinking;
+        const shouldStripThinking = stripThinkingConfig === true || 
+            (typeof stripThinkingConfig === 'object' && stripThinkingConfig.enabled !== false);
+        
+        // Build thinking config for stripper (undefined means use defaults)
+        const thinkingConfig = typeof stripThinkingConfig === 'object' && stripThinkingConfig !== null
+            ? { tags: stripThinkingConfig.tags, orphanCloseAsSeparator: stripThinkingConfig.orphanCloseAsSeparator }
+            : undefined;
 
         // Guard: Structured Output capability
         if (payload.response_format) {
@@ -358,7 +377,8 @@ export class Router {
                     mode,
                     strategyConfig,
                     activeSession,
-                    sessionId
+                    sessionId,
+                    stripThinking: shouldStripThinking
                 });
 
                 return {
@@ -395,12 +415,19 @@ export class Router {
                 return {
                     stream: true,
                     generator: adapter.streamComplete(opts, requestedModel),
-                    context
+                    context,
+                    stripThinking: shouldStripThinking
                 };
             }
 
             const result = await adapter.predict(opts, requestedModel);
             result.context = context;
+            
+            // Strip thinking content if configured
+            if (shouldStripThinking && result.choices?.[0]?.message?.content) {
+                result.choices[0].message.content = stripThinking(result.choices[0].message.content, thinkingConfig);
+            }
+            
             if (activeSession && this.sessionStore) {
                 const assistantMessage = result.choices?.[0]?.message;
                 if (assistantMessage) {
@@ -415,10 +442,18 @@ export class Router {
             return {
                 stream: true,
                 generator: adapter.streamComplete(opts, requestedModel),
-                context: null
+                context: null,
+                stripThinking: shouldStripThinking,
+                thinkingConfig
             };
         } else {
             const result = await adapter.predict(opts, requestedModel);
+            
+            // Strip thinking content if configured
+            if (shouldStripThinking && result.choices?.[0]?.message?.content) {
+                result.choices[0].message.content = stripThinking(result.choices[0].message.content, thinkingConfig);
+            }
+            
             if (activeSession && this.sessionStore) {
                 const assistantMessage = result.choices?.[0]?.message;
                 if (assistantMessage) {

@@ -36,3 +36,166 @@ export function camelToSnake(obj) {
         return acc;
     }, {});
 }
+
+// ============================================================================
+// Thinking Content Stripper
+// ============================================================================
+
+/**
+ * Default thinking tags used by major LLM models:
+ * - DeepSeek R1: <think>...</think>
+ * - Qwen/QwQ: <think>...</think>
+ * - Some Claude outputs: <thinking>...</thinking>
+ * - General reasoning models: <analysis>, <reasoning>, <thought>, <thoughts>
+ * - Chain-of-thought: <chain_of_thought>, <cot>
+ */
+export const DEFAULT_THINKING_TAGS = [
+    'think',        // DeepSeek, Qwen, common
+    'thinking',     // Claude (some versions)
+    'thought',      // Generic
+    'thoughts',     // Plural variant
+    'analysis',     // Generic
+    'reasoning',    // Generic
+    'chain_of_thought', // CoT explicit
+    'cot'           // CoT short
+];
+
+/**
+ * Default thinking stripper configuration
+ */
+export const DEFAULT_THINKING_CONFIG = {
+    tags: DEFAULT_THINKING_TAGS,
+    // If true, orphan close tags (</tag> without opening) treat everything before as thinking
+    // This handles "separator style" where content before the first close tag is considered thinking
+    orphanCloseAsSeparator: true
+};
+
+function createThinkingStripper(config = {}) {
+    // Normalize config
+    const normalizedConfig = typeof config === 'object' && !Array.isArray(config)
+        ? { ...DEFAULT_THINKING_CONFIG, ...config }
+        : { ...DEFAULT_THINKING_CONFIG, tags: config || DEFAULT_THINKING_TAGS };
+    
+    const tags = normalizedConfig.tags;
+    const orphanCloseAsSeparator = normalizedConfig.orphanCloseAsSeparator;
+    
+    const maxBuffer = 16384;
+    let buffer = '';
+    let inTag = null;
+
+    const closeNeedleFor = (tagLower) => `</${tagLower}>`;
+
+    const isOpenTagAt = (text, idx, tagLower) => {
+        if (text[idx] !== '<') return false;
+        if (text[idx + 1] !== tagLower[0]) return false;
+        const after = text[idx + 1 + tagLower.length];
+        return after === '>' || after === ' ' || after === '\t' || after === '\r' || after === '\n' || after === '/';
+    };
+
+    const findNextOpen = () => {
+        const lower = buffer.toLowerCase();
+        let bestIdx = -1, bestTag = null;
+        for (const tag of tags) {
+            const tagLower = String(tag).toLowerCase();
+            let idx = lower.indexOf(`<${tagLower}`);
+            while (idx !== -1) {
+                if (isOpenTagAt(lower, idx, tagLower)) break;
+                idx = lower.indexOf(`<${tagLower}`, idx + 1);
+            }
+            if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
+                bestIdx = idx;
+                bestTag = tagLower;
+            }
+        }
+        return bestIdx === -1 ? null : { idx: bestIdx, tag: bestTag };
+    };
+
+    const findNextClose = () => {
+        const lower = buffer.toLowerCase();
+        let bestIdx = -1, bestTag = null;
+        for (const tag of tags) {
+            const tagLower = String(tag).toLowerCase();
+            const idx = lower.indexOf(closeNeedleFor(tagLower));
+            if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
+                bestIdx = idx;
+                bestTag = tagLower;
+            }
+        }
+        return bestIdx === -1 ? null : { idx: bestIdx, tag: bestTag };
+    };
+
+    return {
+        process(text) {
+            if (!text) return '';
+            buffer += String(text);
+            if (buffer.length > maxBuffer) buffer = buffer.slice(-maxBuffer);
+
+            let out = '';
+            while (true) {
+                if (inTag) {
+                    const closeNeedle = closeNeedleFor(inTag);
+                    const closeIdx = buffer.toLowerCase().indexOf(closeNeedle);
+                    if (closeIdx === -1) {
+                        buffer = buffer.slice(-(closeNeedle.length - 1));
+                        break;
+                    }
+                    buffer = buffer.slice(closeIdx + closeNeedle.length);
+                    inTag = null;
+                    continue;
+                }
+
+                const nextOpen = findNextOpen();
+                const nextClose = findNextClose();
+
+                // Orphan close tag handling
+                // When orphanCloseAsSeparator is true: everything before </tag> is treated as thinking
+                if (orphanCloseAsSeparator && nextClose && (!nextOpen || nextClose.idx < nextOpen.idx)) {
+                    buffer = buffer.slice(nextClose.idx + closeNeedleFor(nextClose.tag).length);
+                    continue;
+                }
+
+                if (!nextOpen) break;
+
+                if (nextOpen.idx > 0) {
+                    out += buffer.slice(0, nextOpen.idx);
+                    buffer = buffer.slice(nextOpen.idx);
+                }
+
+                const gt = buffer.indexOf('>');
+                if (gt === -1) break;
+
+                buffer = buffer.slice(gt + 1);
+                inTag = nextOpen.tag;
+            }
+
+            return out;
+        },
+        flush() {
+            const out = inTag ? '' : buffer;
+            buffer = '';
+            inTag = null;
+            return out;
+        }
+    };
+}
+
+/**
+ * Strip thinking content from text
+ * @param {string} text - Input text
+ * @param {string[]|Object} config - Array of tags or config object {tags: string[], orphanCloseAsSeparator: boolean}
+ * @returns {string} Text with thinking content removed
+ */
+export function stripThinking(text, config = {}) {
+    if (!text || typeof text !== 'string') return text;
+    
+    // Backward compatibility: if config is an array, treat it as tags
+    const normalizedConfig = Array.isArray(config) 
+        ? { ...DEFAULT_THINKING_CONFIG, tags: config }
+        : { ...DEFAULT_THINKING_CONFIG, ...config };
+    
+    const stripper = createThinkingStripper(normalizedConfig);
+    const result = stripper.process(text) + stripper.flush();
+    return result.trim();
+}
+
+export { createThinkingStripper };

@@ -1,3 +1,5 @@
+import { createThinkingStripper } from '../utils/format.js';
+
 export class StreamHandler {
     constructor(res, sessionStore = null, sessionId = null, config = {}) {
         this.res = res;
@@ -44,10 +46,13 @@ export class StreamHandler {
         }
     }
 
-    async process(chunkGenerator, contextPayload = null) {
+    async process(chunkGenerator, contextPayload = null, stripThinking = false, thinkingConfig = undefined) {
         this.start();
         let fullContent = '';
         let role = 'assistant';
+        
+        // Create thinking stripper if enabled
+        const thinkingStripper = stripThinking ? createThinkingStripper(thinkingConfig) : null;
 
         try {
             for await (const chunk of chunkGenerator) {
@@ -55,10 +60,19 @@ export class StreamHandler {
                 
                 const delta = chunk.choices?.[0]?.delta;
                 if (delta?.content) {
+                    let content = delta.content;
+                    
+                    // Strip thinking content if configured
+                    if (thinkingStripper) {
+                        content = thinkingStripper.process(content);
+                        // Update chunk with stripped content
+                        chunk.choices[0].delta.content = content;
+                    }
+                    
                     // Prevent memory exhaustion attacks on session storage
                     // Usually 128K tokens is < 500KB. We clamp at 5MB as an absolute safety bound.
                     if (fullContent.length < 5 * 1024 * 1024) {
-                        fullContent += delta.content;
+                        fullContent += content;
                     }
                 }
                 if (delta?.role) role = delta.role;
@@ -81,6 +95,14 @@ export class StreamHandler {
                         this.res.once('close', resolveHandler);
                         this.res.once('error', resolveHandler);
                     });
+                }
+            }
+            
+            // Flush any remaining content from stripper buffer
+            if (thinkingStripper) {
+                const remaining = thinkingStripper.flush();
+                if (remaining && fullContent.length < 5 * 1024 * 1024) {
+                    fullContent += remaining;
                 }
             }
 
