@@ -10,7 +10,10 @@ export function createOllamaAdapter(config) {
     };
 
     const base = createBaseAdapter('ollama', config, defaultCapabilities);
-    const apiEndpoint = config.endpoint || 'http://localhost:11434';
+    const apiEndpoint = config.endpoint;
+    if (!apiEndpoint) {
+        throw new Error('Ollama adapter requires an endpoint');
+    }
 
     const getModelOrThrow = (requestedModel) => {
         const model = requestedModel === 'auto' ? config.model : requestedModel;

@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';
 

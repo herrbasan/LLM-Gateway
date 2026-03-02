@@ -10,7 +10,10 @@ export function createOpenAIAdapter(config) {
     };
 
     const base = createBaseAdapter(config.type || 'openai', config, defaultCapabilities);    
-    const apiEndpoint = config.endpoint || 'https://api.openai.com/v1';
+    const apiEndpoint = config.endpoint;
+    if (!apiEndpoint) {
+        throw new Error('OpenAI adapter requires an endpoint');
+    }
     
     // Most OpenAI compat proxies use apiKey. 
     // Defaults here to provide generic passthrough support for Grok, Kimi, GLM, etc

@@ -10,7 +10,10 @@ export function createLmStudioAdapter(config) {
     };
 
     const base = createBaseAdapter('lmstudio', config, defaultCapabilities);
-    const apiEndpoint = config.endpoint || 'http://localhost:1234';
+    const apiEndpoint = config.endpoint;
+    if (!apiEndpoint) {
+        throw new Error('LM Studio adapter requires an endpoint');
+    }
 
     const getModelOrThrow = (requestedModel) => {
         const model = requestedModel === 'auto' ? config.model : requestedModel;
@@ -120,7 +123,7 @@ export function createLmStudioAdapter(config) {
         },
 
         async embedText(input, requestedModel) {
-             const model = requestedModel || config.embeddingModel || 'nomic-embed-text';
+             const model = requestedModel || config.embeddingModel;
              const payload = {
                  input: Array.isArray(input) ? input : [input],
                  model: model

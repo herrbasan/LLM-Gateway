@@ -11,9 +11,17 @@ export function createGeminiAdapter(config) {
 
     const base = createBaseAdapter('gemini', config, defaultCapabilities);
     const apiKey = config.apiKey;
+    const endpoint = config.endpoint;
+    const embeddingModel = config.embeddingModel;
 
     if (!apiKey) {
         throw new Error('Gemini adapter requires an apiKey configuration variable.');
+    }
+    if (!endpoint) {
+        throw new Error('Gemini adapter requires an endpoint configuration variable.');
+    }
+    if (!config.model) {
+        throw new Error('Gemini adapter requires a model configuration variable.');
     }
 
     const getModelOrThrow = (requestedModel) => {
@@ -83,7 +91,7 @@ export function createGeminiAdapter(config) {
         },
 
         async listModels() {
-            const modelRes = await request(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+            const modelRes = await request(`${endpoint}/models?key=${apiKey}`);
             const json = await modelRes.json();
             return (json.models || []).map(m => ({
                 id: m.name.replace('models/', ''),
@@ -96,7 +104,7 @@ export function createGeminiAdapter(config) {
         async countTokens(text, requestedModel = 'auto') {
             const model = getModelOrThrow(requestedModel);
             try {
-                const res = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:countTokens?key=${apiKey}`, {
+                const res = await request(`${endpoint}/models/${model}:countTokens?key=${apiKey}`, {
                     method: 'POST',
                     body: JSON.stringify({
                         contents: [{
@@ -117,7 +125,7 @@ export function createGeminiAdapter(config) {
             const model = getModelOrThrow(requestedModel);
             const payload = buildPayload(opts);
 
-            const res = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+            const res = await request(`${endpoint}/models/${model}:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 body: JSON.stringify(payload)
             });
@@ -155,7 +163,7 @@ export function createGeminiAdapter(config) {
             const model = getModelOrThrow(requestedModel);
             const payload = buildPayload(opts);
 
-            const res = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`, {
+            const res = await request(`${endpoint}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`, {
                 method: 'POST',
                 body: JSON.stringify(payload)
             });
@@ -213,7 +221,10 @@ export function createGeminiAdapter(config) {
         },
         
         async embedText(input, requestedModel) {
-            const model = requestedModel || config.embeddingModel || 'gemini-embedding-001';
+            const model = requestedModel || embeddingModel;
+            if (!model) {
+                throw new Error('Gemini adapter requires an embeddingModel for embeddings');
+            }
             const texts = Array.isArray(input) ? input : [input];
             
             // Build batch-specific requests inside one REST call utilizing `batchEmbedContents`
@@ -222,7 +233,7 @@ export function createGeminiAdapter(config) {
                 content: { parts: [{ text }] }
             }));
 
-            const res = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents?key=${apiKey}`, {
+            const res = await request(`${endpoint}/models/${model}:batchEmbedContents?key=${apiKey}`, {
                 method: 'POST',
                 body: JSON.stringify({ requests })
             });

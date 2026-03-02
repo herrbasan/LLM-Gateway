@@ -62,7 +62,7 @@ Acts identically for local Ollama hosting systems running globally, acting prima
 ## 4. OpenAI Adapter (and Cloud Wrappers)
 **Source:** `src/adapters/openai.js`
 
-Acts as a fallback pass-through for natively routing directly to OpenAI services or to natively compatible generic cloud wrapper APIs (such as xAI Grok, Kimi, GLM, Minimax). Because many cloud providers strictly adopt the exact OpenAI payload shape, simply configuring an API endpoint with `type: "openai"` connects them natively to the Gateway.
+Acts as a fallback pass-through for natively routing directly to OpenAI services or to natively compatible generic cloud wrapper APIs (such as xAI Grok, Kimi, GLM, Minimax, Qwen). Because many cloud providers strictly adopt the exact OpenAI payload shape, simply configuring an API endpoint with `type: "openai"` connects them natively to the Gateway.
 
 ### A. xAI Grok Specifics
 **Official Docs:** [https://docs.x.ai/developers/introduction](https://docs.x.ai/developers/introduction)
@@ -73,10 +73,25 @@ When targeting `https://api.x.ai/v1/chat/completions`:
 
 ### B. MiniMax Specifics
 **Official Docs:** [https://platform.minimax.io/docs/guides/models-intro](https://platform.minimax.io/docs/guides/models-intro)
-When targeting `https://api.minimax.io/v1`:
-- **Context Windows:** Supports massive 200k+ inputs. Ensure the Gateway `maxTokens` limits do not clip configurations needlessly.
-- **Optimizations:** Utilize models tagged with `-highspeed` variants for rapid code generation streams alongside standard agentic workflows.
-- **Output Thresholds:** Extremely generous, supporting 128,000 tokens printed out (specifically useful for complex Chain of Thought processes).
+
+MiniMax uses the **Anthropic Messages API** format, not OpenAI. The adapter targets `https://api.minimax.io/anthropic`.
+
+**Configuration:**
+```json
+{
+  "type": "minimax",
+  "apiKey": "${MINIMAX_API_KEY}",
+  "model": "MiniMax-M2.5"
+}
+```
+
+### Key Mapped Features
+- **API Format:** Anthropic Messages API (`v1/messages` endpoint)
+- **Context Windows:** Massive 200k+ token inputs
+- **Reasoning Models:** Returns `thinking` blocks alongside text responses
+- **Response Format:** `content[]` array with `type: "text"` blocks
+- **Models:** `MiniMax-M2.5`, `MiniMax-M2.5-highspeed`, `MiniMax-Text-01`
+- **Highspeed Variants:** Use `-highspeed` suffix for rapid code generation streams
 
 ### C. Zhipu GLM Specifics
 **Official Docs:** [https://docs.z.ai/guides/overview/quick-start](https://docs.z.ai/guides/overview/quick-start)
@@ -87,7 +102,62 @@ When targeting `https://api.z.ai/api/paas/v4/chat/completions`:
 
 ### D. Moonshot Kimi Specifics
 **Official Docs:** [https://www.kimi.com/code/docs/en/](https://www.kimi.com/code/docs/en/)
-When targeting `https://api.kimi.com/coding/v1`:
-- **Scale:** Extremely high generation speed (100 Tokens/s) and huge max inputs (262,144) designed implicitly for heavy automated agent frameworks.
-- **Tool Mapping constraints:** Standard OpenAI bindings apply natively but with extreme scaling allowing up to 128 independent definitions in a single call. 
-- **Session Rules:** Auth keys mapping active agents should keep watch for silent device detachment failures after 30 days.
+
+The Gateway supports Kimi via the **Kimi CLI** adapter (`type: "kimi-cli"`), which spawns the local `kimi` command-line tool. This bypasses the API restrictions that limit the HTTP API to specific coding agents.
+
+**Prerequisites:** Install the Kimi CLI: `pip install kimi-cli` and authenticate with `kimi auth`
+
+**Configuration:**
+```json
+{
+  "type": "kimi-cli",
+  "command": "kimi",
+  "model": "kimi-k2.5"
+}
+```
+
+- **Local Execution:** The CLI runs locally with your authenticated credentials
+- **Model Support:** `kimi-k2.5` (default), `kimi-k2-thinking-turbo`
+- **Context Window:** 256K tokens
+- **No Streaming:** The CLI adapter returns complete responses (simulated streaming for compatibility)
+- **Structured Output:** JSON extraction from markdown code blocks is supported
+
+### E. Alibaba Cloud Qwen (DashScope) Specifics
+**Official Docs:** [https://www.alibabacloud.com/help/en/model-studio/getting-started/what-is-model-studio](https://www.alibabacloud.com/help/en/model-studio/getting-started/what-is-model-studio)
+
+Qwen models are accessed via the **DashScope** platform using OpenAI-compatible endpoints.
+
+**Endpoint:** `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
+
+For China-based deployments, use: `https://dashscope.aliyuncs.com/compatible-mode/v1`
+
+### Key Mapped Features
+- **Full OpenAI Compatibility:** The `/v1/chat/completions` endpoint accepts standard OpenAI request formats including `messages`, `temperature`, `max_tokens`, `stream`, and `response_format`.
+- **Streaming Support:** Server-Sent Events (SSE) are fully supported for real-time token streaming.
+- **Structured Output:** JSON mode works via `response_format: { type: "json_object" }` for compatible models.
+- **Multimodal Capabilities:** Qwen-VL models support image inputs via base64-encoded URLs in the message content.
+
+### Available Model Families
+- **qwen-turbo**: Fast, cost-effective for general tasks
+- **qwen-plus**: Balanced performance and capability
+- **qwen-max**: Maximum capability for complex reasoning
+- **qwen-coder**: Specialized for code generation
+- **qwen-vl**: Vision-language models for image understanding
+
+### Authentication
+Obtain API keys from the [Alibaba Cloud Model Studio Console](https://modelstudio.console.alibabacloud.com/). The key format is typically `sk-...`.
+
+---
+
+## 5. Summary: Provider Quick Reference
+
+| Provider | Adapter Type | Endpoint | Embeddings | Streaming | JSON Mode |
+|----------|--------------|----------|------------|-----------|-----------|
+| Gemini | `gemini` | `generativelanguage.googleapis.com/v1beta` | ✅ | ✅ | ✅ |
+| LM Studio | `lmstudio` | `localhost:1234/v1` | ✅ | ✅ | ✅ |
+| Ollama | `ollama` | `localhost:11434` | ✅ | ✅ | ❌ |
+| Grok | `openai` | `api.x.ai/v1` | ❌ | ✅ | ✅ |
+| MiniMax | `minimax` | `api.minimax.io/anthropic` | ❌ | ❌ | ✅ |
+| GLM | `openai` | `api.z.ai/api/paas/v4` | ❌ | ✅ | ✅ |
+| Kimi | `kimi-cli` | Local CLI | ❌ | Simulated | ❌ |
+| Qwen | `openai` | `dashscope-intl.aliyuncs.com/compatible-mode/v1` | ❌ | ✅ | ✅ |

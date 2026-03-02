@@ -2,6 +2,8 @@ import { createLmStudioAdapter } from './lmstudio.js';
 import { createOllamaAdapter } from './ollama.js';
 import { createGeminiAdapter } from './gemini.js';
 import { createOpenAIAdapter } from './openai.js';
+import { createKimiCliAdapter } from './kimi-cli.js';
+import { createMiniMaxAdapter } from './minimax.js';
 import { CircuitBreaker } from '../core/circuit-breaker.js';
 
 function wrapWithCircuitBreaker(providerName, adapter) {
@@ -37,7 +39,9 @@ export function createAdapters(configProviders) {
         lmstudio: createLmStudioAdapter,
         ollama: createOllamaAdapter,
         gemini: createGeminiAdapter,
-        openai: createOpenAIAdapter
+        openai: createOpenAIAdapter,
+        'kimi-cli': createKimiCliAdapter,
+        minimax: createMiniMaxAdapter
     };
 
     for (const [providerName, providerConfig] of Object.entries(configProviders)) {

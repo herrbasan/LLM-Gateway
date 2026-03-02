@@ -7,10 +7,13 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "mocha tests/**/*.test.js",
+    "test": "mocha --ignore tests/integration.test.js --ignore tests/providers.test.js tests/**/*.test.js",
     "start": "node src/main.js",
     "dev": "node --watch src/main.js",
-    "test:watch": "mocha --watch tests/**/*.test.js"
+    "test:watch": "mocha --watch --ignore tests/integration.test.js --ignore tests/providers.test.js tests/**/*.test.js",
+    "test:integration": "mocha --timeout 120000 tests/integration.test.js",
+    "test:providers": "mocha --timeout 120000 tests/providers.test.js",
+    "test:all": "mocha --timeout 120000 tests/**/*.test.js"
   },
   "keywords": [],
   "author": "",
