@@ -32,6 +32,13 @@
   "sessions": {
     "ttlMinutes": 60
   },
+
+  "mediaStorage": {
+    "enabled": true,
+    "baseDir": "${TEMP}/llm-gateway-media",
+    "ttlMinutes": 60,
+    "cleanupIntervalMs": 60000
+  },
   
   "providers": {
     "lmstudio": {
@@ -50,7 +57,10 @@
       "capabilities": {
         "embeddings": true,
         "structuredOutput": true,
-        "streaming": true
+        "streaming": true,
+        "imageGeneration": false,
+        "tts": false,
+        "stt": false
       },
       "retry": {
         "enabled": true,
@@ -67,7 +77,10 @@
       "capabilities": {
         "embeddings": true,
         "structuredOutput": false,
-        "streaming": true
+        "streaming": true,
+        "imageGeneration": false,
+        "tts": false,
+        "stt": false
       }
     },
     "gemini": {
@@ -78,7 +91,10 @@
       "capabilities": {
         "embeddings": true,
         "structuredOutput": true,
-        "streaming": true
+        "streaming": true,
+        "imageGeneration": false,
+        "tts": false,
+        "stt": false
       }
     },
     "grok": {
@@ -90,7 +106,10 @@
       "capabilities": {
         "embeddings": true,
         "structuredOutput": true,
-        "streaming": true
+        "streaming": true,
+        "imageGeneration": true,
+        "tts": true,
+        "stt": true
       }
     },
     "kimi": {
@@ -102,7 +121,10 @@
       "capabilities": {
         "embeddings": false,
         "structuredOutput": true,
-        "streaming": true
+        "streaming": true,
+        "imageGeneration": true,
+        "tts": true,
+        "stt": true
       }
     },
     "glm": {
@@ -113,7 +135,10 @@
       "capabilities": {
         "embeddings": false,
         "structuredOutput": true,
-        "streaming": true
+        "streaming": true,
+        "imageGeneration": true,
+        "tts": true,
+        "stt": true
       }
     },
     "minimax": {
@@ -124,7 +149,10 @@
       "capabilities": {
         "embeddings": false,
         "structuredOutput": true,
-        "streaming": true
+        "streaming": true,
+        "imageGeneration": true,
+        "tts": true,
+        "stt": true
       }
     }
   }

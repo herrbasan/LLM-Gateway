@@ -6,6 +6,7 @@ export function createLmStudioAdapter(config) {
         embeddings: true,
         structuredOutput: true,
         streaming: true,
+        vision: true,
         ...config.capabilities
     };
 
@@ -59,12 +60,40 @@ export function createLmStudioAdapter(config) {
         async listModels() {
             const res = await request(`${apiEndpoint}/v1/models`);
             const json = await res.json();
-            return json.data.map(m => ({
-                id: m.id,
-                object: 'model',
-                owned_by: config.providerName || 'lmstudio',
-                capabilities: defaultCapabilities
-            }));
+            
+            // Patterns to identify embedding models by name
+            const embeddingPatterns = ['embed', 'embedding'];
+            const imageGenerationPatterns = ['dall-e', 'imagen', 'imagine', 'image', 'veo', 'easel'];
+            const ttsPatterns = ['tts', 'text-to-speech', 'speech'];
+            const sttPatterns = ['stt', 'whisper', 'asr', 'transcribe', 'speech-to-text'];
+            
+            const contextWindow = await this.getContextWindow();
+            
+            return json.data.map(m => {
+                const id = m.id.toLowerCase();
+                const isEmbedding = embeddingPatterns.some(p => id.includes(p));
+                const isImageGeneration = imageGenerationPatterns.some(p => id.includes(p));
+                const isTts = ttsPatterns.some(p => id.includes(p));
+                const isStt = sttPatterns.some(p => id.includes(p));
+                const isTextChat = !isEmbedding && !isImageGeneration && !isTts && !isStt;
+                
+                return {
+                    id: m.id,
+                    object: 'model',
+                    owned_by: 'lmstudio',
+                    capabilities: {
+                        chat: isTextChat,
+                        embeddings: isEmbedding,
+                        structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
+                        streaming: isTextChat && defaultCapabilities.streaming,
+                        vision: isTextChat && defaultCapabilities.vision,
+                        imageGeneration: isImageGeneration,
+                        tts: isTts,
+                        stt: isStt,
+                        context_window: contextWindow
+                    }
+                };
+            });
         },
 
         async predict(opts, requestedModel = 'auto') {
@@ -133,6 +162,47 @@ export function createLmStudioAdapter(config) {
                  body: JSON.stringify(payload)
              });
              return await res.json();
+        },
+
+        async getContextWindow(requestedModel) {
+            // Try to get context window from LM Studio API
+            const model = requestedModel || config.model;
+            if (!model) {
+                return config.contextWindow || 8192;
+            }
+            
+            try {
+                // Try to fetch all models and find the matching one
+                const res = await request(`${apiEndpoint}/v1/models`);
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    console.log(`[LM Studio Adapter] Models response:`, JSON.stringify(data, null, 2));
+                    
+                    const modelInfo = data.data?.find(m => m.id === model);
+                    console.log(`[LM Studio Adapter] Found model info for ${model}:`, modelInfo);
+                    
+                    // Check various possible field names for context window
+                    const ctxWindow = modelInfo?.context_window || 
+                                     modelInfo?.max_context || 
+                                     modelInfo?.contextWindow ||
+                                     modelInfo?.n_ctx ||
+                                     modelInfo?.max_model_len ||
+                                     modelInfo?.max_sequence_length;
+                    
+                    if (ctxWindow) {
+                        console.log(`[LM Studio Adapter] Using context window from API: ${ctxWindow}`);
+                        return ctxWindow;
+                    }
+                }
+            } catch (err) {
+                // API might not be available
+                console.log(`[LM Studio Adapter] Could not fetch model list: ${err.message}`);
+            }
+            
+            // Fall back to config or default
+            console.log(`[LM Studio Adapter] Falling back to config context window: ${config.contextWindow || 8192}`);
+            return config.contextWindow || 8192;
         }
     };
 }

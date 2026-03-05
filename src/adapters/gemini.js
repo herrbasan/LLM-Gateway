@@ -6,6 +6,7 @@ export function createGeminiAdapter(config) {
         embeddings: true,
         structuredOutput: true,
         streaming: true,
+        vision: true,
         ...config.capabilities
     };
 
@@ -42,10 +43,39 @@ export function createGeminiAdapter(config) {
     };
 
     const buildMappedMessages = (messages) => {
-        return messages.map(m => ({
-            role: m.role === 'assistant' ? 'model' : 'user', // Maps `system` out prior normally
-            parts: [{ text: m.content }]
-        }));
+        return messages.map(m => {
+            let parts = [];
+            if (Array.isArray(m.content)) {
+                parts = m.content.map(part => {
+                    if (part.type === 'text') return { text: part.text };
+                    if (part.type === 'image_url') {
+                        // Assuming data URI: data:image/png;base64,....
+                        const url = part.image_url.url;
+                        const match = url.match(/^data:([^;]+);base64,(.+)$/);
+                        if (match) {
+                            console.log(`[Gemini Adapter] Processing inline image: mimeType=${match[1]}, size=${match[2].length} chars`);
+                            return {
+                                inlineData: {
+                                    mimeType: match[1],
+                                    data: match[2]
+                                }
+                            };
+                        }
+                        // If not base64, log a warning - router should have converted it
+                        console.warn(`[Gemini Adapter] Received non-data URL (router may not have processed): ${url.substring(0, 50)}...`);
+                        return { text: "[System Placeholder: Image Omitted - Remote URLs not supported]" };
+                    }
+                    return null;
+                }).filter(Boolean);
+            } else {
+                parts = [{ text: String(m.content || '') }];
+            }
+
+            return {
+                role: m.role === 'assistant' ? 'model' : 'user', // Maps `system` out prior normally
+                parts
+            };
+        });
     };
 
     const buildPayload = ({ prompt, systemPrompt, maxTokens, temperature, schema, messages }) => {
@@ -91,14 +121,54 @@ export function createGeminiAdapter(config) {
         },
 
         async listModels() {
-            const modelRes = await request(`${endpoint}/models?key=${apiKey}`);
-            const json = await modelRes.json();
-            return (json.models || []).map(m => ({
-                id: m.name.replace('models/', ''),
-                object: 'model',
-                owned_by: config.providerName || 'gemini',
-                capabilities: defaultCapabilities
-            }));
+            let json = { models: [] };
+            try {
+                const modelRes = await request(`${endpoint}/models?key=${apiKey}`);
+                json = await modelRes.json();
+            } catch (err) {
+                console.warn(`[Gemini Adapter] Failed to fetch models: ${err.message}. Using static fallbacks.`);
+            }
+
+            // Patterns to identify model capabilities
+            const embeddingPatterns = ['embedding', 'embed'];
+            const excludedPatterns = ['computer-use', 'deep-research', 'robotics'];
+            const contextWindow = await this.getContextWindow();
+
+            let modelsList = json.models || [];
+            
+            // Inject static fallbacks if API missing
+            if (modelsList.length === 0) {
+                modelsList.push(
+                    { name: 'models/gemini-2.0-flash' },
+                    { name: 'models/gemini-2.5-flash' },
+                    { name: 'models/gemini-1.5-pro' }
+                );
+            }
+
+            return modelsList
+                .filter(m => {
+                    const id = m.name.replace('models/', '').toLowerCase();
+                    return !excludedPatterns.some(pattern => id.includes(pattern));
+                })
+                .map(m => {
+                    const id = m.name.replace('models/', '').toLowerCase();
+                    const isEmbedding = embeddingPatterns.some(p => id.includes(p));
+                    const isTextChat = !isEmbedding;
+                    
+                    return {
+                        id: m.name.replace('models/', ''),
+                        object: 'model',
+                        owned_by: 'google',
+                        capabilities: {
+                            chat: isTextChat,
+                            embeddings: isEmbedding,
+                            structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
+                            streaming: isTextChat && defaultCapabilities.streaming,
+                            vision: isTextChat && defaultCapabilities.vision,
+                            context_window: contextWindow
+                        }
+                    };
+                });
         },
 
         async countTokens(text, requestedModel = 'auto') {
@@ -253,6 +323,32 @@ export function createGeminiAdapter(config) {
                 model: model,
                 usage: {} // Gemini does not accurately give token bounds outside completion responses out of the box currently.
             };
+        },
+
+        async getContextWindow(requestedModel) {
+            // Try to get context window from Gemini API
+            const model = requestedModel || config.model;
+            if (!model) {
+                return config.contextWindow || 8192;
+            }
+            
+            try {
+                // Gemini returns model info including inputTokenLimit
+                const res = await request(`${endpoint}/models/${model}?key=${apiKey}`);
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    // Gemini uses inputTokenLimit for context window
+                    if (data.inputTokenLimit) {
+                        return data.inputTokenLimit;
+                    }
+                }
+            } catch (err) {
+                console.log(`[Gemini Adapter] Could not fetch model info for ${model}: ${err.message}`);
+            }
+            
+            // Fall back to config or default
+            return config.contextWindow || 8192;
         }
     };
 }

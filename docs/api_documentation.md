@@ -9,9 +9,10 @@ Complete API reference and usage patterns for the LLM Gateway.
 1. [API Design Philosophy](#api-design-philosophy)
 2. [Response Patterns](#response-patterns)
 3. [Endpoints Reference](#endpoints-reference)
-4. [Usage Patterns](#usage-patterns)
-5. [Headers](#headers)
-6. [Error Handling](#error-handling)
+4. [Ticket-Based API](#ticket-based-api)
+5. [Usage Patterns](#usage-patterns)
+6. [Headers](#headers)
+7. [Error Handling](#error-handling)
 
 ---
 
@@ -304,6 +305,95 @@ GET /v1/models?type=embeddings
 
 ---
 
+### POST /v1/images/generations
+
+OpenAI-compatible image generation endpoint.
+
+- Behavior is intentionally asynchronous in the gateway.
+- Returns `202 Accepted` with a ticket so long-running image jobs do not block HTTP connections.
+
+**Headers:**
+
+| Header | Description | Required |
+|--------|-------------|----------|
+| `Content-Type` | `application/json` | Yes |
+| `X-Provider` | Force provider selection | No |
+
+**Request Body:**
+
+```json
+{
+  "model": "openai:gpt-image-1",
+  "prompt": "A cinematic cyberpunk street at night",
+  "size": "1024x1024",
+  "quality": "high",
+  "n": 1,
+  "response_format": "b64_json"
+}
+```
+
+**Response 202:**
+
+```json
+{
+  "object": "media.generation.task",
+  "ticket": "tkt_abc123def456",
+  "status": "accepted",
+  "estimated_chunks": 1,
+  "stream_url": "/v1/tasks/tkt_abc123def456/stream"
+}
+```
+
+When completed, polling `/v1/tasks/:id` returns `result.data[]`. If `b64_json` is present and media staging is enabled, the gateway also includes `local_url` pointing to `/v1/media/<file>`.
+
+---
+
+### POST /v1/audio/speech
+
+OpenAI-compatible text-to-speech endpoint.
+
+- Behavior is synchronous by default.
+- Returns binary audio directly (`audio/mpeg`, `audio/wav`, etc.).
+
+**Headers:**
+
+| Header | Description | Required |
+|--------|-------------|----------|
+| `Content-Type` | `application/json` | Yes |
+| `X-Provider` | Force provider selection | No |
+
+**Request Body:**
+
+```json
+{
+  "model": "openai:gpt-4o-mini-tts",
+  "input": "Welcome to the LLM Gateway",
+  "voice": "alloy",
+  "response_format": "mp3",
+  "speed": 1.0
+}
+```
+
+**Response 200:**
+
+- Binary audio body
+- `Content-Type: audio/<format>`
+
+---
+
+### GET /v1/media/:filename
+
+Serves staged media files (for generated outputs or future file workflows).
+
+- Enabled only when `mediaStorage.enabled=true`.
+- Files are temporary and evicted by TTL policy.
+
+```bash
+GET /v1/media/media_1741068842000_a1b2c3d4.png
+```
+
+---
+
 ### GET /health
 
 Health check endpoint with provider status.
@@ -329,6 +419,16 @@ GET /health
 
 ---
 
+### GET /help
+
+Returns this API documentation rendered as HTML.
+
+```bash
+GET /help
+```
+
+---
+
 ### POST /v1/sessions
 
 Create a new conversation session.
@@ -342,11 +442,62 @@ POST /v1/sessions
 { "session_id": "sess_abc123", "created_at": "2026-02-28T19:00:00Z" }
 ```
 
+### GET /v1/sessions/:id
+
+Get an existing conversation session.
+
+```bash
+GET /v1/sessions/sess_abc123
+```
+
+**Response:**
+```json
+{
+  "session_id": "sess_abc123",
+  "created_at": "2026-02-28T19:00:00Z",
+  "messages": [...]
+}
+```
+
+### PATCH /v1/sessions/:id
+
+Update an existing conversation session's properties.
+
+```bash
+PATCH /v1/sessions/sess_abc123
+Content-Type: application/json
+
+{
+  "ttl": 3600
+}
+```
+
+### DELETE /v1/sessions/:id
+
+Delete a conversation session.
+
+```bash
+DELETE /v1/sessions/sess_abc123
+```
+
+### POST /v1/sessions/:id/compress
+
+Manually trigger compaction on a session to reduce token count.
+
+```bash
+POST /v1/sessions/sess_abc123/compress
+```
+
 ---
 
 ## Ticket-Based API
 
-For large prompts when `X-Async: true` is set. Without this header, compaction is transparent and no tickets are created.
+Used for:
+
+- Large chat prompts when `X-Async: true` is set
+- Image generation jobs (`/v1/images/generations`, always async)
+
+Without `X-Async`, chat compaction is transparent and no chat ticket is created.
 
 ### Query Task Status
 
@@ -357,8 +508,11 @@ GET /v1/tasks/tkt_xyz789
 **Response:**
 ```json
 {
+  "object": "chat.completion.task",
   "ticket": "tkt_xyz789",
-  "state": "complete",
+  "status": "complete",
+  "estimated_chunks": 1,
+  "stream_url": "/v1/tasks/tkt_xyz789/stream",
   "result": {
     "content": "The answer is...",
     "usage": {...}
@@ -366,12 +520,24 @@ GET /v1/tasks/tkt_xyz789
 }
 ```
 
+Notes:
+
+- On first poll, the gateway logs `async_ticket_age_before_poll=<ms>` for observability.
+- For failed tickets, response includes `error`.
+- For media generation tickets, `result` is the provider payload (and may include `local_url` entries for staged assets).
+
 ### Stream Task Progress
 
 ```bash
 GET /v1/tasks/tkt_xyz789/stream
 Headers: Accept: text/event-stream
 ```
+
+Task stream emits SSE events, including:
+
+- `chunk` / completion chunks for chat streams
+- `status_update` transitions (`processing`, `complete`, `failed`)
+- terminal `[DONE]`
 
 ---
 
@@ -397,6 +563,16 @@ Headers: Accept: text/event-stream
 | With/without system prompt | Standard messages array |
 | Structured output | `response_format: { type: "json_schema" }` — routed only to providers with `structuredOutput` capability |
 | Token constraints | `max_tokens` respected by all adapters |
+
+### Media Generation
+
+| Use Case | Implementation |
+|----------|---------------|
+| Text-to-image | `POST /v1/images/generations` always returns `202 + ticket` |
+| Text-to-speech | `POST /v1/audio/speech` returns synchronous binary audio |
+| Provider mismatch | Router enforces capability flags (`imageGeneration`, `tts`, `stt`) |
+| Temporary assets | Staged under `/v1/media/*` when enabled |
+| Asset cleanup | TTL-based eviction logs `evicted_files_count` |
 
 ### Sessions
 
@@ -444,6 +620,8 @@ Algorithm:
 | `X-Session-Id` | `sess_xxx` | Continue an existing conversation session |
 | `X-Async` | `true` or `false` | Enable async ticket-based processing for large prompts |
 
+`X-Async` is ignored for `/v1/images/generations` because image generation is already forced-async.
+
 ---
 
 ## Error Handling
@@ -453,11 +631,35 @@ Algorithm:
 | 200 | Success (small prompt or transparent compaction complete) |
 | 202 | Accepted (large prompt, async ticket created) |
 | 400 | Bad request |
+| 422 | Capability mismatch (for example, routing image generation to a non-image provider) |
 | 404 | Provider/model/session/ticket not found |
 | 413 | Payload too large (even after compaction) |
 | 429 | Rate limit or queue full |
 | 502 | Provider unavailable |
 | 504 | Timeout |
+
+---
+
+## Media Storage Configuration
+
+Temporary media staging is configured under `mediaStorage`:
+
+```json
+{
+  "mediaStorage": {
+    "enabled": true,
+    "baseDir": "<tmp>/llm-gateway-media",
+    "ttlMinutes": 60,
+    "cleanupIntervalMs": 60000
+  }
+}
+```
+
+Observability fields currently emitted by the gateway:
+
+- `media_generation_latency`
+- `async_ticket_age_before_poll`
+- `evicted_files_count`
 
 ---
 

@@ -122,7 +122,8 @@ export function createKimiCliAdapter(config) {
     if (schema) {
       const lastMsg = msgs[msgs.length - 1];
       if (lastMsg) {
-        lastMsg.content += '\n\nRespond with valid JSON only.';
+        const jsonInstruction = config.prompts?.jsonInstruction ?? '\n\nRespond with valid JSON only.';
+        lastMsg.content += jsonInstruction;
       }
     }
     
@@ -219,18 +220,23 @@ export function createKimiCliAdapter(config) {
     },
 
     async listModels() {
+      const contextWindow = await this.getContextWindow();
       return [
         { 
           id: model, 
           object: 'model',
           owned_by: 'kimi',
-          capabilities: base.capabilities
+          capabilities: {
+            ...base.capabilities,
+            context_window: contextWindow
+          }
         }
       ];
     },
 
     async getContextWindow() {
-      return config.contextWindow || 8192;
+      // Kimi k2.5 has 256K context window according to docs
+      return config.contextWindow || 256000;
     }
   };
 }

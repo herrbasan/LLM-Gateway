@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -34,6 +35,23 @@ export async function loadConfig() {
     
     substituteEnvVars(parsed);
     
+    // Add default mediaProcessor config for Multimodal capabilities
+    if (!parsed.mediaProcessor) {
+        parsed.mediaProcessor = {
+            endpoint: "http://processor-node:3500",
+            enabled: false
+        };
+    }
+
+    if (!parsed.mediaStorage) {
+      parsed.mediaStorage = {
+        enabled: true,
+        baseDir: path.join(os.tmpdir(), 'llm-gateway-media'),
+        ttlMinutes: 60,
+        cleanupIntervalMs: 60000
+      };
+    }
+
     return parsed;
   } catch (error) {
     if (error.code === 'ENOENT') {

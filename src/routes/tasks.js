@@ -6,14 +6,30 @@ export function createTasksHandler(ticketRegistry) {
             const id = req.params.id;
             const ticket = ticketRegistry.getTicket(id);
             if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
-            
-            return res.status(200).json({
+
+            if (!ticket.first_polled_at) {
+                ticket.first_polled_at = Date.now();
+                const ageMs = ticket.first_polled_at - ticket.created_at;
+                console.log(`[Tasks] async_ticket_age_before_poll=${ageMs}ms ticket=${ticket.id}`);
+            }
+
+            const response = {
                 object: 'chat.completion.task',
                 ticket: ticket.id,
                 status: ticket.status,
                 estimated_chunks: ticket.estimated_chunks,
                 stream_url: `/v1/tasks/${ticket.id}/stream`
-            });
+            };
+
+            if (ticket.status === 'complete' && ticket.result) {
+                response.result = ticket.result;
+            }
+
+            if (ticket.status === 'failed' && ticket.error) {
+                response.error = ticket.error.message;
+            }
+            
+            return res.status(200).json(response);
         } catch (err) {
             next(err);
         }

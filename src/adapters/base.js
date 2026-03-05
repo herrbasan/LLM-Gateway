@@ -5,6 +5,7 @@ export function createBaseAdapter(name, adapterConfig, capabilities) {
         embeddings: false,
         structuredOutput: false,
         streaming: false,
+        vision: false,
         ...capabilities,
     };
 

@@ -1,7 +1,11 @@
 import { createAdapters } from '../adapters/index.js';
 import { TokenEstimator } from '../context/estimator.js';
 import { ContextManager } from '../context/strategy.js';
+import { MediaProcessorClient } from '../utils/media-client.js';
+import { MediaStorage } from '../utils/storage.js';
+import { ImageFetcher } from '../utils/image-fetcher.js';
 import { snakeToCamel, stripThinking } from '../utils/format.js';
+import { systemEvents, EVENT_TYPES } from './events.js';
 
 export class Router {
     constructor(config, sessionStore = null, ticketRegistry = null) {
@@ -15,6 +19,13 @@ export class Router {
         this.defaultProvider = config.routing?.defaultProvider || 'lmstudio';
         this.tokenEstimator = new TokenEstimator(config);
         this.contextManager = new ContextManager(config);
+        this.mediaProcessor = new MediaProcessorClient(config);
+        this.mediaStorage = new MediaStorage(config);
+        this.imageFetcher = new ImageFetcher(config.imageFetcher || {});
+        
+        // Models list cache - persists for server lifetime (models don't change at runtime)
+        // Use refreshModelsCache() to force refresh if needed
+        this.modelsCache = null;
     }
 
     _isAsyncRequest(headers = {}) {
@@ -22,8 +33,22 @@ export class Router {
     }
 
     async _estimateMessagesTokens(messages, adapter, requestedModel) {
-        const messageString = (messages || []).map(m => m.content).join('');
-        return this.tokenEstimator.estimate(messageString, adapter, requestedModel);
+        // Collect all text and parts to calculate tokens
+        let totalTokens = 0;
+        let messageString = "";
+
+        for (const m of (messages || [])) {
+            if (Array.isArray(m.content)) {
+                totalTokens += await this.tokenEstimator.estimate(m.content, adapter, requestedModel);
+                messageString += m.content.map(p => p.type === 'text' ? p.text : '').join('');
+            } else {
+                totalTokens += await this.tokenEstimator.estimate(String(m.content || ''), adapter, requestedModel);
+                messageString += String(m.content || '');
+            }
+        }
+        
+        console.log(`[Router] Token estimation: chars=${messageString.length}, estimated=${totalTokens}`);
+        return totalTokens;
     }
 
     _resolveCompactionConfig(payload, activeSession) {
@@ -281,10 +306,90 @@ export class Router {
         return { adapter, providerName, requestedModel: model };
     }
 
+    _inferCapabilitiesFromModelId(modelId = '') {
+        const id = String(modelId || '').toLowerCase();
+        return {
+            embeddings: ['embed', 'embedding'].some(p => id.includes(p)),
+            imageGeneration: ['dall-e', 'imagen', 'imagine', 'image', 'veo', 'easel', 'cogview', 'wanx', 'flux'].some(p => id.includes(p)) || id.startsWith('grok-'),
+            tts: ['tts', 'text-to-speech', 'speech', 'audio'].some(p => id.includes(p)) || id.includes('gemini-2.0') || id.includes('gemini-2.5') || id.includes('gemini-3'),
+            stt: ['stt', 'whisper', 'asr', 'transcribe', 'speech-to-text', 'audio'].some(p => id.includes(p)) || id.includes('gemini-2.0') || id.includes('gemini-2.5') || id.includes('gemini-3')
+        };
+    }
+
+    _normalizeModelCapabilities(model = {}) {
+        const source = model.capabilities || {};
+        const inferred = this._inferCapabilitiesFromModelId(model.id);
+
+        const normalized = {
+            chat: source.chat,
+            embeddings: source.embeddings,
+            structuredOutput: source.structuredOutput ?? source.structured_output,
+            streaming: source.streaming,
+            vision: source.vision,
+            imageGeneration: source.imageGeneration ?? source.image_generation,
+            tts: source.tts,
+            stt: source.stt,
+            context_window: source.context_window ?? source.contextWindow
+        };
+
+        if (normalized.embeddings === undefined) normalized.embeddings = inferred.embeddings;
+        if (normalized.imageGeneration === undefined) normalized.imageGeneration = inferred.imageGeneration;
+        if (normalized.tts === undefined) normalized.tts = inferred.tts;
+        if (normalized.stt === undefined) normalized.stt = inferred.stt;
+
+        if (normalized.chat === undefined) {
+            normalized.chat = !normalized.embeddings && !normalized.imageGeneration && !normalized.tts && !normalized.stt;
+        }
+        if (normalized.structuredOutput === undefined) normalized.structuredOutput = false;
+        if (normalized.streaming === undefined) normalized.streaming = false;
+        if (normalized.vision === undefined) normalized.vision = false;
+
+        return normalized;
+    }
+
+    _resolveProviderForCapability(modelString, headers = {}, capabilityKey) {
+        if (!capabilityKey) {
+            throw new Error('[Router] Missing capability key');
+        }
+
+        let providerName = this.defaultProvider;
+        let model = modelString;
+
+        if (headers['x-provider']) {
+            providerName = headers['x-provider'].toLowerCase();
+        } else if (modelString && modelString.includes(':')) {
+            const firstColonIndex = modelString.indexOf(':');
+            providerName = modelString.substring(0, firstColonIndex).toLowerCase();
+            model = modelString.substring(firstColonIndex + 1);
+        } else {
+            const defaultAdapter = this.adapters.get(providerName);
+            if (!defaultAdapter?.capabilities?.[capabilityKey]) {
+                const firstCapable = [...this.adapters.entries()].find(([, adapter]) => adapter.capabilities?.[capabilityKey]);
+                if (firstCapable) {
+                    providerName = firstCapable[0];
+                }
+            }
+        }
+
+        const adapter = this.adapters.get(providerName);
+        if (!adapter) {
+            throw new Error(`[Router] No adapter found for provider: '${providerName}'`);
+        }
+
+        if (!adapter.capabilities?.[capabilityKey]) {
+            const err = new Error(`[Router] 422 Unprocessable Entity: Provider '${providerName}' does not support ${capabilityKey}.`);
+            err.status = 422;
+            throw err;
+        }
+
+        return { adapter, providerName, requestedModel: model || 'auto' };
+    }
+
     /**
      * Routes an incoming OpenAI standard chat completion payload to the appropriate adapter.
      */
     async route(payload, headers = {}, runtime = {}) {
+        console.log(`[Router] route() called with model=${payload.model}, messages=${payload.messages?.length}`);
         if (!payload) {
             throw new Error("[Router] Missing request payload");
         }
@@ -315,6 +420,28 @@ export class Router {
             }
         }
 
+        // Guard: Multimodal / Vision Support
+        let imageCount = 0;
+        const hasVisionContent = payload.messages && payload.messages.some(m => {
+            if (Array.isArray(m.content)) {
+                const images = m.content.filter(part => part.type === 'image_url');
+                imageCount += images.length;
+                return images.length > 0;
+            }
+            return false;
+        });
+        
+        if (hasVisionContent) {
+            console.log(`[Router] Multimodal request detected: image_count=${imageCount}, provider=${adapter.name}, model=${requestedModel}`);
+        }
+
+        if (hasVisionContent && !adapter.capabilities.vision) {
+            console.warn(`[RouterFallback] Attempted multimodal request to non-vision capable provider: ${adapter.name}`);
+            const err = new Error(`[Router] 422 Unprocessable Entity: Provider '${adapter.name}' does not support vision/image inputs.`);
+            err.status = 422;
+            throw err;
+        }
+
         // Map standard OpenAI payload properties to adapter format
         const opts = {
             prompt: payload.prompt,
@@ -341,13 +468,67 @@ export class Router {
             opts.messages = payload.messages || [];
         }
 
+        // --- Image Fetching & Media Processing Interceptor ---
+        if (hasVisionContent) {
+            console.log(`[Router] Processing ${imageCount} vision content items...`);
+            for (const msg of opts.messages) {
+                if (Array.isArray(msg.content)) {
+                    for (const part of msg.content) {
+                        if (part.type === 'image_url' && part.image_url?.url) {
+                            const url = part.image_url.url;
+                            
+                            // Fetch remote URLs and convert to base64
+                            if (!url.startsWith('data:')) {
+                                try {
+                                    console.log(`[Router] Fetching remote image: ${url.substring(0, 100)}...`);
+                                    const fetched = await this.imageFetcher.fetchImage(url);
+                                    part.image_url.url = `data:${fetched.mimeType};base64,${fetched.base64}`;
+                                    console.log(`[Router] Successfully fetched remote image (${fetched.size} bytes, ${fetched.mimeType})`);
+                                } catch (fetchErr) {
+                                    console.error(`[Router] Failed to fetch remote image:`, fetchErr.message);
+                                    const err = new Error(`[Router] 400 Bad Request: Failed to fetch image - ${fetchErr.message}`);
+                                    err.status = 400;
+                                    throw err;
+                                }
+                            }
+                            
+                            // Apply MediaProcessor optimization if enabled
+                            if (this.mediaProcessor.isEnabled) {
+                                const currentUrl = part.image_url.url;
+                                const match = currentUrl.match(/^data:([^;]+);base64,(.+)$/);
+                                if (match) {
+                                    const mimeType = match[1];
+                                    const base64Data = match[2];
+                                    // Extract detail parameter (low/high/auto)
+                                    const detail = part.image_url?.detail || 'auto';
+                                    try {
+                                        const optimizedBase64 = await this.mediaProcessor.optimizeImage(base64Data, mimeType, detail, providerName);
+                                        // Make sure we update the MIME Type string correctly so Gemini 
+                                        // doesn't think it's a PNG if it was converted into a JPEG by the Media Processor
+                                        // Media processor currently defaults strictly to 'jpeg'
+                                        part.image_url.url = `data:image/jpeg;base64,${optimizedBase64}`;
+                                        console.log(`[Router] Successfully optimized image via MediaProcessor Node (detail=${detail}). Original MIME: ${mimeType} -> New: image/jpeg`);
+                                    } catch (err) {
+                                        console.warn(`[Router] Failed to process image inline, continuing with original:`, err.message);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // --- Context Window Management Interceptor ---
         if (this.config.compaction?.enabled && opts.messages.length > 0) {
             let estimatedTokens = await this._estimateMessagesTokens(opts.messages, adapter, requestedModel);
             const contextWindow = await adapter.getContextWindow();
             const outputBuffer = opts.maxTokens !== undefined ? opts.maxTokens : 1024; // safe default buffer
-            const availableTokens = contextWindow - outputBuffer;
+            const safetyMargin = Math.floor(contextWindow * 0.20); // 20% safety margin for model overhead
+            const availableTokens = contextWindow - outputBuffer - safetyMargin;
             const exceedsAvailableTokens = estimatedTokens > availableTokens;
+            
+            console.log(`[Router] Context: window=${contextWindow}, estimated=${estimatedTokens}, available=${availableTokens}, safetyMargin=${safetyMargin}, exceeds=${exceedsAvailableTokens}`);
 
             const minTokens = this.config.compaction.minTokensToCompact || 2000;
             const shouldCompact = estimatedTokens >= minTokens && exceedsAvailableTokens;
@@ -388,7 +569,11 @@ export class Router {
             }
 
             let strategyApplied = false;
+            console.log(`[Router] shouldCompact=${shouldCompact}, mode=${mode}, minTokens=${minTokens}, estimatedTokens=${estimatedTokens}`);
             if (shouldCompact && mode !== 'none') {
+                console.log(`[Router] Applying compaction: mode=${mode}, available=${availableTokens}`);
+                systemEvents.emit(EVENT_TYPES.COMPACTION_STARTED, { sessionId, mode, estimatedTokens, availableTokens });
+                
                 const compaction = await this._applyCompaction(
                     opts.messages,
                     availableTokens,
@@ -403,10 +588,21 @@ export class Router {
                 opts.messages = compaction.compactedMessages;
                 estimatedTokens = compaction.finalTokens;
                 strategyApplied = true;
+                
+                systemEvents.emit(EVENT_TYPES.COMPACTION_COMPLETED, { 
+                    sessionId, 
+                    finalTokens: estimatedTokens, 
+                    originalCount: opts.messages.length,
+                    compactedCount: compaction.compactedMessages.length 
+                });
+                
+                console.log(`[Router] Compaction result: finalTokens=${estimatedTokens}, originalMessages=${opts.messages.length}, compactedMessages=${compaction.compactedMessages.length}`);
 
                 if (activeSession && this.sessionStore) {
                     this.sessionStore.replaceMessages(sessionId, opts.messages);
                 }
+            } else {
+                console.log(`[Router] Skipping compaction: shouldCompact=${shouldCompact}, mode=${mode}`);
             }
 
             const context = this._buildContextPayload(contextWindow, estimatedTokens, strategyApplied);
@@ -416,7 +612,8 @@ export class Router {
                     stream: true,
                     generator: adapter.streamComplete(opts, requestedModel),
                     context,
-                    stripThinking: shouldStripThinking
+                    stripThinking: shouldStripThinking,
+                    thinkingConfig
                 };
             }
 
@@ -465,6 +662,90 @@ export class Router {
         }
     }
 
+    async routeImageGeneration(payload, headers = {}) {
+        if (!payload) {
+            throw new Error('[Router] Missing image generation payload');
+        }
+        if (!payload.prompt) {
+            const err = new Error('[Router] 400 Bad Request: Missing required field "prompt" for image generation.');
+            err.status = 400;
+            throw err;
+        }
+
+        const { adapter, requestedModel } = this._resolveProviderForCapability(payload.model, headers, 'imageGeneration');
+
+        const runTask = async () => {
+            const startedAt = Date.now();
+            const rawResult = await adapter.generateImage(payload, requestedModel);
+            const result = { ...rawResult, stream: false };
+
+            if (this.mediaStorage.enabled && Array.isArray(result.data)) {
+                const mapped = [];
+                for (const item of result.data) {
+                    if (item?.b64_json) {
+                        const stored = await this.mediaStorage.saveBase64(item.b64_json, '.png');
+                        mapped.push({
+                            ...item,
+                            local_url: stored.url
+                        });
+                    } else {
+                        mapped.push(item);
+                    }
+                }
+                result.data = mapped;
+            }
+
+            console.log(`[Router] media_generation_latency=${Date.now() - startedAt}ms`);
+            return result;
+        };
+
+        if (this.ticketRegistry) {
+            const ticket = this.ticketRegistry.createTicket(1);
+            this.ticketRegistry.updateTicketStatus(ticket.id, 'processing');
+
+            setImmediate(async () => {
+                try {
+                    const result = await runTask();
+                    this.ticketRegistry.updateTicketStatus(ticket.id, 'complete', { result });
+                } catch (error) {
+                    this.ticketRegistry.updateTicketStatus(ticket.id, 'failed', { error });
+                }
+            });
+
+            return {
+                isAsyncTicket: true,
+                ticketData: {
+                    object: 'media.generation.task',
+                    ticket: ticket.id,
+                    status: 'accepted',
+                    estimated_chunks: 1,
+                    stream_url: `/v1/tasks/${ticket.id}/stream`
+                }
+            };
+        }
+
+        return await runTask();
+    }
+
+    async routeAudioSpeech(payload, headers = {}) {
+        if (!payload) {
+            throw new Error('[Router] Missing audio speech payload');
+        }
+        if (!payload.input) {
+            const err = new Error('[Router] 400 Bad Request: Missing required field "input" for audio speech.');
+            err.status = 400;
+            throw err;
+        }
+        if (!payload.voice) {
+            const err = new Error('[Router] 400 Bad Request: Missing required field "voice" for audio speech.');
+            err.status = 400;
+            throw err;
+        }
+
+        const { adapter, requestedModel } = this._resolveProviderForCapability(payload.model, headers, 'tts');
+        return await adapter.synthesizeSpeech(payload, requestedModel);
+    }
+
     /**
      * Routes an incoming OpenAI standard embedding payload to the appropriate adapter.
      */
@@ -511,8 +792,23 @@ export class Router {
 
     /**
      * Routes an incoming models list request to either all adapters or a specific one.
+     * Each model includes an explicit 'provider' field for clear identification.
+     * Uses server-lifetime cache since models don't change at runtime.
      */
-    async routeModels(headers = {}) {
+    async routeModels(headers = {}, query = {}) {
+        // Return cached models if available (unless specific provider requested or refresh forced)
+        const forceRefresh = headers['x-refresh-cache'] === 'true' || query.refresh === 'true';
+        
+        if (forceRefresh) {
+            console.log('[Router] Force refresh requested, clearing models cache...');
+            this.modelsCache = null;
+        }
+
+        if (!headers['x-provider'] && this.modelsCache) {
+            console.log(`[Router] Returning cached models (${this.modelsCache.length} total)`);
+            return { object: "list", data: this.modelsCache };
+        }
+
         if (headers['x-provider']) {
             const providerName = headers['x-provider'].toLowerCase();
             const adapter = this.adapters.get(providerName);
@@ -520,21 +816,53 @@ export class Router {
                 throw new Error(`[Router] No adapter found for provider: '${providerName}'`);
             }
             const models = await adapter.listModels();
-            return { object: "list", data: models };
+            const modelsWithProvider = models.map(m => ({
+                ...m,
+                provider: providerName,
+                capabilities: this._normalizeModelCapabilities(m)
+            }));
+            return { object: "list", data: modelsWithProvider };
         }
 
-        // If no specific provider, list from all
-        let allModels = [];
+        // Fetch from all providers in parallel with timeout
+        console.log('[Router] Fetching models from all providers...');
+        const fetchPromises = [];
         for (const [name, adapter] of this.adapters.entries()) {
-            try {
-                const models = await adapter.listModels();
-                // Tag models with provider to avoid collisions if possible
-                const taggedModels = models.map(m => ({...m, id: m.id.includes(':') ? m.id : `${name}:${m.id}`}));
-                allModels = allModels.concat(taggedModels || []);
-            } catch (err) {
+            const promise = Promise.race([
+                adapter.listModels().then(models => {
+                    const modelsWithProvider = models.map(m => ({
+                        ...m,
+                        provider: name,
+                        capabilities: this._normalizeModelCapabilities(m)
+                    }));
+                    return { success: true, models: modelsWithProvider, provider: name };
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Timeout')), 5000)
+                )
+            ]).catch(err => {
                 console.error(`[Router] Failed to list models for ${name}:`, err.message);
-            }
+                return { success: false, models: [], provider: name };
+            });
+            fetchPromises.push(promise);
         }
+
+        const results = await Promise.all(fetchPromises);
+        const allModels = results.flatMap(r => r.models);
+        
+        // Update cache (persists for server lifetime)
+        this.modelsCache = allModels;
+        
+        console.log(`[Router] Listed models from ${results.filter(r => r.success).length}/${this.adapters.size} providers, cached permanently`);
         return { object: "list", data: allModels };
+    }
+
+    /**
+     * Force refresh of models cache (useful for admin operations or adding new providers)
+     */
+    async refreshModelsCache() {
+        console.log('[Router] Refreshing models cache...');
+        this.modelsCache = null;
+        return this.routeModels({});
     }
 }

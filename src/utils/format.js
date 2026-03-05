@@ -71,8 +71,8 @@ export const DEFAULT_THINKING_CONFIG = {
 };
 
 function createThinkingStripper(config = {}) {
-    // Normalize config
-    const normalizedConfig = typeof config === 'object' && !Array.isArray(config)
+    // Normalize config - handle null/undefined properly
+    const normalizedConfig = config && typeof config === 'object' && !Array.isArray(config)
         ? { ...DEFAULT_THINKING_CONFIG, ...config }
         : { ...DEFAULT_THINKING_CONFIG, tags: config || DEFAULT_THINKING_TAGS };
     
@@ -110,13 +110,16 @@ function createThinkingStripper(config = {}) {
         return bestIdx === -1 ? null : { idx: bestIdx, tag: bestTag };
     };
 
-    const findNextClose = () => {
+    const findNextClose = (currentTag) => {
         const lower = buffer.toLowerCase();
         let bestIdx = -1, bestTag = null;
         for (const tag of tags) {
             const tagLower = String(tag).toLowerCase();
             const idx = lower.indexOf(closeNeedleFor(tagLower));
             if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
+                // When inside a specific thinking block, only consider matching close tag
+                // Other close tags should be treated as regular text, not orphans
+                if (currentTag && tagLower !== currentTag) continue;
                 bestIdx = idx;
                 bestTag = tagLower;
             }
@@ -145,11 +148,12 @@ function createThinkingStripper(config = {}) {
                 }
 
                 const nextOpen = findNextOpen();
-                const nextClose = findNextClose();
+                const nextClose = findNextClose(inTag);
 
                 // Orphan close tag handling
-                // When orphanCloseAsSeparator is true: everything before </tag> is treated as thinking
-                if (orphanCloseAsSeparator && nextClose && (!nextOpen || nextClose.idx < nextOpen.idx)) {
+                // Only apply when not already in a thinking block - if we're inside a block,
+                // the inTag handling above takes precedence
+                if (orphanCloseAsSeparator && !inTag && nextClose && (!nextOpen || nextClose.idx < nextOpen.idx)) {
                     buffer = buffer.slice(nextClose.idx + closeNeedleFor(nextClose.tag).length);
                     continue;
                 }

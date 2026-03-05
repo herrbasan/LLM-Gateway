@@ -12,8 +12,9 @@ Technical documentation for developers working on or extending the LLM Gateway.
 4. [Context Window Management](#context-window-management)
 5. [Configuration](#configuration)
 6. [Circuit Breakers & Resilience](#circuit-breakers--resilience)
-7. [Development Philosophy](#development-philosophy)
-8. [Testing](#testing)
+7. [Media Generation (Phase 2)](#media-generation-phase-2)
+8. [Development Philosophy](#development-philosophy)
+9. [Testing](#testing)
 
 ---
 
@@ -341,6 +342,56 @@ Per-provider retry configuration:
 - Capped event buffer to prevent memory exhaustion
 - Periodic heartbeat comments (`: heartbeat`) for stale connection detection
 - `drain` handler for Node.js backpressure
+
+---
+
+## Media Generation (Phase 2)
+
+Phase 2 adds OpenAI-compatible media generation routes while preserving gateway reliability patterns:
+
+- `POST /v1/images/generations` → forced async (`202 + ticket`)
+- `POST /v1/audio/speech` → synchronous binary response
+
+### Router Flow
+
+`Router` now exposes two route-level media methods:
+
+1. `routeImageGeneration(payload, headers)`
+   - Resolves provider/model with capability gating (`imageGeneration: true`)
+   - Creates a ticket and executes image generation in background
+   - Logs `media_generation_latency`
+2. `routeAudioSpeech(payload, headers)`
+   - Resolves provider/model with capability gating (`tts: true`)
+   - Executes adapter TTS call synchronously and returns binary payload metadata
+
+### Capability Negotiation
+
+Adapter capability shape now includes:
+
+```json
+{
+  "capabilities": {
+    "imageGeneration": false,
+    "tts": false,
+    "stt": false
+  }
+}
+```
+
+Router rejects capability mismatches with `422 Unprocessable Entity` rather than attempting unsupported provider translation.
+
+### Temporary Media Storage
+
+Media staging is implemented by `MediaStorage` (`src/utils/storage.js`):
+
+- Stores generated files under configurable temp directory
+- Serves files via `/v1/media/*`
+- Runs interval-based TTL eviction (`ttlMinutes`)
+- Logs `evicted_files_count` when cleanup removes stale files
+
+### Async Observability
+
+Ticket polling logs `async_ticket_age_before_poll=<ms>` on first `GET /v1/tasks/:id` request to help identify client polling delays.
 
 ---
 

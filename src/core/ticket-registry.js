@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { systemEvents, EVENT_TYPES } from './events.js';
 
 export class TicketRegistry {
     constructor() {
@@ -28,6 +29,7 @@ export class TicketRegistry {
             error: null
         };
         this.tickets.set(id, ticket);
+        systemEvents.emit(EVENT_TYPES.TASK_CREATED, { ticket: id, status: 'accepted' });
         return ticket;
     }
 
@@ -47,6 +49,7 @@ export class TicketRegistry {
         const ticket = this.getTicket(id);
         if (ticket) {
             ticket.status = status;
+            systemEvents.emit(EVENT_TYPES.TASK_UPDATED, { ticket: id, status, extra });
             Object.assign(ticket, extra);
             if (status === 'complete' || status === 'failed') {
                 if (ticket.subscribers) {

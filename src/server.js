@@ -9,6 +9,9 @@ import { createEmbeddingsHandler } from './routes/embeddings.js';
 import { createModelsHandler } from './routes/models.js';
 import { createSessionsHandler, createSessionIdHandler } from './routes/sessions.js';
 import { createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
+import { createImagesHandler } from './routes/images.js';
+import { createAudioSpeechHandler } from './routes/audio.js';
+import { createSystemEventsHandler } from './routes/events.js';
 import { SessionStore } from './core/session.js';
 import { Router } from './core/router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
@@ -144,6 +147,17 @@ export function createServer(config) {
   // Models endpoint
   app.get('/v1/models', createModelsHandler(router));
 
+  // Vision limits endpoint - returns provider-specific image limits
+  app.get('/v1/vision/limits', (req, res) => {
+    const provider = req.query.provider;
+    const limits = router.mediaProcessor?.getLimitsInfo(provider);
+    res.json({
+      object: 'list',
+      data: limits,
+      provider: provider || 'all'
+    });
+  });
+
   // Sessions endpoints
   app.post('/v1/sessions', createSessionsHandler(sessionStore, router));
   app.get('/v1/sessions/:id', createSessionIdHandler(sessionStore, router));
@@ -154,6 +168,29 @@ export function createServer(config) {
   // Tasks endpoints
   app.get('/v1/tasks/:id', createTasksHandler(ticketRegistry));
   app.get('/v1/tasks/:id/stream', createTasksStreamHandler(ticketRegistry));
+
+    // System Events endpoint
+    app.get('/v1/system/events', createSystemEventsHandler());
+
+    // Media generation endpoints
+    app.post('/v1/images/generations', createImagesHandler(router));
+    app.post('/v1/audio/speech', createAudioSpeechHandler(router));
+  // Temporary media staging endpoint
+  if (router.mediaStorage?.enabled) {
+    app.use('/v1/media', express.static(router.mediaStorage.baseDir));
+  }
+
+  // Prefetch models at startup so first request is fast
+  // This runs in background after server starts
+  setTimeout(async () => {
+    try {
+      console.log('[Startup] Pre-fetching models from all providers...');
+      await router.routeModels({});
+      console.log('[Startup] Models cached and ready');
+    } catch (err) {
+      console.error('[Startup] Failed to pre-fetch models:', err.message);
+    }
+  }, 100);
 
   // Non-existent routes
   app.use((req, res) => {

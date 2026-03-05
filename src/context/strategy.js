@@ -4,6 +4,22 @@ export class ContextManager {
     }
 
     /**
+     * Helper to safely extract text from mixed-content (vision) messages,
+     * replacing images with a placeholder to preserve text flow.
+     */
+    _stringifyMessageContent(content) {
+        if (Array.isArray(content)) {
+            return content.map(part => {
+                if (part.type === 'image_url') {
+                    return '[System Placeholder: Image Omitted]';
+                }
+                return part.text || '';
+            }).join('\n');
+        }
+        return String(content || '');
+    }
+
+    /**
      * Truncates older messages to fit the context window.
      * Preserves system prompt and last N exchanges (configured via `preserveLastN`).
      * Fallback matrix:
@@ -18,6 +34,8 @@ export class ContextManager {
      */
     async truncate(messages, availableTokens, estimator, adapter, strategyConfig = {}, onProgress = null) {
         const config = { ...this.config, ...strategyConfig };
+        console.log(`[Truncate Strategy] Starting with ${messages.length} messages, available=${availableTokens}`);
+        
         let systemPromptMsg = null;
         let otherMessages = [];
 
@@ -37,32 +55,39 @@ export class ContextManager {
 
         let targetTokensForMessages = availableTokens - systemTokens;
         
-        // Preserve last N exchanges (each exchange is typically User + Assistant, but we just keep N messages)
+        // Preserve last N messages (these are most recent/relevant)
         let nToKeep = config.preserveLastN ?? 4;
         nToKeep = Math.min(nToKeep, otherMessages.length);
         
         let keptMessages = [];
         let numTokens = 0;
 
-        // Start by trying to pack from the end
+        // Start by trying to pack from the end (most recent)
         while (nToKeep >= 1) {
             keptMessages = otherMessages.slice(-nToKeep);
-            const contentString = keptMessages.map(m => m.content).join('');
-            numTokens = await estimator.estimate(contentString, adapter);
+            
+            numTokens = 0;
+            for (const m of keptMessages) {
+                numTokens += await estimator.estimate(m.content, adapter, null);
+            }
 
             if (numTokens <= targetTokensForMessages) {
+                console.log(`[Truncate Strategy] Keeping last ${nToKeep} messages, tokens=${numTokens}`);
                 break; // Fits!
             }
+            // If it doesn't fit, we drop the oldest by reducing nToKeep.
+            // But wait, if we are dropping messages containing images, we might want to just strip the images first before dropping the WHOLE message?
+            // "strip `image_url` objects from older context messages and replace them with a `[System Placeholder: Image Omitted]` tag"
+            // For now, let's stick to the sliding window reduction.
             nToKeep--; // Reduce N
         }
 
-        // If N=1 still doesn't fit, truncate text content of that last message
+        // If even 1 message doesn't fit, truncate its content
         if (nToKeep === 0 && otherMessages.length > 0) {
             const lastMsg = otherMessages[otherMessages.length - 1];
-            // Brute force character cut to fit heuristically
-            // Estimate tokens again, slice char array
-            const charLimit = Math.floor(targetTokensForMessages / estimator.fallbackRatio); // rough
-            let truncatedContent = lastMsg.content;
+            // Rough char to token conversion for truncation
+            const charLimit = Math.floor(targetTokensForMessages / 0.25);
+            let truncatedContent = this._stringifyMessageContent(lastMsg.content);
             if (truncatedContent.length > charLimit) {
                 truncatedContent = truncatedContent.substring(0, charLimit - 50) + '... [truncated]';
             }
@@ -70,19 +95,19 @@ export class ContextManager {
             // Re-check
             const finalTokens = await estimator.estimate(truncatedContent, adapter);
             if (finalTokens > targetTokensForMessages) {
-                // If it STILL doesn't fit, extreme cut
+                // Extreme cut
                 truncatedContent = truncatedContent.substring(0, Math.floor(charLimit / 2)) + '... [truncated]';
             }
 
             keptMessages = [{ ...lastMsg, content: truncatedContent }];
+            console.log(`[Truncate Strategy] Truncated single message to fit`);
         }
 
         const finalMessages = [];
-        if (systemPromptMsg) {
-            finalMessages.push(systemPromptMsg);
-        }
+        if (systemPromptMsg) finalMessages.push(systemPromptMsg);
         finalMessages.push(...keptMessages);
 
+        console.log(`[Truncate Strategy] Returning ${finalMessages.length} messages`);
         return finalMessages;
     }
 
@@ -105,14 +130,18 @@ export class ContextManager {
             return msgsToCompress; // Nothing to compress
         }
 
-        const combinedText = msgsToCompress.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n');
+        const combinedText = msgsToCompress.map(m => `${m.role.toUpperCase()}: ${this._stringifyMessageContent(m.content)}`).join('\n\n');
 
-        const prompt = `Please summarize the following conversation history concisely, retaining all key facts and context relevant to continuing the conversation:\n\n${combinedText}`;
+        // Use configurable prompts with fallbacks
+        const promptTemplates = config.prompts?.compress || {};
+        const userTemplate = promptTemplates.user || "Please summarize the following conversation history concisely, retaining all key facts and context relevant to continuing the conversation:\n\n{content}";
+        const systemPrompt = promptTemplates.system || "You are a highly efficient assistant summarizing conversation history.";
+        
+        const prompt = userTemplate.replace('{content}', combinedText);
 
-        // Wait to use the adapter to summarize
         const summaryOpts = {
             prompt,
-            systemPrompt: "You are a highly efficient assistant summarizing conversation history.",
+            systemPrompt,
             maxTokens: Math.floor(availableTokens * (config.targetRatio || 0.3)),
             temperature: 0.1
         };
@@ -123,9 +152,10 @@ export class ContextManager {
         const newMessages = [];
         if (systemMsg) newMessages.push(systemMsg);
         
+        const summaryPrefix = config.prompts?.compress?.summaryPrefix || "[Conversation history summarized to save context window]:";
         newMessages.push({
             role: 'assistant',
-            content: `[Conversation history summarized to save context window]:\n${summaryText}`
+            content: `${summaryPrefix}\n${summaryText}`
         });
 
         if (lastUserMsg) newMessages.push(lastUserMsg);
@@ -138,21 +168,45 @@ export class ContextManager {
      */
     async rolling(messages, availableTokens, estimator, adapter, strategyConfig = {}, onProgress = null) {
         const config = { ...this.config, ...strategyConfig };
-        // Implement chained summaries. For now it aggregates chunks.
+        console.log(`[Rolling Strategy] Starting with ${messages.length} messages, available=${availableTokens}`);
+        
+        // Implement chained summaries
         const systemMsg = messages[0]?.role === 'system' ? messages[0] : null;
-        let msgsToCompress = systemMsg ? messages.slice(1) : messages;
+        let msgsToCompress = systemMsg ? messages.slice(1) : [...messages];
         let lastUserMsg = null;
 
-        if (msgsToCompress.length > 0 && msgsToCompress[msgsToCompress.length - 1].role === 'user') {
+        // Pop last user message to preserve it, UNLESS it's the ONLY message
+        if (msgsToCompress.length > 1 && msgsToCompress[msgsToCompress.length - 1].role === 'user') {
             lastUserMsg = msgsToCompress.pop();
+            console.log(`[Rolling Strategy] Preserving last user message, compressing ${msgsToCompress.length} messages`);
         }
 
-        const combinedText = msgsToCompress.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n');
+        const combinedText = msgsToCompress.map(m => `${m.role.toUpperCase()}: ${this._stringifyMessageContent(m.content)}`).join('\n\n');
+        console.log(`[Rolling Strategy] Combined text length: ${combinedText.length} chars`);
         
-        const chunkSizeChars = (config.chunkSize || 3000) * 3; 
+        // Calculate dynamic chunk size based on available context
+        // We need to fit: previous_summary + chunk + prompt overhead within available tokens
+        const summaryReserve = 2000; // Reserve space for summary (grows with each chunk)
+        const promptOverhead = 500;  // "Previous Summary: ... Please update..." text
+        const charsPerToken = 4;     // Rough estimate
+        
+        // Chunk should be: (available - reserve - overhead) * chars_per_token
+        const chunkTokens = Math.max(1000, availableTokens - summaryReserve - promptOverhead);
+        const chunkSizeChars = Math.floor(chunkTokens * charsPerToken * 0.8); // 80% safety margin
+        
+        console.log(`[Rolling Strategy] Dynamic chunk size: ${chunkSizeChars} chars (~${chunkTokens} tokens)`);
+        
         const chunks = [];
         for (let i = 0; i < combinedText.length; i += chunkSizeChars) {
             chunks.push(combinedText.substring(i, i + chunkSizeChars));
+        }
+        console.log(`[Rolling Strategy] Split into ${chunks.length} chunks`);
+
+        // If too many chunks, fall back to truncate
+        const maxChunks = 20;
+        if (chunks.length > maxChunks) {
+            console.log(`[Rolling Strategy] Too many chunks (${chunks.length} > ${maxChunks}), falling back to truncate`);
+            return this.truncate(messages, availableTokens, estimator, adapter, strategyConfig, onProgress);
         }
 
         let previousSummary = "";
@@ -162,31 +216,48 @@ export class ContextManager {
                 onProgress({ type: 'compaction.progress', data: { chunk: chunkIndex + 1, total: chunks.length } });
             }
 
+            // Use configurable prompts with fallbacks
+            const rollingTemplates = config.prompts?.rolling || {};
+            const systemPrompt = rollingTemplates.system || "You are an assistant summarizing long documents incrementally. Keep it concise.";
+            const initialTemplate = rollingTemplates.initial || "Please summarize the following content:\n\n{chunk}";
+            const updateTemplate = rollingTemplates.update || "Previous Summary: {summary}\n\n---NEW CONTENT---\n\n{chunk}\n\nPlease update the summary incorporating the new content.";
+            
             const prompt = previousSummary 
-                ? `Previous Summary: ${previousSummary}\n\n---NEW CONTENT---\n\n${chunk}\n\nPlease update the summary incorporating the new content.`
-                : `Please summarize the following content:\n\n${chunk}`;
+                ? updateTemplate.replace('{summary}', previousSummary).replace('{chunk}', chunk)
+                : initialTemplate.replace('{chunk}', chunk);
 
             const summaryOpts = {
                 prompt,
-                systemPrompt: "You are an assistant summarizing long documents incrementally.",
-                maxTokens: Math.floor(availableTokens * (config.targetRatio || 0.3)),
+                systemPrompt,
+                maxTokens: Math.min(1000, Math.floor(availableTokens * 0.1)),
                 temperature: 0.1
             };
 
-            const response = await adapter.predict(summaryOpts);
-            previousSummary = typeof response === 'string' ? response : (response.choices?.[0]?.message?.content || response);
+            try {
+                console.log(`[Rolling Strategy] Summarizing chunk ${chunkIndex + 1}/${chunks.length}, prompt length=${prompt.length}`);
+                const response = await adapter.predict(summaryOpts);
+                previousSummary = typeof response === 'string' ? response : (response.choices?.[0]?.message?.content || response);
+                console.log(`[Rolling Strategy] Chunk ${chunkIndex + 1} summary length: ${previousSummary.length}`);
+            } catch (err) {
+                console.error(`[Rolling Strategy] Failed to summarize chunk ${chunkIndex + 1}: ${err.message}`);
+                // Fall back to truncate on any error
+                console.log(`[Rolling Strategy] Falling back to truncate due to error`);
+                return this.truncate(messages, availableTokens, estimator, adapter, strategyConfig, onProgress);
+            }
         }
 
         const newMessages = [];
         if (systemMsg) newMessages.push(systemMsg);
         if (previousSummary) {
+            const summaryPrefix = config.prompts?.rolling?.summaryPrefix || "[Conversation history summarized incrementally]:";
             newMessages.push({
                 role: 'assistant',
-                content: `[Conversation history summarized incrementally]:\n${previousSummary}`
+                content: `${summaryPrefix}\n${previousSummary}`
             });
         }
         if (lastUserMsg) newMessages.push(lastUserMsg);
 
+        console.log(`[Rolling Strategy] Complete: ${newMessages.length} messages`);
         return newMessages;
     }
 }

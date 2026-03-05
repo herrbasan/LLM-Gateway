@@ -171,11 +171,14 @@ export function createMiniMaxAdapter(config) {
             // Always return static models as the primary source
             // This ensures consistent model listing with proper metadata
             const providerName = config.providerName || 'minimax';
+            const contextWindow = await this.getContextWindow();
+            
             const staticModels = MINIMAX_MODELS.map(m => ({
                 ...m,
                 owned_by: providerName,
                 capabilities: {
                     ...m.capabilities,
+                    context_window: contextWindow,
                     embeddings: base.capabilities.embeddings,
                     streaming: base.capabilities.streaming
                 }
@@ -210,7 +213,9 @@ export function createMiniMaxAdapter(config) {
         },
 
         async getContextWindow() {
-            return config.contextWindow || 8192;
+            // MiniMax supports massive 200k+ context windows according to docs
+            // No public API to fetch this dynamically, use documented value or config
+            return config.contextWindow || 200000;
         }
     };
 }

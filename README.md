@@ -9,9 +9,11 @@ The **LLM Gateway** is a centralized, OpenAI-compatible service that transparent
 ## Features
 
 - **OpenAI-Compatible HTTP API** - Seamlessly works with existing OpenAI SDKs (standard `200` responses by default).
-- **Multi-Provider Routing** - First-class adapter support for LM Studio, Ollama, Gemini, OpenAI, Grok, GLM, Kimi, Minimax, and Qwen.
+- **Multi-Provider Routing** - First-class adapter support for LM Studio, Ollama, Gemini, OpenAI, Kimi, and Minimax. Note: Grok, GLM, and Qwen can be connected via the generic OpenAI adapter.
 - **Unified Streaming Architecture** - Manages keep-alives via `heartbeat`, efficiently tracks Node backpressure limits with sliding window buffers (`drain` handler), and outputs standard OpenAI SSE streaming.
 - **Context Mitigation Strategies** - Enforces `truncate`, `compress`, and `rolling` reduction behaviors on large inputs transparently to prevent downstream `413 Payload Too Large` errors.
+- **Multimodal Media Endpoints (Phase 2)** - Supports `POST /v1/images/generations` (forced async ticket workflow) and `POST /v1/audio/speech` (synchronous binary TTS).
+- **Temporary Media Staging & Eviction** - Generated media can be staged under `/v1/media/*` with TTL cleanup to prevent disk growth.
 - **Stateful Sessions** - `SessionStore` utilizing in-memory TTL with sliding windows tracking multi-turn context (1hr default TTL).
 - **Intelligent Embeddings Routing** - Standardized `/v1/embeddings` endpoint with batch request wrappers and automatic fallback.
 - **Resilience & Production Hardened** - Built-in Circuit Breakers protecting adapted endpoints with exponential backoff and `/health` reporting. Heavily load-tested against multi-gigabyte concurrent workloads without memory exhaustion.
@@ -117,6 +119,11 @@ Providers and specific fallback routing rules are declared directly inside `conf
   "routing": {
     "defaultProvider": "lmstudio"
   },
+  "mediaStorage": {
+    "enabled": true,
+    "ttlMinutes": 60,
+    "cleanupIntervalMs": 60000
+  },
   "providers": {
     "lmstudio": {
       "type": "lmstudio",
@@ -125,7 +132,10 @@ Providers and specific fallback routing rules are declared directly inside `conf
       "capabilities": {
         "embeddings": true,
         "structuredOutput": true,
-        "streaming": true
+        "streaming": true,
+        "imageGeneration": false,
+        "tts": false,
+        "stt": false
       }
     }
   }
@@ -136,17 +146,17 @@ Providers and specific fallback routing rules are declared directly inside `conf
 
 ## Supported Providers
 
-| Provider | Type | Embeddings | Streaming | Structured Output |
-|----------|------|------------|-----------|-------------------|
-| Gemini | `gemini` | ✅ | ✅ | ✅ |
-| LM Studio | `lmstudio` | ✅ | ✅ | ✅ |
-| Ollama | `ollama` | ✅ | ✅ | ❌ |
-| OpenAI | `openai` | ✅ | ✅ | ✅ |
-| Grok (xAI) | `openai` | ❌ | ✅ | ✅ |
-| GLM | `openai` | ❌ | ✅ | ✅ |
-| MiniMax | `minimax` | ❌ | ❌ | ✅ |
-| Kimi | `kimi-cli` | ❌ | Simulated | ❌ |
-| Qwen | `openai` | ❌ | ✅ | ✅ |
+| Provider | Type | Embeddings | Streaming | Structured Output | Image Gen | TTS |
+|----------|------|------------|-----------|-------------------|-----------|-----|
+| Gemini | `gemini` | ✅ | ✅ | ✅ | Configurable | Configurable |
+| LM Studio | `lmstudio` | ✅ | ✅ | ✅ | Configurable | Configurable |
+| Ollama | `ollama` | ✅ | ✅ | ❌ | Configurable | Configurable |
+| OpenAI | `openai` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Grok (xAI) | `openai` | ❌ | ✅ | ✅ | Configurable | Configurable |
+| GLM | `openai` | ❌ | ✅ | ✅ | Configurable | Configurable |
+| MiniMax | `minimax` | ❌ | ❌ | ✅ | Configurable | Configurable |
+| Kimi | `kimi-cli` | ❌ | Simulated | ❌ | ❌ | ❌ |
+| Qwen | `openai` | ❌ | ✅ | ✅ | Configurable | Configurable |
 
 See [Provider Adapters Documentation](./src/adapters/adapters.md) for detailed configuration of each provider.
 

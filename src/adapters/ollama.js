@@ -6,6 +6,7 @@ export function createOllamaAdapter(config) {
         embeddings: true,
         structuredOutput: true,
         streaming: true,
+        vision: true,
         ...config.capabilities
     };
 
@@ -22,11 +23,30 @@ export function createOllamaAdapter(config) {
     };
 
     const formatMessages = (messages, prompt, systemPrompt) => {
-        if (messages && Array.isArray(messages)) return messages;
-        const out = [];
-        if (systemPrompt) out.push({ role: 'system', content: systemPrompt });
-        if (prompt) out.push({ role: 'user', content: prompt });
-        return out;
+        let activeMessages = messages && Array.isArray(messages) ? messages : [];
+        if (!messages) {
+            if (systemPrompt) activeMessages.push({ role: 'system', content: systemPrompt });
+            if (prompt) activeMessages.push({ role: 'user', content: prompt });
+        }
+
+        return activeMessages.map(m => {
+            if (Array.isArray(m.content)) {
+                let textContent = '';
+                let images = [];
+                m.content.forEach(part => {
+                    if (part.type === 'text') textContent += part.text;
+                    if (part.type === 'image_url') {
+                        const url = part.image_url.url;
+                        const match = url.match(/^data:([^;]+);base64,(.+)$/);
+                        if (match) {
+                            images.push(match[2]); // Ollama wants just the base64 string
+                        }
+                    }
+                });
+                return { role: m.role, content: textContent, images: images.length > 0 ? images : undefined };
+            }
+            return m;
+        });
     };
 
     // Translates standard predict schema to Ollama's specific /api/chat schema
@@ -55,12 +75,39 @@ export function createOllamaAdapter(config) {
         async listModels() {
             const res = await request(`${apiEndpoint}/api/tags`);
             const json = await res.json();
-            return (json.models || []).map(m => ({
-                id: m.name,
-                object: 'model',
-                owned_by: config.providerName || 'ollama',
-                capabilities: defaultCapabilities
-            }));
+            
+            // Patterns to identify embedding models in Ollama
+            const embeddingPatterns = ['embed', 'nomic-embed', 'embedding'];
+            const imageGenerationPatterns = ['dall-e', 'imagen', 'imagine', 'image', 'veo', 'easel'];
+            const ttsPatterns = ['tts', 'text-to-speech', 'speech'];
+            const sttPatterns = ['stt', 'whisper', 'asr', 'transcribe', 'speech-to-text'];
+            const contextWindow = await this.getContextWindow();
+            
+            return (json.models || []).map(m => {
+                const id = m.name.toLowerCase();
+                const isEmbedding = embeddingPatterns.some(p => id.includes(p));
+                const isImageGeneration = imageGenerationPatterns.some(p => id.includes(p));
+                const isTts = ttsPatterns.some(p => id.includes(p));
+                const isStt = sttPatterns.some(p => id.includes(p));
+                const isTextChat = !isEmbedding && !isImageGeneration && !isTts && !isStt;
+                
+                return {
+                    id: m.name,
+                    object: 'model',
+                    owned_by: 'ollama',
+                    capabilities: {
+                        chat: isTextChat,
+                        embeddings: isEmbedding,
+                        structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
+                        streaming: isTextChat && defaultCapabilities.streaming,
+                        vision: isTextChat && defaultCapabilities.vision,
+                        imageGeneration: isImageGeneration,
+                        tts: isTts,
+                        stt: isStt,
+                        context_window: contextWindow
+                    }
+                };
+            });
         },
 
         async predict(opts, requestedModel = 'auto') {
@@ -180,6 +227,32 @@ export function createOllamaAdapter(config) {
                 model: model,
                 usage: { prompt_tokens: totalPromptTokens, total_tokens: totalPromptTokens }
             };
+        },
+
+        async getContextWindow() {
+            // Try to get context window from Ollama API
+            const model = config.model;
+            if (!model) {
+                return config.contextWindow || 8192;
+            }
+            
+            try {
+                const res = await request(`${apiEndpoint}/api/show`, {
+                    method: 'POST',
+                    body: JSON.stringify({ name: model })
+                });
+                const data = await res.json();
+                
+                // Ollama returns context_length in the model info
+                const contextLength = data.model_info?.['context_length'] || 
+                                     data.parameters?.['num_ctx'] ||
+                                     config.contextWindow || 
+                                     8192;
+                return contextLength;
+            } catch (err) {
+                // Fall back to config or default
+                return config.contextWindow || 8192;
+            }
         }
     };
 }

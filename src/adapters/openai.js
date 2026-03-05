@@ -6,6 +6,7 @@ export function createOpenAIAdapter(config) {
         embeddings: !!config.embeddingModel,
         structuredOutput: true,
         streaming: true,
+        vision: true,
         ...config.capabilities
     };
 
@@ -69,16 +70,71 @@ export function createOpenAIAdapter(config) {
         },
 
         async listModels() {
-            const res = await request(`${apiEndpoint}/models`, {
-                headers: buildHeaders()
-            });
-            const json = await res.json();
-            return (json.data || []).map(m => ({
-                id: m.id,
-                object: 'model',
-                owned_by: config.providerName || config.type || 'openai',
-                capabilities: defaultCapabilities
-            }));
+            let json = { data: [] };
+            try {
+                const res = await request(`${apiEndpoint}/models`, {
+                    headers: buildHeaders()
+                });
+                json = await res.json();
+            } catch (err) {
+                console.warn(`[OpenAI Adapter '${config.providerName || config.type}'] Failed to fetch models: ${err.message}. Using static fallbacks.`);
+            }
+
+            // Patterns to identify capability by model id
+            const embeddingPatterns = ['embed', 'embedding'];
+            const moderationPatterns = ['moderation'];
+
+            const contextWindow = await this.getContextWindow();
+
+            let modelsList = json.data || [];
+            
+            // Inject provider-specific fallback models if API returns empty
+            if (config.providerName === 'qwen') {
+                if (modelsList.length === 0) {
+                    modelsList.push({ id: 'qwen-turbo' }, { id: 'qwen-plus' }, { id: 'qwen-max' });
+                }
+            } else if (config.providerName === 'glm') {
+                if (modelsList.length === 0) {
+                    modelsList.push({ id: 'glm-4-plus' }, { id: 'glm-4v-plus' }, { id: 'glm-4-flash' });
+                }
+            } else if (config.providerName === 'grok') {
+                if (modelsList.length === 0) {
+                    modelsList.push(
+                        { id: 'grok-3' },
+                        { id: 'grok-3-mini' },
+                        { id: 'grok-4-fast-non-reasoning' }
+                    );
+                }
+            } else if (config.providerName === 'openai') {
+                if (modelsList.length === 0) {
+                    modelsList.push({ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }, { id: 'o1-preview' }, { id: 'o1-mini' });
+                }
+            }
+
+            return modelsList
+                .filter(m => {
+                    const id = m.id.toLowerCase();
+                    return !moderationPatterns.some(pattern => id.includes(pattern));
+                })
+                .map(m => {
+                    const id = m.id.toLowerCase();
+                    const isEmbedding = embeddingPatterns.some(p => id.includes(p));
+                    const isTextChat = !isEmbedding;
+                    
+                    return {
+                        id: m.id,
+                        object: 'model',
+                        owned_by: config.type || 'openai',
+                        capabilities: {
+                            chat: isTextChat,
+                            embeddings: isEmbedding,
+                            structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
+                            streaming: isTextChat && defaultCapabilities.streaming,
+                            vision: isTextChat && defaultCapabilities.vision,
+                            context_window: contextWindow
+                        }
+                    };
+                });
         },
 
         async predict(opts, requestedModel = 'auto') {
@@ -151,6 +207,35 @@ export function createOpenAIAdapter(config) {
                  body: JSON.stringify(payload)
              });
              return await res.json();
+        },
+
+        async getContextWindow(requestedModel) {
+            // Try to get context window from API
+            const model = requestedModel || config.model;
+            if (!model) {
+                return config.contextWindow || 8192;
+            }
+            
+            try {
+                // Try to fetch model info from API
+                const res = await request(`${apiEndpoint}/models/${model}`, {
+                    headers: buildHeaders()
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    // OpenAI returns context_window in the model object
+                    if (data.context_window) {
+                        return data.context_window;
+                    }
+                }
+            } catch (err) {
+                // API might not support model info or model doesn't exist
+                console.log(`[OpenAI Adapter] Could not fetch model info for ${model}: ${err.message}`);
+            }
+            
+            // Fall back to config or default
+            return config.contextWindow || 8192;
         }
     };
 }
