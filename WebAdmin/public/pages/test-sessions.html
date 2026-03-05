@@ -1,0 +1,159 @@
+<section class="test-form">
+    <header>
+        <h2>Test Sessions</h2>
+        <p class="text-dim">Manage conversation sessions</p>
+    </header>
+    
+    <nui-button-container>
+        <nui-button type="primary" data-action="create-session">
+            <nui-icon name="add"></nui-icon>
+            <span>Create New Session</span>
+        </nui-button>
+    </nui-button-container>
+    
+    <div id="sessions-list" class="sessions-list">
+        <div class="loading-placeholder">Sessions management available via Gateway API</div>
+    </div>
+</section>
+
+<script type="nui/page">
+function init(element, params) {
+    const sessionsList = element.querySelector('#sessions-list');
+    let sessions = [];
+    
+    function render() {
+        if (sessions.length === 0) {
+            sessionsList.innerHTML = `
+                <div class="empty-state">
+                    <p>No sessions created yet</p>
+                    <p class="text-dim">Click "Create New Session" to start</p>
+                </div>
+            `;
+            return;
+        }
+        
+        sessionsList.innerHTML = `
+            <nui-table>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Created</th>
+                            <th>Messages</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${sessions.map(s => `
+                            <tr>
+                                <td><code>${s.id}</code></td>
+                                <td>${new Date(s.created_at || Date.now()).toLocaleString()}</td>
+                                <td>${s.messages?.length || 0}</td>
+                                <td>
+                                    <nui-button class="icon-only" data-action="view-session" data-id="${s.id}">
+                                        <nui-icon name="article"></nui-icon>
+                                    </nui-button>
+                                    <nui-button class="icon-only" data-action="delete-session" data-id="${s.id}">
+                                        <nui-icon name="delete"></nui-icon>
+                                    </nui-button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </nui-table>
+        `;
+    }
+    
+    // Create session
+    element.querySelector('[data-action="create-session"]')?.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/sessions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                sessions.unshift(data);
+                render();
+                
+                nui.components.banner.show({
+                    content: `Session created: ${data.id}`,
+                    priority: 'success',
+                    autoClose: 2000
+                });
+            }
+        } catch (error) {
+            nui.components.banner.show({
+                content: `Failed to create session: ${error.message}`,
+                priority: 'error',
+                autoClose: 3000
+            });
+        }
+    });
+    
+    // Handle view/delete actions
+    sessionsList.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        
+        const action = btn.dataset.action;
+        const sessionId = btn.dataset.id;
+        
+        if (action === 'delete-session') {
+            const confirmed = await nui.components.dialog.confirm(
+                'Delete Session?',
+                `Are you sure you want to delete session ${sessionId}?`
+            );
+            
+            if (confirmed) {
+                try {
+                    const response = await fetch(`/api/sessions/${sessionId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        sessions = sessions.filter(s => s.id !== sessionId);
+                        render();
+                    }
+                } catch (error) {
+                    nui.components.banner.show({
+                        content: `Failed to delete: ${error.message}`,
+                        priority: 'error',
+                        autoClose: 3000
+                    });
+                }
+            }
+        }
+        
+        if (action === 'view-session') {
+            try {
+                const response = await fetch(`/api/sessions/${sessionId}`);
+                const data = await response.json();
+                
+                nui.components.dialog.alert(
+                    `Session: ${sessionId}`,
+                    `<pre style="max-height: 400px; overflow: auto;">${JSON.stringify(data, null, 2)}</pre>`
+                );
+            } catch (error) {
+                nui.components.banner.show({
+                    content: `Failed to load session: ${error.message}`,
+                    priority: 'error',
+                    autoClose: 3000
+                });
+            }
+        }
+    });
+    
+    // Initial render
+    render();
+}
+</script>
+
+<style>
+.sessions-list {
+    margin-top: var(--nui-space);
+}
+</style>

@@ -1,0 +1,224 @@
+<section>
+    <header>
+        <h2>Providers & Models</h2>
+        <p class="text-dim">Available providers and their supported models with capabilities</p>
+    </header>
+    
+    <div id="providers-container">
+        <div class="loading-placeholder">Loading providers...</div>
+    </div>
+</section>
+
+<script type="nui/page">
+function init(element, params) {
+    const container = element.querySelector('#providers-container');
+    
+    function renderProviders() {
+        const state = window.modelsService?.getState?.();
+        if (!state || state.providers.length === 0) {
+            container.innerHTML = `
+                <div class="loading-placeholder">
+                    Loading providers...<br>
+                    <small>If this persists, the gateway may be unavailable.</small>
+                </div>
+            `;
+            return;
+        }
+        
+        const html = state.providers.map(provider => {
+            const models = state.modelsByProvider[provider] || [];
+            
+            // Separate models by capability
+            const chatModels = models.filter(m => m.capabilities?.chat);
+            const embedModels = models.filter(m => m.capabilities?.embeddings);
+            const imageModels = models.filter(m => m.capabilities?.imageGeneration);
+            const ttsModels = models.filter(m => m.capabilities?.tts);
+            const sttModels = models.filter(m => m.capabilities?.stt);
+            const otherModels = models.filter(m => !m.capabilities?.chat && !m.capabilities?.embeddings && !m.capabilities?.imageGeneration && !m.capabilities?.tts && !m.capabilities?.stt);
+            
+            return `
+                <div class="provider-section">
+                    <div class="provider-header">
+                        <h3>${provider}</h3>
+                        <span class="model-count">${models.length} models</span>
+                    </div>
+                    
+                    ${chatModels.length > 0 ? `
+                        <div class="model-category">
+                            <h4><span class="cap-indicator chat"></span> Chat Models</h4>
+                            <div class="models-row">
+                                ${chatModels.map(m => `
+                                    <span class="model-tag">${m.id}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    ${embedModels.length > 0 ? `
+                        <div class="model-category">
+                            <h4><span class="cap-indicator embed"></span> Embedding Models</h4>
+                            <div class="models-row">
+                                ${embedModels.map(m => `
+                                    <span class="model-tag">${m.id}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${imageModels.length > 0 ? `
+                        <div class="model-category">
+                            <h4><span class="cap-indicator image"></span> Image Generation Models</h4>
+                            <div class="models-row">
+                                ${imageModels.map(m => `
+                                    <span class="model-tag">${m.id}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${ttsModels.length > 0 ? `
+                        <div class="model-category">
+                            <h4><span class="cap-indicator tts"></span> TTS Models</h4>
+                            <div class="models-row">
+                                ${ttsModels.map(m => `
+                                    <span class="model-tag">${m.id}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${sttModels.length > 0 ? `
+                        <div class="model-category">
+                            <h4><span class="cap-indicator stt"></span> STT Models</h4>
+                            <div class="models-row">
+                                ${sttModels.map(m => `
+                                    <span class="model-tag">${m.id}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    ${otherModels.length > 0 ? `
+                        <div class="model-category">
+                            <h4>Other Models</h4>
+                            <div class="models-row">
+                                ${otherModels.map(m => `
+                                    <span class="model-tag">${m.id}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+        
+        container.innerHTML = html;
+    }
+    
+    // Subscribe to model updates
+    const unsubscribe = window.modelsService?.subscribe?.((state) => {
+        renderProviders();
+    });
+    
+    // Initial render
+    renderProviders();
+    
+    // Cleanup on page hide
+    element.hide = () => {
+        if (unsubscribe) unsubscribe();
+    };
+}
+</script>
+
+<style>
+.provider-section {
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+    padding: var(--nui-space);
+    margin-bottom: var(--nui-space);
+}
+
+.provider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--nui-space);
+    padding-bottom: var(--nui-space-half);
+    border-bottom: 1px solid var(--nui-border);
+}
+
+.provider-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    text-transform: capitalize;
+}
+
+.model-count {
+    font-size: 0.875rem;
+    color: var(--nui-fg-dim);
+}
+
+.model-category {
+    margin-bottom: var(--nui-space);
+}
+
+.model-category:last-child {
+    margin-bottom: 0;
+}
+
+.model-category h4 {
+    margin: 0 0 var(--nui-space-half) 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--nui-fg-dim);
+    display: flex;
+    align-items: center;
+    gap: var(--nui-space-half);
+}
+
+.cap-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.cap-indicator.chat {
+    background: var(--nui-success);
+}
+
+.cap-indicator.embed {
+    background: var(--nui-info);
+}
+
+.cap-indicator.image {
+    background: var(--nui-warning);
+}
+
+.cap-indicator.tts {
+    background: var(--nui-primary);
+}
+
+.cap-indicator.stt {
+    background: var(--nui-accent, var(--nui-info));
+}
+
+.models-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--nui-space-half);
+}
+
+.model-tag {
+    display: inline-block;
+    padding: 0.375rem 0.75rem;
+    background: var(--nui-surface-elevated);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+    font-family: var(--nui-font-mono);
+    font-size: 0.875rem;
+}
+</style>

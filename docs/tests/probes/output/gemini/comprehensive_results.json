@@ -1,0 +1,99 @@
+{
+  "provider": "Gemini",
+  "timestamp": "2026-03-05T05:56:48.607Z",
+  "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+  "capabilities": {
+    "vision": {
+      "capability": "Vision",
+      "tested": true,
+      "passed": true,
+      "tests": [
+        {
+          "name": "Small 2x2 red pixel",
+          "passed": true,
+          "response": "White",
+          "latency": 931,
+          "model": "gemini-2.0-flash"
+        },
+        {
+          "name": "Base64 JPEG test",
+          "passed": true,
+          "response": "The image is a solid, uniform field of gray color. There are no discernible objects, patterns, or other elements within the image.\n",
+          "latency": 988,
+          "model": "gemini-2.0-flash"
+        }
+      ]
+    },
+    "imageGeneration": {
+      "capability": "Image Generation",
+      "tested": true,
+      "passed": true,
+      "tests": [
+        {
+          "name": "Standard generation",
+          "model": "imagen-4.0-generate-001",
+          "passed": true,
+          "size": 546464,
+          "latency": 8870,
+          "outputPath": "D:\\DEV\\LLM Gateway\\docs\\tests\\probes\\output\\gemini\\imagen_imagen_4_0_generate_001.jpg"
+        },
+        {
+          "name": "Fast generation",
+          "model": "imagen-4.0-fast-generate-001",
+          "passed": true,
+          "size": 424410,
+          "latency": 4494,
+          "outputPath": "D:\\DEV\\LLM Gateway\\docs\\tests\\probes\\output\\gemini\\imagen_imagen_4_0_fast_generate_001.jpg"
+        }
+      ]
+    },
+    "tts": {
+      "capability": "Text-to-Speech",
+      "tested": true,
+      "passed": true,
+      "tests": [
+        {
+          "name": "TTS Preview Model - Aoede voice",
+          "model": "gemini-2.5-flash-preview-tts",
+          "voice": "Aoede",
+          "passed": true,
+          "size": 301966,
+          "mimeType": "audio/L16;codec=pcm;rate=24000",
+          "latency": 4469,
+          "outputPath": "D:\\DEV\\LLM Gateway\\docs\\tests\\probes\\output\\gemini\\tts_aoede.audio"
+        },
+        {
+          "name": "TTS Preview Model - Puck voice",
+          "model": "gemini-2.5-flash-preview-tts",
+          "voice": "Puck",
+          "passed": true,
+          "size": 140686,
+          "mimeType": "audio/L16;codec=pcm;rate=24000",
+          "latency": 2302,
+          "outputPath": "D:\\DEV\\LLM Gateway\\docs\\tests\\probes\\output\\gemini\\tts_puck.audio"
+        }
+      ]
+    },
+    "stt": {
+      "capability": "Speech-to-Text",
+      "tested": true,
+      "passed": true,
+      "tests": [
+        {
+          "name": "Audio input capability test",
+          "model": "gemini-2.0-flash",
+          "passed": true,
+          "response": "Okay, I need the audio file to transcribe it or describe what I hear. Please provide the audio file. Once you do, I will do my best to provide an accurate transcription or description.\n",
+          "latency": 1212
+        }
+      ]
+    },
+    "videoGeneration": {
+      "capability": "Video Generation",
+      "tested": false,
+      "passed": false,
+      "tests": [],
+      "note": "Video models available but not tested in this run"
+    }
+  }
+}

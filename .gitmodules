@@ -1,0 +1,6 @@
+[submodule "WebAdmin/lib/nui_wc2"]
+	path = WebAdmin/lib/nui_wc2
+	url = https://github.com/herrbasan/nui_wc2.git
+[submodule "MediaService"]
+	path = MediaService
+	url = https://github.com/herrbasan/MediaService.git

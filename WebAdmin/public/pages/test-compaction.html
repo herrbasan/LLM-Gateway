@@ -1,0 +1,736 @@
+<section class="test-form">
+    <header>
+        <h2>Test Context Compaction</h2>
+        <p class="text-dim">Upload a large text file to test compaction strategies</p>
+    </header>
+    
+    <form id="compaction-form">
+        <div class="form-group">
+            <label for="provider">Provider</label>
+            <nui-select id="provider-select">
+                <select id="provider" name="provider">
+                    <option value="">Auto-select</option>
+                </select>
+            </nui-select>
+        </div>
+        
+        <div class="form-group">
+            <label for="model">Model</label>
+            <nui-select id="model-select">
+                <select id="model" name="model">
+                    <option value="">Select provider first</option>
+                </select>
+            </nui-select>
+        </div>
+        
+        <div class="form-group">
+            <label for="strategy">Compaction Strategy</label>
+            <nui-select id="strategy-select">
+                <select id="strategy" name="strategy">
+                    <option value="truncate">Truncate (default)</option>
+                    <option value="summarize">Summarize</option>
+                    <option value="rolling">Rolling Summary</option>
+                    <option value="semantic">Semantic Compaction</option>
+                    <option value="none">None (fail if too large)</option>
+                </select>
+            </nui-select>
+        </div>
+        
+        <div class="form-group">
+            <label for="file">Upload Markdown File</label>
+            <input type="file" id="file" name="file" accept=".md,.txt,.markdown" class="file-input">
+            <small class="text-dim">Large files will trigger compaction strategies</small>
+        </div>
+        
+        <div class="token-preview" id="token-preview" hidden>
+            <div class="token-stats">
+                <div class="token-stat">
+                    <span class="token-label">Characters</span>
+                    <span class="token-value" id="char-count">0</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-label">Estimated Tokens</span>
+                    <span class="token-value" id="token-estimate">0</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-label">Context Window</span>
+                    <span class="token-value" id="context-limit">-</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-label">Min Tokens to Compact</span>
+                    <span class="token-value" id="threshold">2000</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-label">Safety Margin (20%)</span>
+                    <span class="token-value" id="safety-margin">-</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-label">Available (with buffer)</span>
+                    <span class="token-value" id="available-limit">-</span>
+                </div>
+            </div>
+            <div class="compaction-indicator" id="compaction-indicator">
+                <span class="indicator-icon">✓</span>
+                <span class="indicator-text">No compaction needed</span>
+            </div>
+            <div class="progress-bar" id="progress-bar" hidden>
+                <div class="progress-fill" id="progress-fill"></div>
+                <span class="progress-text" id="progress-text">0%</span>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label for="prompt">Your Question (optional)</label>
+            <nui-input-group>
+                <input type="text" id="prompt" name="prompt" placeholder="Ask a question about the uploaded content...">
+            </nui-input-group>
+        </div>
+        
+        <div class="form-group">
+            <nui-checkbox>
+                <input type="checkbox" id="stream" name="stream" checked>
+                <label for="stream">Enable streaming</label>
+            </nui-checkbox>
+        </div>
+        
+        <nui-button-container>
+            <nui-button type="primary">
+                <button type="submit">Send with Compaction</button>
+            </nui-button>
+        </nui-button-container>
+    </form>
+    
+    <div class="stats-panel" id="stats-panel" hidden>
+        <h4>Compaction Statistics</h4>
+        <div class="stats-grid">
+            <div class="stat-item">
+                <span class="stat-label">Original Tokens</span>
+                <span class="stat-value" id="original-tokens">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Final Tokens</span>
+                <span class="stat-value" id="final-tokens">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Reduction</span>
+                <span class="stat-value" id="reduction">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Strategy Used</span>
+                <span class="stat-value" id="strategy-used">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Context Window</span>
+                <span class="stat-value" id="context-window">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Available</span>
+                <span class="stat-value" id="available-tokens">-</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="response-panel" id="response-panel" hidden>
+        <h4>Response</h4>
+        <pre class="response-content" id="response-content"></pre>
+    </div>
+    
+    <div class="error-panel" id="error-panel" hidden>
+        <h4>Error</h4>
+        <pre class="error-content" id="error-content"></pre>
+    </div>
+</section>
+
+<script type="nui/page">
+function init(element, params) {
+    const form = element.querySelector('#compaction-form');
+    const providerSelect = element.querySelector('#provider');
+    const modelSelect = element.querySelector('#model');
+    const fileInput = element.querySelector('#file');
+    const statsPanel = element.querySelector('#stats-panel');
+    const responsePanel = element.querySelector('#response-panel');
+    const errorPanel = element.querySelector('#error-panel');
+    const responseContent = element.querySelector('#response-content');
+    const errorContent = element.querySelector('#error-content');
+
+    function isChatCapableModel(model) {
+        return model?.capabilities?.chat !== false;
+    }
+    
+    // File content storage
+    let uploadedContent = '';
+    
+    // Token estimation constants (rough heuristic: ~4 chars per token)
+    const CHARS_PER_TOKEN = 4;
+    const COMPACTION_THRESHOLD = 2000; // From gateway config
+    const OUTPUT_BUFFER = 1024; // Default output buffer
+    const SAFETY_MARGIN_PERCENT = 0.20; // 20% safety margin for model overhead
+    
+    // Estimate tokens from text
+    function estimateTokens(text) {
+        return Math.ceil(text.length / CHARS_PER_TOKEN);
+    }
+    
+    // Get context window for current selection
+    function getContextWindow() {
+        const provider = providerSelect.value;
+        const model = modelSelect.value;
+        
+        if (!provider) return null;
+        
+        // Try to find model in service
+        const models = window.modelsService?.getModelsForProvider?.(provider) || [];
+        const modelInfo = models.find(m => m.id === model);
+        
+        // Return context window from model or default
+        return modelInfo?.capabilities?.context_window || 
+               modelInfo?.contextWindow || 
+               8192; // Default fallback
+    }
+    
+    // Update token preview display
+    function updateTokenPreview() {
+        const preview = element.querySelector('#token-preview');
+        if (!uploadedContent) {
+            preview.hidden = true;
+            return;
+        }
+        
+        preview.hidden = false;
+        
+        const charCount = uploadedContent.length;
+        const tokenEstimate = estimateTokens(uploadedContent);
+        const contextWindow = getContextWindow();
+        const safetyMargin = contextWindow ? Math.floor(contextWindow * SAFETY_MARGIN_PERCENT) : 0;
+        const availableTokens = contextWindow ? contextWindow - OUTPUT_BUFFER - safetyMargin : 0;
+        
+        // Gateway compaction logic:
+        // Compaction ONLY triggers if: tokens >= 2000 AND tokens > availableTokens
+        const exceedsThreshold = tokenEstimate >= COMPACTION_THRESHOLD;
+        const exceedsContext = tokenEstimate > availableTokens;
+        const willCompact = exceedsThreshold && exceedsContext;
+        
+        // Update display
+        element.querySelector('#char-count').textContent = charCount.toLocaleString();
+        element.querySelector('#token-estimate').textContent = tokenEstimate.toLocaleString();
+        element.querySelector('#context-limit').textContent = contextWindow ? contextWindow.toLocaleString() : '-';
+        element.querySelector('#safety-margin').textContent = safetyMargin ? safetyMargin.toLocaleString() : '-';
+        element.querySelector('#available-limit').textContent = availableTokens ? availableTokens.toLocaleString() : '-';
+        element.querySelector('#threshold').textContent = COMPACTION_THRESHOLD.toLocaleString();
+        
+        // Update compaction indicator
+        const indicator = element.querySelector('#compaction-indicator');
+        const progressBar = element.querySelector('#progress-bar');
+        const progressFill = element.querySelector('#progress-fill');
+        const progressText = element.querySelector('#progress-text');
+        
+        const ratio = Math.min(tokenEstimate / availableTokens, 1.5);
+        const percentage = Math.round(ratio * 100);
+        
+        progressBar.hidden = false;
+        progressFill.style.width = `${Math.min(percentage, 100)}%`;
+        progressText.textContent = `${percentage}% of ${availableTokens.toLocaleString()} available`;
+        
+        if (!willCompact) {
+            // Fits comfortably - no compaction needed
+            indicator.className = 'compaction-indicator safe';
+            if (!exceedsThreshold) {
+                indicator.innerHTML = `<span class="indicator-icon">✓</span><span class="indicator-text">No compaction needed (${tokenEstimate.toLocaleString()} < ${COMPACTION_THRESHOLD.toLocaleString()} threshold)</span>`;
+            } else {
+                indicator.innerHTML = `<span class="indicator-icon">✓</span><span class="indicator-text">No compaction needed (fits in ${availableTokens.toLocaleString()} available context)</span>`;
+            }
+            progressFill.className = 'progress-fill safe';
+        } else {
+            // Will trigger compaction
+            indicator.className = 'compaction-indicator warning';
+            indicator.innerHTML = `<span class="indicator-icon">⚠</span><span class="indicator-text">Compaction WILL trigger (${tokenEstimate.toLocaleString()} > ${availableTokens.toLocaleString()} available)</span>`;
+            progressFill.className = 'progress-fill warning';
+        }
+        
+        if (exceedsContext && !exceedsThreshold) {
+            // Edge case: exceeds context but below threshold (shouldn't happen often)
+            indicator.className = 'compaction-indicator danger';
+            indicator.innerHTML = `<span class="indicator-icon">✗</span><span class="indicator-text">EXCEEDS CONTEXT! May fail if strategy is 'none'</span>`;
+            progressFill.className = 'progress-fill danger';
+        }
+    }
+    
+    // Handle file upload
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) {
+            uploadedContent = '';
+            updateTokenPreview();
+            return;
+        }
+        
+        try {
+            uploadedContent = await file.text();
+            console.log(`[CompactionTest] Loaded file: ${file.name}, ${uploadedContent.length} chars, ~${estimateTokens(uploadedContent)} tokens`);
+            updateTokenPreview();
+        } catch (err) {
+            console.error('[CompactionTest] Failed to read file:', err);
+            alert('Failed to read file: ' + err.message);
+            uploadedContent = '';
+            updateTokenPreview();
+        }
+    });
+    
+    // Update preview when model changes
+    modelSelect.addEventListener('change', updateTokenPreview);
+    providerSelect.addEventListener('change', () => {
+        // Model will update, then update preview
+        setTimeout(updateTokenPreview, 100);
+    });
+    
+    // Populate providers when models are loaded
+    function updateProviders() {
+        const state = window.modelsService?.getState?.();
+        const currentProvider = providerSelect.value;
+        
+        providerSelect.innerHTML = '<option value="">Auto-select</option>';
+        
+        const eligibleProviders = (state?.providers || []).filter(provider => {
+            const models = window.modelsService?.getModelsForProvider?.(provider) || [];
+            return models.some(isChatCapableModel);
+        });
+
+        if (!state || eligibleProviders.length === 0) {
+            const loadingOption = document.createElement('option');
+            loadingOption.value = '';
+            loadingOption.textContent = state ? 'No compaction-capable providers' : 'Loading providers...';
+            loadingOption.disabled = true;
+            providerSelect.appendChild(loadingOption);
+            providerSelect.disabled = true;
+        } else {
+            providerSelect.disabled = false;
+            
+            for (const provider of eligibleProviders) {
+                const option = document.createElement('option');
+                option.value = provider;
+                option.textContent = provider.charAt(0).toUpperCase() + provider.slice(1);
+                providerSelect.appendChild(option);
+            }
+            
+            if (currentProvider && eligibleProviders.includes(currentProvider)) {
+                providerSelect.value = currentProvider;
+            }
+        }
+        
+        const nuiSelect = providerSelect.closest('nui-select');
+        if (nuiSelect && typeof nuiSelect.refresh === 'function') {
+            nuiSelect.refresh();
+        }
+        
+        updateModels();
+    }
+    
+    function updateModels() {
+        const provider = providerSelect.value;
+        const currentModel = modelSelect.value;
+        
+        modelSelect.innerHTML = '';
+        
+        if (!provider) {
+            modelSelect.innerHTML = '<option value="">Auto-selected by gateway</option>';
+            modelSelect.disabled = true;
+            modelSelect.closest('nui-select')?.refresh();
+            return;
+        }
+        
+        modelSelect.disabled = false;
+        
+        const autoOption = document.createElement('option');
+        autoOption.value = '';
+        autoOption.textContent = 'Auto-select model';
+        modelSelect.appendChild(autoOption);
+        
+        const allModels = window.modelsService?.getModelsForProvider?.(provider) || [];
+        const models = allModels.filter(isChatCapableModel);
+        
+        for (const model of models) {
+            const option = document.createElement('option');
+            option.value = model.id;
+            option.textContent = model.id;
+            modelSelect.appendChild(option);
+        }
+        
+        const modelIds = models.map(m => m.id);
+        if (currentModel && modelIds.includes(currentModel)) {
+            modelSelect.value = currentModel;
+        }
+        
+        modelSelect.closest('nui-select')?.refresh();
+    }
+    
+    function resetStats() {
+        statsPanel.hidden = true;
+        responsePanel.hidden = true;
+        errorPanel.hidden = true;
+        document.getElementById('original-tokens').textContent = '-';
+        document.getElementById('final-tokens').textContent = '-';
+        document.getElementById('reduction').textContent = '-';
+        document.getElementById('strategy-used').textContent = '-';
+        document.getElementById('context-window').textContent = '-';
+        document.getElementById('available-tokens').textContent = '-';
+    }
+    
+    function displayStats(context) {
+        if (!context) return;
+        
+        statsPanel.hidden = false;
+        document.getElementById('original-tokens').textContent = context.original_tokens?.toLocaleString() || '-';
+        document.getElementById('final-tokens').textContent = context.final_tokens?.toLocaleString() || '-';
+        document.getElementById('strategy-used').textContent = context.strategy_applied || '-';
+        document.getElementById('context-window').textContent = context.window_size?.toLocaleString() || '-';
+        document.getElementById('available-tokens').textContent = context.available_tokens?.toLocaleString() || '-';
+        
+        if (context.original_tokens && context.final_tokens) {
+            const reduction = ((1 - context.final_tokens / context.original_tokens) * 100).toFixed(1);
+            document.getElementById('reduction').textContent = `${reduction}%`;
+        }
+    }
+    
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        if (!uploadedContent) {
+            alert('Please upload a file first');
+            return;
+        }
+        
+        resetStats();
+        
+        const formData = new FormData(form);
+        const provider = formData.get('provider');
+        const model = formData.get('model');
+        const strategy = formData.get('strategy');
+        const prompt = formData.get('prompt') || 'Summarize this content';
+        const stream = formData.has('stream');
+        
+        // Build message with uploaded content and prompt
+        // Keep as single message so truncate properly truncates content, not discard it
+        const messages = [
+            { 
+                role: 'user', 
+                content: `${uploadedContent}\n\n${prompt}`
+            }
+        ];
+        
+        const request = {
+            model: model || undefined,
+            messages: messages,
+            stream: stream,
+            context_strategy: {
+                mode: strategy
+            }
+        };
+        
+        responsePanel.hidden = false;
+        responseContent.textContent = 'Processing...';
+        
+        try {
+            const gatewayUrl = window.location.origin.replace(':3401', ':3400');
+            const headers = { 'Content-Type': 'application/json' };
+            if (provider) {
+                headers['x-provider'] = provider;
+            }
+            
+            const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(request)
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error?.message || `HTTP ${response.status}`);
+            }
+            
+            // Handle streaming response
+            const contentType = response.headers.get('content-type');
+            if (contentType?.includes('text/event-stream')) {
+                responseContent.textContent = '';
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') continue;
+                            try {
+                                const parsed = JSON.parse(data);
+                                
+                                // Check for context status events
+                                if (parsed.type === 'context.status' && parsed.data) {
+                                    displayStats(parsed.data);
+                                    continue;
+                                }
+                                
+                                // Regular content
+                                const content = parsed.choices?.[0]?.delta?.content || '';
+                                responseContent.textContent += content;
+                            } catch {
+                                // Ignore parse errors for partial chunks
+                            }
+                        }
+                    }
+                }
+            } else {
+                const data = await response.json();
+                
+                // Display context stats if available
+                if (data.context) {
+                    displayStats(data.context);
+                }
+                
+                responseContent.textContent = data.choices?.[0]?.message?.content || JSON.stringify(data, null, 2);
+            }
+            
+        } catch (error) {
+            console.error('[CompactionTest] Error:', error);
+            errorPanel.hidden = false;
+            errorContent.textContent = `Error: ${error.message}`;
+            responsePanel.hidden = true;
+        }
+    });
+    
+    // Subscribe to model updates
+    const unsubscribe = window.modelsService?.subscribe?.((state) => {
+        updateProviders();
+    });
+    
+    updateProviders();
+    
+    providerSelect.addEventListener('change', updateModels);
+    
+    element.hide = () => {
+        if (unsubscribe) unsubscribe();
+    };
+}
+</script>
+
+<style>
+.file-input {
+    display: block;
+    width: 100%;
+    padding: var(--nui-space);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+    background: var(--nui-surface);
+    color: var(--nui-fg);
+}
+
+.file-input::file-selector-button {
+    padding: 0.5rem 1rem;
+    margin-right: var(--nui-space);
+    background: var(--nui-primary);
+    color: white;
+    border: none;
+    border-radius: var(--nui-radius);
+    cursor: pointer;
+}
+
+.stats-panel {
+    margin-top: var(--nui-space-double);
+    padding: var(--nui-space);
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+}
+
+.stats-panel h4 {
+    margin: 0 0 var(--nui-space) 0;
+    font-size: 1rem;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--nui-space);
+}
+
+.stat-item {
+    display: flex;
+    flex-direction: column;
+    padding: var(--nui-space);
+    background: var(--nui-surface-elevated);
+    border-radius: var(--nui-radius);
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--nui-fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.stat-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--nui-fg);
+    margin-top: 0.25rem;
+}
+
+.token-preview {
+    margin-top: var(--nui-space);
+    padding: var(--nui-space);
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+}
+
+.token-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--nui-space);
+    margin-bottom: var(--nui-space);
+}
+
+.token-stat {
+    display: flex;
+    flex-direction: column;
+    padding: var(--nui-space);
+    background: var(--nui-surface-elevated);
+    border-radius: var(--nui-radius);
+}
+
+.token-label {
+    font-size: 0.7rem;
+    color: var(--nui-fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.token-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--nui-fg);
+    margin-top: 0.25rem;
+}
+
+.compaction-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--nui-space-half);
+    padding: var(--nui-space);
+    border-radius: var(--nui-radius);
+    font-weight: 500;
+}
+
+.compaction-indicator.safe {
+    background: rgba(34, 197, 94, 0.1);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.compaction-indicator.warning {
+    background: rgba(234, 179, 8, 0.1);
+    color: #eab308;
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.compaction-indicator.danger {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.indicator-icon {
+    font-size: 1.2rem;
+}
+
+.progress-bar {
+    margin-top: var(--nui-space);
+    height: 24px;
+    background: var(--nui-surface-elevated);
+    border-radius: var(--nui-radius);
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--nui-primary);
+    border-radius: var(--nui-radius);
+    transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.progress-fill.safe {
+    background: #22c55e;
+}
+
+.progress-fill.warning {
+    background: #eab308;
+}
+
+.progress-fill.danger {
+    background: #ef4444;
+}
+
+.progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--nui-fg);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+.response-panel {
+    margin-top: var(--nui-space-double);
+    padding: var(--nui-space);
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+}
+
+.response-panel h4 {
+    margin: 0 0 var(--nui-space) 0;
+}
+
+.response-content {
+    margin: 0;
+    padding: var(--nui-space);
+    background: var(--nui-surface-elevated);
+    border-radius: var(--nui-radius);
+    font-family: var(--nui-font-mono);
+    font-size: 0.875rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.error-panel {
+    margin-top: var(--nui-space-double);
+    padding: var(--nui-space);
+    background: var(--nui-error-bg, #fef2f2);
+    border: 1px solid var(--nui-error, #ef4444);
+    border-radius: var(--nui-radius);
+}
+
+.error-panel h4 {
+    margin: 0 0 var(--nui-space) 0;
+    color: var(--nui-error, #ef4444);
+}
+
+.error-content {
+    margin: 0;
+    padding: var(--nui-space);
+    background: var(--nui-surface);
+    border-radius: var(--nui-radius);
+    font-family: var(--nui-font-mono);
+    font-size: 0.875rem;
+    color: var(--nui-error, #ef4444);
+}
+</style>

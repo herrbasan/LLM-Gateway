@@ -1,0 +1,88 @@
+{
+  "provider": "Grok",
+  "endpoint": "https://api.x.ai/v1",
+  "timestamp": "2026-03-04T22:12:01.752Z",
+  "tests": {
+    "models": [
+      {
+        "id": "grok-3",
+        "created": 1743724800,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-3-mini",
+        "created": 1743724800,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-4-0709",
+        "created": 1752019200,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-4-1-fast-non-reasoning",
+        "created": 1763510400,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-4-1-fast-reasoning",
+        "created": 1763510400,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-4-fast-non-reasoning",
+        "created": 1756944000,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-4-fast-reasoning",
+        "created": 1756944000,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-code-fast-1",
+        "created": 1755993600,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-imagine-image",
+        "created": 1769558400,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-imagine-image-pro",
+        "created": 1769558400,
+        "object": "model",
+        "owned_by": "xai"
+      },
+      {
+        "id": "grok-imagine-video",
+        "created": 1769558400,
+        "object": "model",
+        "owned_by": "xai"
+      }
+    ],
+    "imageGeneration": {
+      "success": false,
+      "error": "The model grok-2-image does not exist or your team 869cdc47-08bf-4e4e-b7d8-a673affa7b53 does not have access to it. Please ensure you're using the correct API key. If you believe this is a mistake, please contact support and quote your team ID and the model name."
+    },
+    "tts": {
+      "success": false,
+      "error": "TTS not available",
+      "note": "Grok may not expose TTS via API yet"
+    },
+    "vision": {
+      "success": false,
+      "error": "The model grok-2-vision-1212 does not exist or your team 869cdc47-08bf-4e4e-b7d8-a673affa7b53 does not have access to it. Please ensure you're using the correct API key. If you believe this is a mistake, please contact support and quote your team ID and the model name."
+    }
+  }
+}

@@ -1,0 +1,372 @@
+<section class="test-form">
+    <header>
+        <h2>Test Image Generation (Live)</h2>
+        <p class="text-dim">Run real image generation requests through WebAdmin proxy and poll task completion</p>
+    </header>
+
+    <form id="image-form">
+        <div class="form-group">
+            <label for="provider">Provider</label>
+            <nui-select>
+                <select id="provider" name="provider">
+                    <option value="">Auto-select</option>
+                </select>
+            </nui-select>
+        </div>
+
+        <div class="form-group">
+            <label for="model">Model</label>
+            <nui-select>
+                <select id="model" name="model">
+                    <option value="">Auto-select model</option>
+                </select>
+            </nui-select>
+        </div>
+
+        <div class="form-group">
+            <label for="prompt">Prompt</label>
+            <nui-textarea>
+                <textarea id="prompt" name="prompt" rows="3" placeholder="A cinematic cyberpunk city at night"></textarea>
+            </nui-textarea>
+        </div>
+
+        <div class="form-group form-grid-2">
+            <div>
+                <label for="size">Size</label>
+                <nui-select>
+                    <select id="size" name="size">
+                        <option value="1024x1024">1024x1024</option>
+                        <option value="1024x1536">1024x1536</option>
+                        <option value="1536x1024">1536x1024</option>
+                    </select>
+                </nui-select>
+            </div>
+            <div>
+                <label for="quality">Quality</label>
+                <nui-select>
+                    <select id="quality" name="quality">
+                        <option value="standard">standard</option>
+                        <option value="high">high</option>
+                    </select>
+                </nui-select>
+            </div>
+        </div>
+
+        <nui-button-container>
+            <nui-button type="primary">
+                <button type="submit">Submit Generation Job</button>
+            </nui-button>
+        </nui-button-container>
+    </form>
+
+    <div class="response-panel" id="ticket-panel" hidden>
+        <h4>Ticket Task SSE Listener</h4>
+        <div class="ticket-row">
+            <code id="ticket-id">-</code>
+        </div>
+        <pre class="response-content" id="ticket-status"></pre>
+    </div>
+
+    <div class="response-panel" id="image-result-panel" hidden>
+        <h4>Generated Image</h4>
+        <div id="image-result"></div>
+    </div>
+</section>
+
+<script type="nui/page">
+function init(element) {
+    const form = element.querySelector('#image-form');
+    const providerSelect = element.querySelector('#provider');
+    const modelSelect = element.querySelector('#model');
+    const ticketPanel = element.querySelector('#ticket-panel');
+    const ticketIdEl = element.querySelector('#ticket-id');
+    const ticketStatus = element.querySelector('#ticket-status');
+    const resultPanel = element.querySelector('#image-result-panel');
+    const resultContainer = element.querySelector('#image-result');
+
+    let activeTicket = null;
+    let eventSource = null;
+    let providerCapabilities = {};
+
+    function stopPolling() {
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+    }
+
+    function isImageCapableModel(model) {
+        return !!model?.capabilities?.imageGeneration;
+    }
+
+    function isImageCapableProvider(provider) {
+        const providerCaps = providerCapabilities?.[provider]?.capabilities || {};
+        return providerCaps.imageGeneration === true;
+    }
+
+    async function loadProviderCapabilities() {
+        try {
+            const response = await fetch('/api/config');
+            if (!response.ok) return;
+            const config = await response.json();
+            providerCapabilities = config.providers || {};
+        } catch {
+            providerCapabilities = {};
+        }
+    }
+
+    function showStatus(obj) {
+        ticketStatus.textContent = JSON.stringify(obj, null, 2);
+    }
+
+    function handleTaskCompletion(data) {
+        if (!data) return;
+        
+        let resultPayload = data.result || data;
+
+        if ((data.status === 'complete' || !data.status) && resultPayload?.data?.length) {
+            const item = resultPayload.data[0];
+            resultPanel.hidden = false;
+
+            if (item.local_url) {
+                const filename = item.local_url.split('/').pop();
+                const mediaUrl = `/api/proxy/media/${encodeURIComponent(filename)}`;
+                resultContainer.innerHTML = `
+                    <p><strong>Staged URL:</strong> ${item.local_url}</p>
+                    <img src="${mediaUrl}" alt="Generated image" class="generated-image" />
+                `;
+            } else if (item.url) {
+                resultContainer.innerHTML = `
+                    <p><strong>Remote URL:</strong></p>
+                    <img src="${item.url}" alt="Generated image" class="generated-image" />
+                `;
+            } else if (item.b64_json) {
+                resultContainer.innerHTML = `
+                    <p><strong>Base64 output:</strong> inline preview</p>
+                    <img src="data:image/png;base64,${item.b64_json}" alt="Generated image" class="generated-image" />
+                `;
+            } else {
+                resultContainer.innerHTML = '<p>No image payload found in response</p>';
+            }
+        }
+    }
+
+    function startSSETicketTracking(ticketId) {
+        stopPolling();
+        
+        eventSource = new EventSource(`/api/tasks/${encodeURIComponent(ticketId)}/stream`);
+        
+        eventSource.onmessage = (event) => {
+            if (event.data === '[DONE]') {
+                console.log('[SSE] Stream marked as [DONE]');
+                stopPolling();
+                return;
+            }
+
+            try {
+                const data = JSON.parse(event.data);
+                showStatus(data);
+                
+                if (data.status === 'complete' || data.status === 'failed') {
+                    handleTaskCompletion(data);
+                }
+            } catch (err) {
+                console.error('[SSE] Failed to parse message', err);
+            }
+        };
+
+        // Stream custom events
+        eventSource.addEventListener('completion.result', (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleTaskCompletion(data);
+                stopPolling();
+            } catch (err) {
+                console.error('[SSE] Failed to parse completion result', err);
+            }
+        });
+        
+        eventSource.addEventListener('completion.error', (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                showStatus(data);
+                stopPolling();
+            } catch (err) {
+                console.error('[SSE] Failed to parse completion error', err);
+            }
+        });
+
+        eventSource.onerror = (error) => {
+            if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+                console.log('[SSE] Connection cleanly closed');
+            } else {
+                console.error('[SSE] Task stream error', error);
+            }
+            stopPolling();
+        };
+    }
+
+    function updateProviders() {
+        const state = window.modelsService?.getState?.();
+        const currentProvider = providerSelect.value;
+
+        providerSelect.innerHTML = '<option value="">Auto-select</option>';
+
+        const modelProviders = state?.providers || [];
+        const configuredProviders = Object.keys(providerCapabilities || {});
+        const allProviders = Array.from(new Set([...modelProviders, ...configuredProviders]));
+        const eligibleProviders = allProviders.filter(provider => {
+            const models = window.modelsService?.getModelsForProvider?.(provider) || [];
+            const hasModelSupport = models.some(isImageCapableModel);
+            return hasModelSupport || isImageCapableProvider(provider);
+        });
+
+        if (!state || eligibleProviders.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = state ? 'No image-generation providers' : 'Loading providers...';
+            option.disabled = true;
+            providerSelect.appendChild(option);
+            providerSelect.disabled = true;
+        } else {
+            providerSelect.disabled = false;
+            for (const provider of eligibleProviders) {
+                const option = document.createElement('option');
+                option.value = provider;
+                option.textContent = provider;
+                providerSelect.appendChild(option);
+            }
+            if (currentProvider && eligibleProviders.includes(currentProvider)) {
+                providerSelect.value = currentProvider;
+            }
+        }
+
+        providerSelect.closest('nui-select')?.refresh?.();
+        updateModels();
+    }
+
+    function updateModels() {
+        const provider = providerSelect.value;
+        const currentModel = modelSelect.value;
+
+        modelSelect.innerHTML = '';
+
+        const autoOption = document.createElement('option');
+        autoOption.value = '';
+        autoOption.textContent = 'Auto-select model';
+        modelSelect.appendChild(autoOption);
+
+        if (!provider) {
+            modelSelect.disabled = true;
+            modelSelect.closest('nui-select')?.refresh?.();
+            return;
+        }
+
+        modelSelect.disabled = false;
+
+        const allModels = window.modelsService?.getModelsForProvider?.(provider) || [];
+        const models = allModels.filter(isImageCapableModel);
+
+        for (const model of models) {
+            const option = document.createElement('option');
+            option.value = model.id;
+            option.textContent = model.id;
+            modelSelect.appendChild(option);
+        }
+
+        if (models.length === 0) {
+            if (isImageCapableProvider(provider)) {
+                autoOption.textContent = 'Use provider default image model';
+            } else {
+                const noneOption = document.createElement('option');
+                noneOption.value = '';
+                noneOption.textContent = 'No image-capable models found';
+                noneOption.disabled = true;
+                modelSelect.appendChild(noneOption);
+            }
+        }
+
+        const modelIds = models.map(m => m.id);
+        if (currentModel && modelIds.includes(currentModel)) {
+            modelSelect.value = currentModel;
+        }
+
+        modelSelect.closest('nui-select')?.refresh?.();
+    }
+
+    // Removed pollTask function
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        stopPolling();
+        resultPanel.hidden = true;
+        resultContainer.innerHTML = '';
+
+        const formData = new FormData(form);
+        const payload = {
+            provider: formData.get('provider') || undefined,
+            model: formData.get('model') || undefined,
+            prompt: formData.get('prompt'),
+            size: formData.get('size'),
+            quality: formData.get('quality'),
+            n: 1,
+            response_format: 'b64_json'
+        };
+
+        ticketPanel.hidden = false;
+        showStatus({ status: 'submitting' });
+
+        try {
+            const response = await fetch('/api/proxy/images/generations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+            showStatus(data);
+
+            if (response.status === 202 && data.ticket) {
+                activeTicket = data.ticket;
+                ticketIdEl.textContent = data.ticket;
+                startSSETicketTracking(data.ticket);
+            } else {
+                activeTicket = null;
+                ticketIdEl.textContent = '-';
+            }
+        } catch (error) {
+            showStatus({ error: error.message });
+        }
+    });
+
+    providerSelect.addEventListener('change', updateModels);
+
+    const unsubscribe = window.modelsService?.subscribe?.(() => updateProviders());
+    loadProviderCapabilities().finally(() => updateProviders());
+
+    element.hide = () => {
+        stopPolling();
+        if (unsubscribe) unsubscribe();
+    };
+}
+</script>
+
+<style>
+.form-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--nui-space);
+}
+.ticket-row {
+    display: flex;
+    gap: var(--nui-space-half);
+    align-items: center;
+    margin-bottom: var(--nui-space);
+    flex-wrap: wrap;
+}
+.generated-image {
+    max-width: 100%;
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+}
+</style>

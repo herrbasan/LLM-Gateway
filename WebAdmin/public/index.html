@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <title>LLM Gateway Admin</title>
+    
+    <!-- NUI Theme -->
+    <link rel="stylesheet" href="/NUI/css/nui-theme.css">
+    <link rel="stylesheet" href="/NUI/css/modules/nui-list.css">
+    <link rel="stylesheet" href="/NUI/css/modules/nui-syntax-highlight.css">
+    
+    <!-- App Styles -->
+    <link rel="stylesheet" href="/css/styles.css">
+    
+    <style>
+        /* Prevent layout shifts by hiding app until upgraded and ready */
+        body { margin: 0; padding: 0; overflow: hidden; }
+        nui-app:not(.nui-ready) { display: none; }
+        nui-loading:not(.active) { display: none; }
+    </style>
+</head>
+<body>
+    <!-- Loading indicator -->
+    <nui-loading mode="bar">
+        <div class="loading-bar">
+            <div class="loading-bar-progress"></div>
+        </div>
+    </nui-loading>
+    
+    <!-- App Shell -->
+    <nui-app nui-vars-sidebar_width="15rem" nui-vars-sidebar_force-breakpoint="75rem">
+        <nui-skip-links></nui-skip-links>
+        
+        <!-- Top Navigation -->
+        <nui-top-nav>
+            <header>
+                <layout>
+                    <item>
+                        <nui-button data-action="toggle-sidebar" class="icon-only">
+                            <button type="button" aria-label="Toggle navigation">
+                                <nui-icon name="menu"></nui-icon>
+                            </button>
+                        </nui-button>
+                    </item>
+                    <item>
+                        <h1>LLM Gateway Admin</h1>
+                    </item>
+                    <item>
+                        <nui-button data-action="toggle-theme" class="icon-only">
+                            <button type="button" aria-label="Toggle theme">
+                                <nui-icon name="brightness"></nui-icon>
+                            </button>
+                        </nui-button>
+                    </item>
+                </layout>
+            </header>
+        </nui-top-nav>
+        
+        <!-- Side Navigation -->
+        <nui-side-nav>
+            <nui-link-list mode="fold" id="main-nav"></nui-link-list>
+        </nui-side-nav>
+        
+        <!-- Main Content Area -->
+        <nui-content>
+            <nui-main id="main-content">
+                <!-- Content loads here via router -->
+            </nui-main>
+        </nui-content>
+        
+        <!-- Footer -->
+        <nui-app-footer>
+            <span>LLM Gateway Admin v1.0</span>
+            <nui-button class="icon-only" data-action="scroll-to-top" id="scrollToTop">
+                <button type="button" aria-label="Scroll to top">
+                    <nui-icon name="arrow" style="transform: rotate(-90deg)"></nui-icon>
+                </button>
+            </nui-button>
+        </nui-app-footer>
+    </nui-app>
+    
+    <!-- Scripts -->
+    <script type="module" src="/js/main.js"></script>
+</body>
+</html>

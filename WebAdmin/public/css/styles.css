@@ -1,0 +1,402 @@
+/* ============================================
+   LLM Gateway Admin - Main Styles
+   ============================================ */
+
+/* ============================================
+   NUI Link List Fixes (Fold Mode)
+   ============================================ */
+
+/* Add missing left padding for list items in fold mode */
+nui-link-list[mode="fold"] li.list-item a {
+    padding-left: var(--nui-space);
+}
+
+/* ============================================
+   Dashboard Styles
+   ============================================ */
+
+.dashboard-container {
+    max-width: 1200px;
+}
+
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--nui-space);
+}
+
+.dashboard-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--nui-space);
+    margin-bottom: var(--nui-space);
+}
+
+.stat-card {
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+    padding: var(--nui-space);
+}
+
+.stat-card h3 {
+    margin: 0 0 var(--nui-space-half) 0;
+    font-size: 0.875rem;
+    color: var(--nui-fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--nui-fg);
+}
+
+/* Providers section */
+.providers-section {
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+    padding: var(--nui-space);
+}
+
+.providers-section h3 {
+    margin: 0 0 var(--nui-space) 0;
+    font-size: 1rem;
+}
+
+.providers-list {
+    min-height: 100px;
+}
+
+.active-requests-section {
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+    padding: var(--nui-space);
+    margin-bottom: var(--nui-space);
+}
+
+.active-requests-section h3 {
+    margin: 0 0 var(--nui-space) 0;
+    font-size: 1rem;
+    color: var(--nui-primary);
+}
+
+.requests-list {
+    min-height: 50px;
+}
+
+.requests-list code {
+    font-family: var(--nui-font-mono);
+    font-size: 0.875rem;
+    background: var(--nui-surface-elevated);
+    padding: 0.125rem 0.375rem;
+    border-radius: var(--nui-radius);
+}
+
+.requests-list .empty-state {
+    text-align: center;
+    padding: var(--nui-space-double);
+    color: var(--nui-fg-dim);
+}
+
+.requests-list .empty-state p {
+    margin: 0;
+}
+
+.requests-list .empty-state small {
+    display: block;
+    margin-top: var(--nui-space-half);
+    font-size: 0.75rem;
+}
+
+/* ============================================
+   Status Indicators
+   ============================================ */
+
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+}
+
+.status-indicator::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.status-indicator.online {
+    color: var(--nui-success);
+}
+
+.status-indicator.offline {
+    color: var(--nui-error);
+}
+
+.status-indicator.checking {
+    color: var(--nui-fg-dim);
+}
+
+/* Status badges */
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--nui-radius);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.status-badge.healthy {
+    background: var(--nui-success-bg);
+    color: var(--nui-success);
+}
+
+.status-badge.error {
+    background: var(--nui-error-bg);
+    color: var(--nui-error);
+}
+
+.status-badge.warning {
+    background: var(--nui-warning-bg);
+    color: var(--nui-warning);
+}
+
+/* ============================================
+   Settings Editor Styles
+   ============================================ */
+
+.settings-container {
+    max-width: 900px;
+}
+
+.settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--nui-space);
+}
+
+.settings-header h2 {
+    margin: 0;
+}
+
+.editor-actions {
+    display: flex;
+    gap: var(--nui-space-half);
+}
+
+.code-editor {
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+    overflow: hidden;
+}
+
+.code-editor textarea {
+    width: 100%;
+    min-height: 500px;
+    padding: var(--nui-space);
+    border: none;
+    background: transparent;
+    font-family: var(--nui-font-mono);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    resize: vertical;
+    color: var(--nui-fg);
+    tab-size: 2;
+}
+
+.code-editor textarea:focus {
+    outline: none;
+}
+
+.editor-status {
+    display: flex;
+    align-items: center;
+    gap: var(--nui-space-half);
+    padding: var(--nui-space-half) var(--nui-space);
+    background: var(--nui-surface-elevated);
+    border-top: 1px solid var(--nui-border);
+    font-size: 0.875rem;
+}
+
+.editor-status.valid {
+    color: var(--nui-success);
+}
+
+.editor-status.invalid {
+    color: var(--nui-error);
+}
+
+/* ============================================
+   Test Pages
+   ============================================ */
+
+.test-form {
+    max-width: 800px;
+}
+
+.test-form .form-group {
+    margin-bottom: var(--nui-space);
+}
+
+.test-form label {
+    display: block;
+    margin-bottom: var(--nui-space-half);
+    font-weight: 500;
+}
+
+.response-panel {
+    margin-top: var(--nui-space-double);
+    padding: var(--nui-space);
+    background: var(--nui-surface);
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+}
+
+.response-panel h4 {
+    margin: 0 0 var(--nui-space) 0;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    color: var(--nui-fg-dim);
+}
+
+.response-content {
+    font-family: var(--nui-font-mono);
+    font-size: 0.875rem;
+    white-space: pre-wrap;
+    overflow-x: auto;
+}
+
+/* ============================================
+   Logs Page
+   ============================================ */
+
+.logs-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--nui-space-half);
+}
+
+.log-entry {
+    padding: var(--nui-space);
+    border-radius: var(--nui-radius);
+    border-left: 4px solid var(--nui-border);
+    background: var(--nui-surface);
+}
+
+.log-entry.log-error {
+    border-left-color: var(--nui-error);
+    background: var(--nui-error-bg);
+}
+
+.log-entry.log-warning {
+    border-left-color: var(--nui-warning);
+    background: var(--nui-warning-bg);
+}
+
+.log-entry.log-info {
+    border-left-color: var(--nui-info);
+}
+
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--nui-space-half);
+    font-size: 0.875rem;
+}
+
+.log-level {
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.log-time {
+    color: var(--nui-fg-dim);
+}
+
+.log-message {
+    font-family: var(--nui-font-mono);
+    font-size: 0.875rem;
+    white-space: pre-wrap;
+}
+
+/* ============================================
+   Backups Dialog
+   ============================================ */
+
+.backups-dialog .backups-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--nui-space-half);
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.backup-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--nui-space-half);
+    background: var(--nui-surface-elevated);
+    border-radius: var(--nui-radius);
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+
+.text-dim {
+    color: var(--nui-fg-dim);
+}
+
+.text-success {
+    color: var(--nui-success);
+}
+
+.text-error {
+    color: var(--nui-error);
+}
+
+.text-warning {
+    color: var(--nui-warning);
+}
+
+/* Loading state */
+.loading-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    color: var(--nui-fg-dim);
+}
+
+/* Error state */
+.error-message {
+    padding: var(--nui-space);
+    background: var(--nui-error-bg);
+    border: 1px solid var(--nui-error);
+    border-radius: var(--nui-radius);
+    color: var(--nui-error);
+}
+
+/* Empty state */
+.empty-state {
+    text-align: center;
+    color: var(--nui-fg-dim);
+    padding: var(--nui-space-double);
+}

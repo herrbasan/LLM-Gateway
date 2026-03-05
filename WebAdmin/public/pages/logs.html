@@ -1,0 +1,109 @@
+<section>
+    <header>
+        <h2>Logs</h2>
+        <p class="text-dim">Recent errors and warnings from the gateway</p>
+    </header>
+    
+    <div id="logs-container">
+        <div class="loading-placeholder">Loading logs...</div>
+    </div>
+</section>
+
+<script type="nui/page">
+function init(element, params) {
+    const container = element.querySelector('#logs-container');
+    
+    async function loadLogs() {
+        try {
+            const response = await fetch('/api/logs');
+            const data = await response.json();
+            
+            renderLogs(data.logs || []);
+        } catch (error) {
+            container.innerHTML = `
+                <div class="error-message">
+                    Failed to load logs: ${error.message}
+                </div>
+            `;
+        }
+    }
+    
+    function renderLogs(logs) {
+        if (logs.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <p>No logs available</p>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = `
+            <div class="logs-list">
+                ${logs.map(log => `
+                    <div class="log-entry log-${log.level}">
+                        <div class="log-header">
+                            <span class="log-level">${log.level}</span>
+                            <span class="log-time">${new Date(log.timestamp).toLocaleString()}</span>
+                        </div>
+                        <div class="log-message">${log.message}</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    loadLogs();
+}
+</script>
+
+<style>
+.logs-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--nui-space-half);
+}
+
+.log-entry {
+    padding: var(--nui-space);
+    border-radius: var(--nui-radius);
+    border-left: 4px solid var(--nui-border);
+    background: var(--nui-surface);
+}
+
+.log-entry.log-error {
+    border-left-color: var(--nui-error);
+    background: var(--nui-error-bg);
+}
+
+.log-entry.log-warning {
+    border-left-color: var(--nui-warning);
+    background: var(--nui-warning-bg);
+}
+
+.log-entry.log-info {
+    border-left-color: var(--nui-info);
+}
+
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--nui-space-half);
+    font-size: 0.875rem;
+}
+
+.log-level {
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.log-time {
+    color: var(--nui-fg-dim);
+}
+
+.log-message {
+    font-family: var(--nui-font-mono);
+    font-size: 0.875rem;
+    white-space: pre-wrap;
+}
+</style>
