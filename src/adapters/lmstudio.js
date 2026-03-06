@@ -58,16 +58,46 @@ export function createLmStudioAdapter(config) {
         },
 
         async listModels() {
+            // Try the internal LM Studio API first (has accurate capability metadata)
+            let models = [];
+            try {
+                const res = await request(`${apiEndpoint}/api/v1/models`);
+                const json = await res.json();
+                
+                if (json.models && Array.isArray(json.models)) {
+                    return json.models.map(m => {
+                        const caps = m.capabilities || {};
+                        const isEmbedding = m.type === 'embedding';
+                        const isTextChat = m.type === 'llm';
+                        
+                        return {
+                            id: m.key || m.id,
+                            object: 'model',
+                            owned_by: m.publisher || 'lmstudio',
+                            capabilities: {
+                                chat: isTextChat,
+                                embeddings: isEmbedding,
+                                structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
+                                streaming: isTextChat && defaultCapabilities.streaming,
+                                vision: caps.vision === true,
+                                imageGeneration: false, // LM Studio doesn't do image generation
+                                tts: false,
+                                stt: false,
+                                context_window: m.max_context_length || await this.getContextWindow()
+                            }
+                        };
+                    });
+                }
+            } catch (err) {
+                console.warn('[LMStudio Adapter] Internal API failed, falling back to OpenAI-compatible endpoint:', err.message);
+            }
+            
+            // Fallback to OpenAI-compatible /v1/models endpoint
             const res = await request(`${apiEndpoint}/v1/models`);
             const json = await res.json();
             
             // Patterns to identify model capabilities by name
             const embeddingPatterns = ['embed', 'embedding'];
-            const imageGenerationPatterns = ['dall-e', 'imagen', 'imagine', 'image', 'veo', 'easel'];
-            const ttsPatterns = ['tts', 'text-to-speech', 'speech'];
-            const sttPatterns = ['stt', 'whisper', 'asr', 'transcribe', 'speech-to-text'];
-            // Vision patterns: models with 'vision', '-v', 'vl', '4v', 'gemini', 'gpt-4o', 'llava', etc.
-            // Includes: gemma-3 (vision-capable), 4.6v (GLM variants), moonlight (vision model), etc.
             const visionPatterns = [
                 'vision', '-v', 'vl', '4v', '4.6v', 'gpt-4o', 'gemini', 'claude-3', 
                 'llava', 'bakllava', 'moondream', 'moonlight',
@@ -80,11 +110,7 @@ export function createLmStudioAdapter(config) {
             return json.data.map(m => {
                 const id = m.id.toLowerCase();
                 const isEmbedding = embeddingPatterns.some(p => id.includes(p));
-                const isImageGeneration = imageGenerationPatterns.some(p => id.includes(p));
-                const isTts = ttsPatterns.some(p => id.includes(p));
-                const isStt = sttPatterns.some(p => id.includes(p));
-                const isTextChat = !isEmbedding && !isImageGeneration && !isTts && !isStt;
-                // Only mark as vision-capable if model name matches vision patterns
+                const isTextChat = !isEmbedding;
                 const isVision = isTextChat && visionPatterns.some(p => id.includes(p));
                 
                 return {
@@ -97,9 +123,9 @@ export function createLmStudioAdapter(config) {
                         structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
                         streaming: isTextChat && defaultCapabilities.streaming,
                         vision: isVision,
-                        imageGeneration: isImageGeneration,
-                        tts: isTts,
-                        stt: isStt,
+                        imageGeneration: false,
+                        tts: false,
+                        stt: false,
                         context_window: contextWindow
                     }
                 };
