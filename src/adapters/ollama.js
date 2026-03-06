@@ -6,7 +6,7 @@ export function createOllamaAdapter(config) {
         embeddings: true,
         structuredOutput: true,
         streaming: true,
-        vision: true,
+        vision: false,
         ...config.capabilities
     };
 
@@ -76,11 +76,13 @@ export function createOllamaAdapter(config) {
             const res = await request(`${apiEndpoint}/api/tags`);
             const json = await res.json();
             
-            // Patterns to identify embedding models in Ollama
+            // Patterns to identify model capabilities in Ollama
             const embeddingPatterns = ['embed', 'nomic-embed', 'embedding'];
             const imageGenerationPatterns = ['dall-e', 'imagen', 'imagine', 'image', 'veo', 'easel'];
             const ttsPatterns = ['tts', 'text-to-speech', 'speech'];
             const sttPatterns = ['stt', 'whisper', 'asr', 'transcribe', 'speech-to-text'];
+            // Vision patterns: models with 'vision', '-v', 'vl', '4v', 'gemini', 'gpt-4o', 'llava', etc.
+            const visionPatterns = ['vision', '-v', 'vl', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', 'bakllava', 'moondream', 'qwen2.5-vl', 'qwen-vl', 'glm-4v', 'cogvlm'];
             const contextWindow = await this.getContextWindow();
             
             return (json.models || []).map(m => {
@@ -90,6 +92,8 @@ export function createOllamaAdapter(config) {
                 const isTts = ttsPatterns.some(p => id.includes(p));
                 const isStt = sttPatterns.some(p => id.includes(p));
                 const isTextChat = !isEmbedding && !isImageGeneration && !isTts && !isStt;
+                // Only mark as vision-capable if model name matches vision patterns
+                const isVision = isTextChat && visionPatterns.some(p => id.includes(p));
                 
                 return {
                     id: m.name,
@@ -100,7 +104,7 @@ export function createOllamaAdapter(config) {
                         embeddings: isEmbedding,
                         structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
                         streaming: isTextChat && defaultCapabilities.streaming,
-                        vision: isTextChat && defaultCapabilities.vision,
+                        vision: isVision,
                         imageGeneration: isImageGeneration,
                         tts: isTts,
                         stt: isStt,

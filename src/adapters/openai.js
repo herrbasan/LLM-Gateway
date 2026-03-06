@@ -6,7 +6,7 @@ export function createOpenAIAdapter(config) {
         embeddings: !!config.embeddingModel,
         structuredOutput: true,
         streaming: true,
-        vision: true,
+        vision: false,
         ...config.capabilities
     };
 
@@ -83,6 +83,8 @@ export function createOpenAIAdapter(config) {
             // Patterns to identify capability by model id
             const embeddingPatterns = ['embed', 'embedding'];
             const moderationPatterns = ['moderation'];
+            // Vision patterns: models with 'vision', '-v', 'vl', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', etc.
+            const visionPatterns = ['vision', '-v', 'vl', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', 'bakllava', 'moondream', 'qwen2.5-vl', 'qwen-vl', 'glm-4v', 'cogvlm', 'grok-2-vision'];
 
             const contextWindow = await this.getContextWindow();
 
@@ -120,6 +122,8 @@ export function createOpenAIAdapter(config) {
                     const id = m.id.toLowerCase();
                     const isEmbedding = embeddingPatterns.some(p => id.includes(p));
                     const isTextChat = !isEmbedding;
+                    // Only mark as vision-capable if model name matches vision patterns
+                    const isVision = isTextChat && visionPatterns.some(p => id.includes(p));
                     
                     return {
                         id: m.id,
@@ -130,7 +134,7 @@ export function createOpenAIAdapter(config) {
                             embeddings: isEmbedding,
                             structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
                             streaming: isTextChat && defaultCapabilities.streaming,
-                            vision: isTextChat && defaultCapabilities.vision,
+                            vision: isVision,
                             context_window: contextWindow
                         }
                     };

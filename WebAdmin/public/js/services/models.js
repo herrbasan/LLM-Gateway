@@ -40,23 +40,20 @@ class ModelsService {
         const imagePatterns = ['dall-e', 'imagen', 'imagine', 'image', 'veo', 'easel'];
         const ttsPatterns = ['tts', 'text-to-speech', 'speech'];
         const sttPatterns = ['stt', 'whisper', 'asr', 'transcribe', 'speech-to-text'];
-        // Vision patterns: models with 'vision', '-v', 'v-', '4v', etc. in name
-        const visionPatterns = ['vision', '-v', 'v-', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', 'bakllava', 'moondream'];
 
         const inferredEmbeddings = embeddingPatterns.some(p => id.includes(p));
         const inferredImage = imagePatterns.some(p => id.includes(p));
         const inferredTts = ttsPatterns.some(p => id.includes(p));
         const inferredStt = sttPatterns.some(p => id.includes(p));
-        // Don't override if API explicitly set vision capability
-        const inferredVision = visionPatterns.some(p => id.includes(p));
 
         const merged = { ...existing };
 
+        // Only infer capabilities if API didn't provide them
         if (merged.embeddings === undefined) merged.embeddings = inferredEmbeddings;
         if (merged.imageGeneration === undefined) merged.imageGeneration = inferredImage;
         if (merged.tts === undefined) merged.tts = inferredTts;
         if (merged.stt === undefined) merged.stt = inferredStt;
-        if (merged.vision === undefined) merged.vision = inferredVision;
+        // Note: vision capability is now properly set by adapters, don't infer here
 
         if (merged.chat === undefined) {
             merged.chat = !merged.embeddings && !merged.imageGeneration && !merged.tts && !merged.stt;

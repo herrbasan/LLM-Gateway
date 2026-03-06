@@ -6,7 +6,7 @@ export function createLmStudioAdapter(config) {
         embeddings: true,
         structuredOutput: true,
         streaming: true,
-        vision: true,
+        vision: false,
         ...config.capabilities
     };
 
@@ -61,11 +61,13 @@ export function createLmStudioAdapter(config) {
             const res = await request(`${apiEndpoint}/v1/models`);
             const json = await res.json();
             
-            // Patterns to identify embedding models by name
+            // Patterns to identify model capabilities by name
             const embeddingPatterns = ['embed', 'embedding'];
             const imageGenerationPatterns = ['dall-e', 'imagen', 'imagine', 'image', 'veo', 'easel'];
             const ttsPatterns = ['tts', 'text-to-speech', 'speech'];
             const sttPatterns = ['stt', 'whisper', 'asr', 'transcribe', 'speech-to-text'];
+            // Vision patterns: models with 'vision', '-v', 'vl', '4v', 'gemini', 'gpt-4o', 'llava', etc.
+            const visionPatterns = ['vision', '-v', 'vl', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', 'bakllava', 'moondream', 'qwen2.5-vl', 'qwen-vl', 'glm-4v', 'cogvlm'];
             
             const contextWindow = await this.getContextWindow();
             
@@ -76,6 +78,8 @@ export function createLmStudioAdapter(config) {
                 const isTts = ttsPatterns.some(p => id.includes(p));
                 const isStt = sttPatterns.some(p => id.includes(p));
                 const isTextChat = !isEmbedding && !isImageGeneration && !isTts && !isStt;
+                // Only mark as vision-capable if model name matches vision patterns
+                const isVision = isTextChat && visionPatterns.some(p => id.includes(p));
                 
                 return {
                     id: m.id,
@@ -86,7 +90,7 @@ export function createLmStudioAdapter(config) {
                         embeddings: isEmbedding,
                         structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
                         streaming: isTextChat && defaultCapabilities.streaming,
-                        vision: isTextChat && defaultCapabilities.vision,
+                        vision: isVision,
                         imageGeneration: isImageGeneration,
                         tts: isTts,
                         stt: isStt,

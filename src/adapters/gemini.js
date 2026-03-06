@@ -6,7 +6,7 @@ export function createGeminiAdapter(config) {
         embeddings: true,
         structuredOutput: true,
         streaming: true,
-        vision: true,
+        vision: false,
         ...config.capabilities
     };
 
@@ -132,6 +132,8 @@ export function createGeminiAdapter(config) {
             // Patterns to identify model capabilities
             const embeddingPatterns = ['embedding', 'embed'];
             const excludedPatterns = ['computer-use', 'deep-research', 'robotics'];
+            // Most Gemini models support vision - only exclude embedding models and specific non-vision models
+            const nonVisionPatterns = ['embedding', 'aqa'];
             const contextWindow = await this.getContextWindow();
 
             let modelsList = json.models || [];
@@ -154,6 +156,8 @@ export function createGeminiAdapter(config) {
                     const id = m.name.replace('models/', '').toLowerCase();
                     const isEmbedding = embeddingPatterns.some(p => id.includes(p));
                     const isTextChat = !isEmbedding;
+                    // Most Gemini models support vision - only embedding and specific models don't
+                    const isVision = isTextChat && !nonVisionPatterns.some(p => id.includes(p));
                     
                     return {
                         id: m.name.replace('models/', ''),
@@ -164,7 +168,7 @@ export function createGeminiAdapter(config) {
                             embeddings: isEmbedding,
                             structuredOutput: isTextChat && defaultCapabilities.structuredOutput,
                             streaming: isTextChat && defaultCapabilities.streaming,
-                            vision: isTextChat && defaultCapabilities.vision,
+                            vision: isVision,
                             context_window: contextWindow
                         }
                     };

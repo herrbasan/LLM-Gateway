@@ -122,27 +122,9 @@ function init(element, params) {
     let currentImageMimeType = null;
 
     function isVisionCapableModel(model) {
-        // Check explicit capability flag
-        if (model?.capabilities?.vision === true) {
-            // Double-check: does the model name suggest vision support?
-            // Some providers (like GLM) mark all models as vision but only specific ones work
-            const id = String(model?.id || '').toLowerCase();
-            const visionPatterns = ['vision', '-v', 'v-', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', 'bakllava', 'moondream', 'qwen2.5-vl', 'qwen-vl'];
-            const looksLikeVision = visionPatterns.some(p => id.includes(p));
-            
-            // If model has explicit vision AND looks like a vision model, definitely include it
-            if (looksLikeVision) return true;
-            
-            // If model has explicit vision but doesn't look like one, check provider
-            // Some providers are more reliable than others
-            const provider = String(model?.provider || model?.owned_by || '').toLowerCase();
-            const reliableProviders = ['gemini', 'openai', 'grok', 'anthropic'];
-            if (reliableProviders.includes(provider)) return true;
-            
-            // For other providers, require the model name to suggest vision
-            return false;
-        }
-        return false;
+        // Use the explicit capability flag from the API
+        // Adapters now properly detect vision support based on model names
+        return model?.capabilities?.vision === true;
     }
 
     // Tab switching
