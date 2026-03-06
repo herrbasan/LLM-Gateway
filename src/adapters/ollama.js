@@ -82,7 +82,12 @@ export function createOllamaAdapter(config) {
             const ttsPatterns = ['tts', 'text-to-speech', 'speech'];
             const sttPatterns = ['stt', 'whisper', 'asr', 'transcribe', 'speech-to-text'];
             // Vision patterns: models with 'vision', '-v', 'vl', '4v', 'gemini', 'gpt-4o', 'llava', etc.
-            const visionPatterns = ['vision', '-v', 'vl', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', 'bakllava', 'moondream', 'qwen2.5-vl', 'qwen-vl', 'glm-4v', 'cogvlm'];
+            const visionPatterns = [
+                'vision', '-v', 'vl', '4v', '4.6v', 'gpt-4o', 'gemini', 'claude-3', 
+                'llava', 'bakllava', 'moondream', 'moonlight',
+                'qwen2.5-vl', 'qwen-vl', 'qwen3-vl', 'glm-4v', 'glm-4.6v', 'cogvlm',
+                'gemma-3'
+            ];
             const contextWindow = await this.getContextWindow();
             
             return (json.models || []).map(m => {

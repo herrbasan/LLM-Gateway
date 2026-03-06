@@ -84,7 +84,12 @@ export function createOpenAIAdapter(config) {
             const embeddingPatterns = ['embed', 'embedding'];
             const moderationPatterns = ['moderation'];
             // Vision patterns: models with 'vision', '-v', 'vl', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', etc.
-            const visionPatterns = ['vision', '-v', 'vl', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', 'bakllava', 'moondream', 'qwen2.5-vl', 'qwen-vl', 'glm-4v', 'cogvlm', 'grok-2-vision'];
+            const visionPatterns = [
+                'vision', '-v', 'vl', '4v', '4.6v', 'gpt-4o', 'gemini', 'claude-3', 
+                'llava', 'bakllava', 'moondream', 'moonlight',
+                'qwen2.5-vl', 'qwen-vl', 'qwen3-vl', 'glm-4v', 'glm-4.6v', 'cogvlm',
+                'gemma-3', 'grok-2-vision'
+            ];
 
             const contextWindow = await this.getContextWindow();
 
