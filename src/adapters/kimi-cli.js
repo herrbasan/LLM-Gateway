@@ -13,10 +13,15 @@ export function createKimiCliAdapter(config) {
   
   const cliTimeout = timeout || 120000;
   
+  // NOTE: Kimi CLI supports vision in interactive TUI mode (Ctrl-V paste),
+  // but NOT in programmatic --print mode with stream-json input.
+  // The CLI accepts image_url in JSON but strips it before sending to model.
+  // For vision support, use the HTTP API (openai adapter) instead.
   const base = createBaseAdapter('kimi', config, {
     embeddings: false,
     structuredOutput: false,
-    streaming: false
+    streaming: false,
+    vision: false  // CLI --print mode does not support images (interactive TUI only)
   });
 
   async function runKimiCli(messages, isJsonMode) {
