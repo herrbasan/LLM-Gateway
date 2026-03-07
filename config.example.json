@@ -2,158 +2,140 @@
   "port": 3400,
   "host": "0.0.0.0",
   
-  "compaction": {
-    "enabled": true,
-    "minTokensToCompact": 2000,
-    "preserveSystemPrompt": true,
-    "targetRatio": 0.3,
-    "chunkSize": 3000,
-    "maxPasses": 3,
-    "timeoutMs": 60000,
-    "preserveLastN": 4,
-    "heartbeatIntervalMs": 15000
+  "models": {
+    "lmstudio-chat": {
+      "type": "chat",
+      "adapter": "lmstudio",
+      "endpoint": "http://localhost:12345",
+      "adapterModel": "qwen/qwen2.5-9b",
+      "capabilities": {
+        "contextWindow": 30000,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "lmstudio-embed": {
+      "type": "embedding",
+      "adapter": "lmstudio",
+      "endpoint": "http://localhost:12345",
+      "adapterModel": "text-embedding-nomic",
+      "capabilities": {
+        "contextWindow": 512,
+        "dimensions": 768
+      }
+    },
+    "ollama-chat": {
+      "type": "chat",
+      "adapter": "ollama",
+      "endpoint": "http://localhost:11434",
+      "adapterModel": "gemma3:12b",
+      "capabilities": {
+        "contextWindow": 8192,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "ollama-embed": {
+      "type": "embedding",
+      "adapter": "ollama",
+      "endpoint": "http://localhost:11434",
+      "adapterModel": "nomic-embed-text",
+      "capabilities": {
+        "contextWindow": 512,
+        "dimensions": 768
+      }
+    },
+    "gemini-flash": {
+      "type": "chat",
+      "adapter": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "your-gemini-api-key",
+      "adapterModel": "gemini-2.0-flash",
+      "capabilities": {
+        "contextWindow": 1000000,
+        "vision": true,
+        "structuredOutput": "json_schema",
+        "streaming": true
+      }
+    },
+    "gemini-embedding": {
+      "type": "embedding",
+      "adapter": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "your-gemini-api-key",
+      "adapterModel": "embedding-001",
+      "capabilities": {
+        "contextWindow": 2048,
+        "dimensions": 768
+      }
+    },
+    "grok-chat": {
+      "type": "chat",
+      "adapter": "openai",
+      "endpoint": "https://api.x.ai/v1",
+      "apiKey": "your-grok-api-key",
+      "adapterModel": "grok-2",
+      "capabilities": {
+        "contextWindow": 1000000,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "openai-chat": {
+      "type": "chat",
+      "adapter": "openai",
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "your-openai-api-key",
+      "adapterModel": "gpt-4o",
+      "capabilities": {
+        "contextWindow": 128000,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "openai-image": {
+      "type": "image",
+      "adapter": "openai",
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "your-openai-api-key",
+      "adapterModel": "dall-e-3",
+      "capabilities": {
+        "maxResolution": "1024x1024",
+        "supportedFormats": ["png", "jpeg"]
+      }
+    },
+    "openai-tts": {
+      "type": "audio",
+      "adapter": "openai",
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "your-openai-api-key",
+      "adapterModel": "tts-1",
+      "capabilities": {
+        "streaming": false
+      }
+    }
   },
   
-  "tokenEstimation": {
-    "strategy": "auto",
-    "fallbackRatio": 0.25
+  "thinking": {
+    "enabled": false,
+    "stripTags": ["think", "thinking", "thought", "reasoning"],
+    "orphanCloseAsSeparator": true
   },
   
   "routing": {
-    "defaultProvider": "lmstudio",
-    "embeddingProvider": "lmstudio"
+    "defaultChatModel": "lmstudio-chat",
+    "defaultEmbeddingModel": "lmstudio-embed"
   },
   
-  "concurrency": {
-    "defaultMaxConcurrent": 2,
-    "defaultQueueDepth": 10
-  },
-  
-  "sessions": {
-    "ttlMinutes": 60
-  },
-
-  "mediaStorage": {
+  "compaction": {
     "enabled": true,
-    "baseDir": "${TEMP}/llm-gateway-media",
-    "ttlMinutes": 60,
-    "cleanupIntervalMs": 60000
-  },
-  
-  "providers": {
-    "lmstudio": {
-      "type": "lmstudio",
-      "endpoint": "http://localhost:1234",
-      "model": "qwen2.5-14b",
-      "embeddingModel": "nomic-embed-text-v2-moe",
-      "contextWindow": 32768,
-      "maxConcurrentCalls": 2,
-      "stripThinking": true,
-      "// stripThinking (advanced)": {
-        "enabled": true,
-        "tags": ["think", "thinking", "thought", "reasoning", "analysis"],
-        "orphanCloseAsSeparator": true
-      },
-      "capabilities": {
-        "embeddings": true,
-        "structuredOutput": true,
-        "streaming": true,
-        "imageGeneration": false,
-        "tts": false,
-        "stt": false
-      },
-      "retry": {
-        "enabled": true,
-        "maxAttempts": 3,
-        "backoffMs": 1000,
-        "retryOn": [502, 504, "ETIMEDOUT", "ECONNREFUSED"]
-      }
-    },
-    "ollama": {
-      "type": "ollama",
-      "endpoint": "http://localhost:11434",
-      "model": "llama3.2",
-      "maxConcurrentCalls": 2,
-      "capabilities": {
-        "embeddings": true,
-        "structuredOutput": false,
-        "streaming": true,
-        "imageGeneration": false,
-        "tts": false,
-        "stt": false
-      }
-    },
-    "gemini": {
-      "type": "gemini",
-      "apiKey": "${GEMINI_API_KEY}",
-      "model": "gemini-2.0-flash",
-      "maxConcurrentCalls": 5,
-      "capabilities": {
-        "embeddings": true,
-        "structuredOutput": true,
-        "streaming": true,
-        "imageGeneration": false,
-        "tts": false,
-        "stt": false
-      }
-    },
-    "grok": {
-      "type": "openai",
-      "endpoint": "${GROK_ENDPOINT}",
-      "apiKey": "${GROK_API_KEY}",
-      "model": "${GROK_MODEL}",
-      "embeddingModel": "${GROK_EMBEDDING_MODEL}",
-      "capabilities": {
-        "embeddings": true,
-        "structuredOutput": true,
-        "streaming": true,
-        "imageGeneration": true,
-        "tts": true,
-        "stt": true
-      }
-    },
-    "kimi": {
-      "type": "openai",
-      "endpoint": "${KIMI_ENDPOINT}",
-      "apiKey": "${KIMI_API_KEY}",
-      "model": "${KIMI_MODEL}",
-      "embeddingModel": "${KIMI_EMBEDDING_MODEL}",
-      "capabilities": {
-        "embeddings": false,
-        "structuredOutput": true,
-        "streaming": true,
-        "imageGeneration": true,
-        "tts": true,
-        "stt": true
-      }
-    },
-    "glm": {
-      "type": "openai",
-      "endpoint": "${GLM_ENDPOINT}",
-      "apiKey": "${GLM_API_KEY}",
-      "model": "${GLM_MODEL}",
-      "capabilities": {
-        "embeddings": false,
-        "structuredOutput": true,
-        "streaming": true,
-        "imageGeneration": true,
-        "tts": true,
-        "stt": true
-      }
-    },
-    "minimax": {
-      "type": "openai",
-      "endpoint": "${MINIMAX_ENDPOINT}",
-      "apiKey": "${MINIMAX_API_KEY}",
-      "model": "${MINIMAX_MODEL}",
-      "capabilities": {
-        "embeddings": false,
-        "structuredOutput": true,
-        "streaming": true,
-        "imageGeneration": true,
-        "tts": true,
-        "stt": true
-      }
-    }
+    "mode": "truncate",
+    "minTokensToCompact": 2000,
+    "preserveSystemPrompt": true,
+    "preserveLastN": 4
   }
 }
