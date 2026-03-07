@@ -1,21 +1,22 @@
 export function createHealthHandler(config, router) {
   return (req, res) => {
-    
-    // Gather circuit breaker metrics dynamically from router's adapters
-    const providerStats = {};
+    // Gather circuit breaker metrics from adapters
+    const adapterStats = {};
     if (router && router.adapters) {
        for (const [name, adapter] of router.adapters.entries()) {
            if (adapter.circuitBreaker) {
-               providerStats[name] = adapter.circuitBreaker.getStats();
+               adapterStats[name] = adapter.circuitBreaker.getStats();
            } else {
-               providerStats[name] = { state: 'UNKNOWN' };
+               adapterStats[name] = { state: 'UNKNOWN' };
            }
        }
     }
 
     res.json({ 
       status: 'ok',
-      providers: providerStats 
+      version: '2.0.0',
+      adapters: adapterStats,
+      models: router.registry ? router.registry.getModelIds() : []
     });
   };
 }

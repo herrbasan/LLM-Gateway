@@ -6,19 +6,10 @@
     
     <form id="compaction-form">
         <div class="form-group">
-            <label for="provider">Provider</label>
-            <nui-select id="provider-select">
-                <select id="provider" name="provider">
-                    <option value="">Auto-select</option>
-                </select>
-            </nui-select>
-        </div>
-        
-        <div class="form-group">
             <label for="model">Model</label>
             <nui-select id="model-select">
                 <select id="model" name="model">
-                    <option value="">Select provider first</option>
+                    <option value="">Loading models...</option>
                 </select>
             </nui-select>
         </div>
@@ -144,7 +135,6 @@
 <script type="nui/page">
 function init(element, params) {
     const form = element.querySelector('#compaction-form');
-    const providerSelect = element.querySelector('#provider');
     const modelSelect = element.querySelector('#model');
     const fileInput = element.querySelector('#file');
     const statsPanel = element.querySelector('#stats-panel');
@@ -153,7 +143,7 @@ function init(element, params) {
     const responseContent = element.querySelector('#response-content');
     const errorContent = element.querySelector('#error-content');
 
-    function isChatCapableModel(model) {
+    function isChatCapable(model) {
         return model?.capabilities?.chat !== false;
     }
     
@@ -162,33 +152,27 @@ function init(element, params) {
     
     // Token estimation constants (rough heuristic: ~4 chars per token)
     const CHARS_PER_TOKEN = 4;
-    const COMPACTION_THRESHOLD = 2000; // From gateway config
-    const OUTPUT_BUFFER = 1024; // Default output buffer
-    const SAFETY_MARGIN_PERCENT = 0.20; // 20% safety margin for model overhead
+    const COMPACTION_THRESHOLD = 2000;
+    const OUTPUT_BUFFER = 1024;
+    const SAFETY_MARGIN_PERCENT = 0.20;
     
-    // Estimate tokens from text
     function estimateTokens(text) {
         return Math.ceil(text.length / CHARS_PER_TOKEN);
     }
     
-    // Get context window for current selection
+    // Get context window for selected model
     function getContextWindow() {
-        const provider = providerSelect.value;
-        const model = modelSelect.value;
+        const modelId = modelSelect.value;
+        if (!modelId) return null;
         
-        if (!provider) return null;
+        const state = window.modelsService?.getState?.();
+        const model = state?.models?.find(m => m.id === modelId);
         
-        // Try to find model in service
-        const models = window.modelsService?.getModelsForProvider?.(provider) || [];
-        const modelInfo = models.find(m => m.id === model);
-        
-        // Return context window from model or default
-        return modelInfo?.capabilities?.context_window || 
-               modelInfo?.contextWindow || 
-               8192; // Default fallback
+        return model?.capabilities?.contextWindow || 
+               model?.capabilities?.context_window || 
+               8192;
     }
     
-    // Update token preview display
     function updateTokenPreview() {
         const preview = element.querySelector('#token-preview');
         if (!uploadedContent) {
@@ -204,13 +188,10 @@ function init(element, params) {
         const safetyMargin = contextWindow ? Math.floor(contextWindow * SAFETY_MARGIN_PERCENT) : 0;
         const availableTokens = contextWindow ? contextWindow - OUTPUT_BUFFER - safetyMargin : 0;
         
-        // Gateway compaction logic:
-        // Compaction ONLY triggers if: tokens >= 2000 AND tokens > availableTokens
         const exceedsThreshold = tokenEstimate >= COMPACTION_THRESHOLD;
         const exceedsContext = tokenEstimate > availableTokens;
         const willCompact = exceedsThreshold && exceedsContext;
         
-        // Update display
         element.querySelector('#char-count').textContent = charCount.toLocaleString();
         element.querySelector('#token-estimate').textContent = tokenEstimate.toLocaleString();
         element.querySelector('#context-limit').textContent = contextWindow ? contextWindow.toLocaleString() : '-';
@@ -218,7 +199,6 @@ function init(element, params) {
         element.querySelector('#available-limit').textContent = availableTokens ? availableTokens.toLocaleString() : '-';
         element.querySelector('#threshold').textContent = COMPACTION_THRESHOLD.toLocaleString();
         
-        // Update compaction indicator
         const indicator = element.querySelector('#compaction-indicator');
         const progressBar = element.querySelector('#progress-bar');
         const progressFill = element.querySelector('#progress-fill');
@@ -232,7 +212,6 @@ function init(element, params) {
         progressText.textContent = `${percentage}% of ${availableTokens.toLocaleString()} available`;
         
         if (!willCompact) {
-            // Fits comfortably - no compaction needed
             indicator.className = 'compaction-indicator safe';
             if (!exceedsThreshold) {
                 indicator.innerHTML = `<span class="indicator-icon">✓</span><span class="indicator-text">No compaction needed (${tokenEstimate.toLocaleString()} < ${COMPACTION_THRESHOLD.toLocaleString()} threshold)</span>`;
@@ -241,21 +220,18 @@ function init(element, params) {
             }
             progressFill.className = 'progress-fill safe';
         } else {
-            // Will trigger compaction
             indicator.className = 'compaction-indicator warning';
             indicator.innerHTML = `<span class="indicator-icon">⚠</span><span class="indicator-text">Compaction WILL trigger (${tokenEstimate.toLocaleString()} > ${availableTokens.toLocaleString()} available)</span>`;
             progressFill.className = 'progress-fill warning';
         }
         
         if (exceedsContext && !exceedsThreshold) {
-            // Edge case: exceeds context but below threshold (shouldn't happen often)
             indicator.className = 'compaction-indicator danger';
             indicator.innerHTML = `<span class="indicator-icon">✗</span><span class="indicator-text">EXCEEDS CONTEXT! May fail if strategy is 'none'</span>`;
             progressFill.className = 'progress-fill danger';
         }
     }
     
-    // Handle file upload
     fileInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) {
@@ -276,91 +252,62 @@ function init(element, params) {
         }
     });
     
-    // Update preview when model changes
     modelSelect.addEventListener('change', updateTokenPreview);
-    providerSelect.addEventListener('change', () => {
-        // Model will update, then update preview
-        setTimeout(updateTokenPreview, 100);
-    });
     
-    // Populate providers when models are loaded
-    function updateProviders() {
-        const state = window.modelsService?.getState?.();
-        const currentProvider = providerSelect.value;
-        
-        providerSelect.innerHTML = '<option value="">Auto-select</option>';
-        
-        const eligibleProviders = (state?.providers || []).filter(provider => {
-            const models = window.modelsService?.getModelsForProvider?.(provider) || [];
-            return models.some(isChatCapableModel);
-        });
-
-        if (!state || eligibleProviders.length === 0) {
-            const loadingOption = document.createElement('option');
-            loadingOption.value = '';
-            loadingOption.textContent = state ? 'No compaction-capable providers' : 'Loading providers...';
-            loadingOption.disabled = true;
-            providerSelect.appendChild(loadingOption);
-            providerSelect.disabled = true;
-        } else {
-            providerSelect.disabled = false;
-            
-            for (const provider of eligibleProviders) {
-                const option = document.createElement('option');
-                option.value = provider;
-                option.textContent = provider.charAt(0).toUpperCase() + provider.slice(1);
-                providerSelect.appendChild(option);
-            }
-            
-            if (currentProvider && eligibleProviders.includes(currentProvider)) {
-                providerSelect.value = currentProvider;
-            }
-        }
-        
-        const nuiSelect = providerSelect.closest('nui-select');
-        if (nuiSelect && typeof nuiSelect.refresh === 'function') {
-            nuiSelect.refresh();
-        }
-        
-        updateModels();
-    }
-    
+    // Populate models when loaded
     function updateModels() {
-        const provider = providerSelect.value;
+        const state = window.modelsService?.getState?.();
         const currentModel = modelSelect.value;
         
         modelSelect.innerHTML = '';
         
-        if (!provider) {
-            modelSelect.innerHTML = '<option value="">Auto-selected by gateway</option>';
-            modelSelect.disabled = true;
-            modelSelect.closest('nui-select')?.refresh();
-            return;
-        }
-        
-        modelSelect.disabled = false;
-        
-        const autoOption = document.createElement('option');
-        autoOption.value = '';
-        autoOption.textContent = 'Auto-select model';
-        modelSelect.appendChild(autoOption);
-        
-        const allModels = window.modelsService?.getModelsForProvider?.(provider) || [];
-        const models = allModels.filter(isChatCapableModel);
-        
-        for (const model of models) {
+        const chatModels = (state?.models || []).filter(isChatCapable);
+
+        if (!state || chatModels.length === 0) {
             const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = model.id;
+            option.value = '';
+            option.textContent = state ? 'No chat-capable models' : 'Loading models...';
+            option.disabled = true;
             modelSelect.appendChild(option);
-        }
-        
-        const modelIds = models.map(m => m.id);
-        if (currentModel && modelIds.includes(currentModel)) {
-            modelSelect.value = currentModel;
+            modelSelect.disabled = true;
+        } else {
+            modelSelect.disabled = false;
+            
+            // Add auto option
+            const autoOption = document.createElement('option');
+            autoOption.value = '';
+            autoOption.textContent = 'Auto-select';
+            modelSelect.appendChild(autoOption);
+            
+            // Group by adapter
+            const byAdapter = new Map();
+            for (const model of chatModels) {
+                const adapter = model.owned_by || model.provider || 'unknown';
+                if (!byAdapter.has(adapter)) byAdapter.set(adapter, []);
+                byAdapter.get(adapter).push(model);
+            }
+            
+            for (const [adapter, models] of byAdapter) {
+                const group = document.createElement('optgroup');
+                group.label = adapter.charAt(0).toUpperCase() + adapter.slice(1);
+                
+                for (const model of models) {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.id;
+                    group.appendChild(option);
+                }
+                
+                modelSelect.appendChild(group);
+            }
+            
+            if (currentModel && chatModels.map(m => m.id).includes(currentModel)) {
+                modelSelect.value = currentModel;
+            }
         }
         
         modelSelect.closest('nui-select')?.refresh();
+        updateTokenPreview();
     }
     
     function resetStats() {
@@ -399,55 +346,37 @@ function init(element, params) {
             return;
         }
         
-        resetStats();
-        
         const formData = new FormData(form);
-        const provider = formData.get('provider');
         const model = formData.get('model');
         const strategy = formData.get('strategy');
-        const prompt = formData.get('prompt') || 'Summarize this content';
         const stream = formData.has('stream');
+        const prompt = formData.get('prompt') || 'Summarize this document';
         
-        // Build message with uploaded content and prompt
-        // Keep as single message so truncate properly truncates content, not discard it
-        const messages = [
-            { 
-                role: 'user', 
-                content: `${uploadedContent}\n\n${prompt}`
-            }
-        ];
-        
-        const request = {
-            model: model || undefined,
-            messages: messages,
-            stream: stream,
-            context_strategy: {
-                mode: strategy
-            }
-        };
-        
+        resetStats();
         responsePanel.hidden = false;
-        responseContent.textContent = 'Processing...';
+        responseContent.textContent = 'Sending request...';
         
         try {
             const gatewayUrl = window.location.origin.replace(':3401', ':3400');
-            const headers = { 'Content-Type': 'application/json' };
-            if (provider) {
-                headers['x-provider'] = provider;
+            const request = {
+                model: model || undefined,
+                stream,
+                messages: [
+                    { role: 'system', content: `The user has uploaded a document. ${prompt}` },
+                    { role: 'user', content: uploadedContent.substring(0, 100000) }
+                ]
+            };
+            
+            if (strategy && strategy !== 'truncate') {
+                request.compaction_strategy = strategy;
             }
             
             const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request)
             });
             
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error?.message || `HTTP ${response.status}`);
-            }
-            
-            // Handle streaming response
             const contentType = response.headers.get('content-type');
             if (contentType?.includes('text/event-stream')) {
                 responseContent.textContent = '';
@@ -467,270 +396,35 @@ function init(element, params) {
                             if (data === '[DONE]') continue;
                             try {
                                 const parsed = JSON.parse(data);
-                                
-                                // Check for context status events
-                                if (parsed.type === 'context.status' && parsed.data) {
-                                    displayStats(parsed.data);
-                                    continue;
-                                }
-                                
-                                // Regular content
                                 const content = parsed.choices?.[0]?.delta?.content || '';
                                 responseContent.textContent += content;
-                            } catch {
-                                // Ignore parse errors for partial chunks
-                            }
+                            } catch {}
                         }
                     }
                 }
             } else {
                 const data = await response.json();
-                
-                // Display context stats if available
-                if (data.context) {
-                    displayStats(data.context);
+                if (!response.ok) {
+                    throw new Error(data.error?.message || `HTTP ${response.status}`);
                 }
-                
                 responseContent.textContent = data.choices?.[0]?.message?.content || JSON.stringify(data, null, 2);
             }
             
         } catch (error) {
-            console.error('[CompactionTest] Error:', error);
             errorPanel.hidden = false;
-            errorContent.textContent = `Error: ${error.message}`;
+            errorContent.textContent = error.message;
             responsePanel.hidden = true;
         }
     });
     
-    // Subscribe to model updates
     const unsubscribe = window.modelsService?.subscribe?.((state) => {
-        updateProviders();
+        updateModels();
     });
     
-    updateProviders();
-    
-    providerSelect.addEventListener('change', updateModels);
+    updateModels();
     
     element.hide = () => {
         if (unsubscribe) unsubscribe();
     };
 }
 </script>
-
-<style>
-.file-input {
-    display: block;
-    width: 100%;
-    padding: var(--nui-space);
-    border: 1px solid var(--nui-border);
-    border-radius: var(--nui-radius);
-    background: var(--nui-surface);
-    color: var(--nui-fg);
-}
-
-.file-input::file-selector-button {
-    padding: 0.5rem 1rem;
-    margin-right: var(--nui-space);
-    background: var(--nui-primary);
-    color: white;
-    border: none;
-    border-radius: var(--nui-radius);
-    cursor: pointer;
-}
-
-.stats-panel {
-    margin-top: var(--nui-space-double);
-    padding: var(--nui-space);
-    background: var(--nui-surface);
-    border: 1px solid var(--nui-border);
-    border-radius: var(--nui-radius);
-}
-
-.stats-panel h4 {
-    margin: 0 0 var(--nui-space) 0;
-    font-size: 1rem;
-}
-
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: var(--nui-space);
-}
-
-.stat-item {
-    display: flex;
-    flex-direction: column;
-    padding: var(--nui-space);
-    background: var(--nui-surface-elevated);
-    border-radius: var(--nui-radius);
-}
-
-.stat-label {
-    font-size: 0.75rem;
-    color: var(--nui-fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.stat-value {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--nui-fg);
-    margin-top: 0.25rem;
-}
-
-.token-preview {
-    margin-top: var(--nui-space);
-    padding: var(--nui-space);
-    background: var(--nui-surface);
-    border: 1px solid var(--nui-border);
-    border-radius: var(--nui-radius);
-}
-
-.token-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: var(--nui-space);
-    margin-bottom: var(--nui-space);
-}
-
-.token-stat {
-    display: flex;
-    flex-direction: column;
-    padding: var(--nui-space);
-    background: var(--nui-surface-elevated);
-    border-radius: var(--nui-radius);
-}
-
-.token-label {
-    font-size: 0.7rem;
-    color: var(--nui-fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.token-value {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: var(--nui-fg);
-    margin-top: 0.25rem;
-}
-
-.compaction-indicator {
-    display: flex;
-    align-items: center;
-    gap: var(--nui-space-half);
-    padding: var(--nui-space);
-    border-radius: var(--nui-radius);
-    font-weight: 500;
-}
-
-.compaction-indicator.safe {
-    background: rgba(34, 197, 94, 0.1);
-    color: #22c55e;
-    border: 1px solid rgba(34, 197, 94, 0.3);
-}
-
-.compaction-indicator.warning {
-    background: rgba(234, 179, 8, 0.1);
-    color: #eab308;
-    border: 1px solid rgba(234, 179, 8, 0.3);
-}
-
-.compaction-indicator.danger {
-    background: rgba(239, 68, 68, 0.1);
-    color: #ef4444;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.indicator-icon {
-    font-size: 1.2rem;
-}
-
-.progress-bar {
-    margin-top: var(--nui-space);
-    height: 24px;
-    background: var(--nui-surface-elevated);
-    border-radius: var(--nui-radius);
-    position: relative;
-    overflow: hidden;
-}
-
-.progress-fill {
-    height: 100%;
-    background: var(--nui-primary);
-    border-radius: var(--nui-radius);
-    transition: width 0.3s ease, background-color 0.3s ease;
-}
-
-.progress-fill.safe {
-    background: #22c55e;
-}
-
-.progress-fill.warning {
-    background: #eab308;
-}
-
-.progress-fill.danger {
-    background: #ef4444;
-}
-
-.progress-text {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--nui-fg);
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-}
-
-.response-panel {
-    margin-top: var(--nui-space-double);
-    padding: var(--nui-space);
-    background: var(--nui-surface);
-    border: 1px solid var(--nui-border);
-    border-radius: var(--nui-radius);
-}
-
-.response-panel h4 {
-    margin: 0 0 var(--nui-space) 0;
-}
-
-.response-content {
-    margin: 0;
-    padding: var(--nui-space);
-    background: var(--nui-surface-elevated);
-    border-radius: var(--nui-radius);
-    font-family: var(--nui-font-mono);
-    font-size: 0.875rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-.error-panel {
-    margin-top: var(--nui-space-double);
-    padding: var(--nui-space);
-    background: var(--nui-error-bg, #fef2f2);
-    border: 1px solid var(--nui-error, #ef4444);
-    border-radius: var(--nui-radius);
-}
-
-.error-panel h4 {
-    margin: 0 0 var(--nui-space) 0;
-    color: var(--nui-error, #ef4444);
-}
-
-.error-content {
-    margin: 0;
-    padding: var(--nui-space);
-    background: var(--nui-surface);
-    border-radius: var(--nui-radius);
-    font-family: var(--nui-font-mono);
-    font-size: 0.875rem;
-    color: var(--nui-error, #ef4444);
-}
-</style>

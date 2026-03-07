@@ -43,7 +43,7 @@ export function createTasksStreamHandler(ticketRegistry) {
             const ticket = ticketRegistry.getTicket(id);
             if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
-            const streamHandler = new StreamHandler(res, null, null, { compaction: { heartbeatIntervalMs: 15000 } });
+            const streamHandler = new StreamHandler(res);
             streamHandler.start();
 
             // Replay events

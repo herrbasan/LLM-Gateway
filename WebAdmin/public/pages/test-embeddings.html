@@ -6,19 +6,10 @@
     
     <form id="embeddings-form">
         <div class="form-group">
-            <label for="provider">Provider</label>
-            <nui-select id="provider-select">
-                <select id="provider" name="provider">
-                    <option value="">Auto-select</option>
-                </select>
-            </nui-select>
-        </div>
-        
-        <div class="form-group">
             <label for="model">Model</label>
             <nui-select id="model-select">
                 <select id="model" name="model">
-                    <option value="">Select provider first</option>
+                    <option value="">Loading models...</option>
                 </select>
             </nui-select>
         </div>
@@ -48,103 +39,73 @@ function init(element, params) {
     const form = element.querySelector('#embeddings-form');
     const responsePanel = element.querySelector('#response-panel');
     const responseContent = element.querySelector('#response-content');
-    const providerSelect = element.querySelector('#provider');
     const modelSelect = element.querySelector('#model');
 
-    function isEmbeddingCapableModel(model) {
+    function isEmbeddingCapable(model) {
         return !!model?.capabilities?.embeddings;
     }
     
-    // Populate providers when models are loaded
-    function updateProviders() {
-        const state = window.modelsService?.getState?.();
-        const currentProvider = providerSelect.value;
-        
-        // Clear and rebuild
-        providerSelect.innerHTML = '<option value="">Auto-select</option>';
-        
-        const eligibleProviders = (state?.providers || []).filter(provider => {
-            const models = window.modelsService?.getModelsForProvider?.(provider) || [];
-            return models.some(isEmbeddingCapableModel);
-        });
-
-        if (!state || eligibleProviders.length === 0) {
-            // Show loading state when data not yet available
-            const loadingOption = document.createElement('option');
-            loadingOption.value = '';
-            loadingOption.textContent = state ? 'No embedding-capable providers' : 'Loading providers...';
-            loadingOption.disabled = true;
-            providerSelect.appendChild(loadingOption);
-            providerSelect.disabled = true;
-        } else {
-            providerSelect.disabled = false;
-            
-            for (const provider of eligibleProviders) {
-                const option = document.createElement('option');
-                option.value = provider;
-                option.textContent = provider.charAt(0).toUpperCase() + provider.slice(1);
-                providerSelect.appendChild(option);
-            }
-            
-            if (currentProvider && eligibleProviders.includes(currentProvider)) {
-                providerSelect.value = currentProvider;
-            }
-        }
-        
-        // Refresh nui-select to reflect changes
-        providerSelect.closest('nui-select')?.refresh();
-        
-        updateModels();
-    }
-    
-    // Update models based on selected provider - only show embedding-capable models
+    // Populate models when loaded
     function updateModels() {
-        const provider = providerSelect.value;
+        const state = window.modelsService?.getState?.();
         const currentModel = modelSelect.value;
         
+        // Clear and rebuild
         modelSelect.innerHTML = '';
         
-        if (!provider) {
-            modelSelect.innerHTML = '<option value="">Auto-selected by gateway</option>';
-            modelSelect.disabled = true;
-            modelSelect.closest('nui-select')?.refresh();
-            return;
-        }
-        
-        modelSelect.disabled = false;
-        
-        const autoOption = document.createElement('option');
-        autoOption.value = '';
-        autoOption.textContent = 'Auto-select model';
-        modelSelect.appendChild(autoOption);
-        
-        // Get models for provider that support embeddings
-        const allModels = window.modelsService?.getModelsForProvider?.(provider) || [];
-        const models = allModels.filter(isEmbeddingCapableModel);
-        
-        for (const model of models) {
+        const embedModels = (state?.models || []).filter(isEmbeddingCapable);
+
+        if (!state || embedModels.length === 0) {
             const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = model.id;
+            option.value = '';
+            option.textContent = state ? 'No embedding-capable models' : 'Loading models...';
+            option.disabled = true;
             modelSelect.appendChild(option);
+            modelSelect.disabled = true;
+        } else {
+            modelSelect.disabled = false;
+            
+            // Add auto option
+            const autoOption = document.createElement('option');
+            autoOption.value = '';
+            autoOption.textContent = 'Auto-select';
+            modelSelect.appendChild(autoOption);
+            
+            // Group by adapter
+            const byAdapter = new Map();
+            for (const model of embedModels) {
+                const adapter = model.owned_by || model.provider || 'unknown';
+                if (!byAdapter.has(adapter)) byAdapter.set(adapter, []);
+                byAdapter.get(adapter).push(model);
+            }
+            
+            for (const [adapter, models] of byAdapter) {
+                const group = document.createElement('optgroup');
+                group.label = adapter.charAt(0).toUpperCase() + adapter.slice(1);
+                
+                for (const model of models) {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.id;
+                    group.appendChild(option);
+                }
+                
+                modelSelect.appendChild(group);
+            }
+            
+            if (currentModel && embedModels.map(m => m.id).includes(currentModel)) {
+                modelSelect.value = currentModel;
+            }
         }
         
-        const modelIds = models.map(m => m.id);
-        if (currentModel && modelIds.includes(currentModel)) {
-            modelSelect.value = currentModel;
-        }
-        
-        // Refresh nui-select to reflect changes
         modelSelect.closest('nui-select')?.refresh();
     }
     
     const unsubscribe = window.modelsService?.subscribe?.((state) => {
-        updateProviders();
+        updateModels();
     });
     
-    updateProviders();
-    
-    providerSelect.addEventListener('change', updateModels);
+    updateModels();
     
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -152,7 +113,6 @@ function init(element, params) {
         const formData = new FormData(form);
         const request = {
             model: formData.get('model') || undefined,
-            provider: formData.get('provider') || undefined,
             input: formData.get('text')
         };
         
@@ -160,16 +120,11 @@ function init(element, params) {
         responseContent.textContent = 'Generating embedding...';
         
         try {
-            // Call gateway directly (CORS is enabled)
             const gatewayUrl = window.location.origin.replace(':3401', ':3400');
-            const headers = { 'Content-Type': 'application/json' };
-            if (request.provider) {
-                headers['x-provider'] = request.provider;
-            }
             
             const response = await fetch(`${gatewayUrl}/v1/embeddings`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request)
             });
             

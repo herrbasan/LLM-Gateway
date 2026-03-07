@@ -7,36 +7,36 @@ import { createHealthHandler } from './routes/health.js';
 import { createChatHandler } from './routes/chat.js';
 import { createEmbeddingsHandler } from './routes/embeddings.js';
 import { createModelsHandler } from './routes/models.js';
-import { createSessionsHandler, createSessionIdHandler } from './routes/sessions.js';
 import { createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
 import { createImagesHandler } from './routes/images.js';
 import { createAudioSpeechHandler } from './routes/audio.js';
 import { createSystemEventsHandler } from './routes/events.js';
-import { SessionStore } from './core/session.js';
-import { Router } from './core/router.js';
+import { ModelRouter } from './core/model-router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
+import { getLogger } from './utils/logger.js';
+
+const logger = getLogger();
 
 export function createServer(config) {
   const app = express();
-  const sessionStore = new SessionStore(config);
   const ticketRegistry = new TicketRegistry();
 
-  // Centralized Router so Adapters/Circuit-Breakers are shared across routes
-  const router = new Router(config, sessionStore, ticketRegistry);
+  // Create new ModelRouter - stateless, no session store needed
+  const router = new ModelRouter(config);
 
-  // CORS middleware - MUST be first, before all routes and other middleware
+  // CORS middleware
   const corsOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : true;
   app.use(cors({
     origin: corsOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Provider', 'X-Session-Id', 'X-Async']
+    allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Async']
   }));
 
   // Basic middleware
   app.use(express.json({ limit: '10mb' }));
 
-  // Help endpoint - serves API documentation
+  // Help endpoint
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
   
@@ -45,7 +45,6 @@ export function createServer(config) {
       const docsPath = join(__dirname, '..', 'docs', 'api_documentation.md');
       const content = readFileSync(docsPath, 'utf-8');
       
-      // Simple HTML wrapper with markdown-like styling
       const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -139,7 +138,7 @@ export function createServer(config) {
   app.get('/health', createHealthHandler(config, router));
 
   // Chat completions endpoint
-  app.post('/v1/chat/completions', createChatHandler(router, sessionStore));
+  app.post('/v1/chat/completions', createChatHandler(router, ticketRegistry));
 
   // Embeddings endpoint
   app.post('/v1/embeddings', createEmbeddingsHandler(router));
@@ -147,50 +146,16 @@ export function createServer(config) {
   // Models endpoint
   app.get('/v1/models', createModelsHandler(router));
 
-  // Vision limits endpoint - returns provider-specific image limits
-  app.get('/v1/vision/limits', (req, res) => {
-    const provider = req.query.provider;
-    const limits = router.mediaProcessor?.getLimitsInfo(provider);
-    res.json({
-      object: 'list',
-      data: limits,
-      provider: provider || 'all'
-    });
-  });
-
-  // Sessions endpoints
-  app.post('/v1/sessions', createSessionsHandler(sessionStore, router));
-  app.get('/v1/sessions/:id', createSessionIdHandler(sessionStore, router));
-  app.patch('/v1/sessions/:id', createSessionIdHandler(sessionStore, router));
-  app.delete('/v1/sessions/:id', createSessionIdHandler(sessionStore, router));
-  app.post('/v1/sessions/:id/compress', createSessionIdHandler(sessionStore, router));
-
-  // Tasks endpoints
+  // Tasks endpoints (kept for async operations)
   app.get('/v1/tasks/:id', createTasksHandler(ticketRegistry));
   app.get('/v1/tasks/:id/stream', createTasksStreamHandler(ticketRegistry));
 
-    // System Events endpoint
-    app.get('/v1/system/events', createSystemEventsHandler());
+  // System Events endpoint
+  app.get('/v1/system/events', createSystemEventsHandler());
 
-    // Media generation endpoints
-    app.post('/v1/images/generations', createImagesHandler(router));
-    app.post('/v1/audio/speech', createAudioSpeechHandler(router));
-  // Temporary media staging endpoint
-  if (router.mediaStorage?.enabled) {
-    app.use('/v1/media', express.static(router.mediaStorage.baseDir));
-  }
-
-  // Prefetch models at startup so first request is fast
-  // This runs in background after server starts
-  setTimeout(async () => {
-    try {
-      console.log('[Startup] Pre-fetching models from all providers...');
-      await router.routeModels({});
-      console.log('[Startup] Models cached and ready');
-    } catch (err) {
-      console.error('[Startup] Failed to pre-fetch models:', err.message);
-    }
-  }, 100);
+  // Media generation endpoints
+  app.post('/v1/images/generations', createImagesHandler(router));
+  app.post('/v1/audio/speech', createAudioSpeechHandler(router));
 
   // Non-existent routes
   app.use((req, res) => {
@@ -200,17 +165,11 @@ export function createServer(config) {
   // Global error handler
   app.use((err, req, res, next) => {
     const isExpectedError = err.status && err.status >= 400 && err.status < 500;
-    const isProviderFallback = err.message?.includes('model "auto" not found') || 
-                                err.message?.includes('is not found for API version');
     
-    // Log expected errors (like 404s from provider fallbacks) as warnings
-    // Log unexpected errors as errors
-    if (isProviderFallback || (isExpectedError && err.status === 404)) {
-      console.warn(`[${err.status || 502}] ${err.message || 'Provider fallback'}`);
-    } else if (isExpectedError) {
-      console.warn(`[${err.status}] ${err.message || 'Client error'}`);
+    if (isExpectedError) {
+      logger.warn(`[${err.status}] ${err.message || 'Client error'}`);
     } else {
-      console.error('Unhandled server error:', err.message || err);
+      logger.error('Unhandled server error', err);
     }
     
     if (res.headersSent) {
@@ -219,21 +178,18 @@ export function createServer(config) {
     
     let status = err.status || 500;
     
-    // Parse error messages for specific status codes if not explicitly set
+    // Parse error messages for specific status codes
     if (!err.status && err.message) {
       const msg = err.message;
       if (msg.includes('413 Payload Too Large')) status = 413;
-      else if (msg.includes('404 Session Not Found') || msg.includes('No adapter found') || msg.includes('Not Found') || msg.includes('No matching provider')) status = 404;
-      else if (msg.includes('does not support structured output') || msg.includes('does not support embeddings')) status = 400;
-      else if (msg.includes('Circuit is OPEN') || msg.includes('Service Unavailable') || msg.includes('Circuit breaker')) status = 503;
-      else if (msg.includes('429') || msg.includes('queue full') || msg.includes('Too Many Requests')) status = 429;
-      else if (msg.includes('connection failure') || msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') || msg.includes('Bad Gateway') || msg.includes('Gateway Timeout') || msg.includes('socket hang up') || msg.includes('fetch failed')) status = 502;
+      else if (msg.includes('Unknown model')) status = 404;
+      else if (msg.includes('does not support')) status = 400;
+      else if (msg.includes('Circuit is OPEN')) status = 503;
+      else if (msg.includes('429') || msg.includes('Too Many Requests')) status = 429;
+      else if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT')) status = 502;
     }
 
-    const errorMsg = err.message || 'Internal Server Error';
-    
-    // For specific errors like 503 Fast Fail, allow message through
-    res.status(status).json({ error: errorMsg });
+    res.status(status).json({ error: err.message || 'Internal Server Error' });
   });
 
   return app;

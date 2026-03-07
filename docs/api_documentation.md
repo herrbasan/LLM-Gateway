@@ -1,6 +1,6 @@
-# LLM Gateway API Documentation
+# LLM Gateway API Documentation v2.0
 
-Complete API reference and usage patterns for the LLM Gateway.
+Complete API reference for the LLM Gateway v2.0 (model-centric, stateless architecture).
 
 ---
 
@@ -11,12 +11,15 @@ Complete API reference and usage patterns for the LLM Gateway.
 3. [Endpoints Reference](#endpoints-reference)
 4. [Ticket-Based API](#ticket-based-api)
 5. [Usage Patterns](#usage-patterns)
-6. [Headers](#headers)
-7. [Error Handling](#error-handling)
+6. [Error Handling](#error-handling)
 
 ---
 
 ## API Design Philosophy
+
+### Stateless Architecture
+
+The gateway is **stateless**. Clients send full message history with each request. There is no session management, no `X-Session-Id` header, and no server-side conversation state.
 
 ### Unified Response Model
 
@@ -66,7 +69,7 @@ POST /v1/chat/completions
 Content-Type: application/json
 
 {
-  "model": "auto",
+  "model": "gemini-flash",
   "messages": [{"role": "user", "content": "Hello!"}]
 }
 ```
@@ -77,8 +80,7 @@ Content-Type: application/json
   "id": "chatcmpl-xxx",
   "object": "chat.completion",
   "created": 1739999999,
-  "model": "qwen2.5-14b",
-  "provider": "lmstudio",
+  "model": "gemini-flash",
   "choices": [{
     "index": 0,
     "message": { "role": "assistant", "content": "Hello! How can I help you today?" }
@@ -95,7 +97,7 @@ POST /v1/chat/completions
 Content-Type: application/json
 
 {
-  "model": "auto",
+  "model": "gemini-flash",
   "messages": [{"role": "user", "content": "...(45k tokens)..."}]
 }
 ```
@@ -112,7 +114,7 @@ Content-Type: application/json
 X-Async: true
 
 {
-  "model": "auto",
+  "model": "gemini-flash",
   "messages": [{"role": "user", "content": "...(45k tokens)..."}]
 }
 ```
@@ -141,8 +143,6 @@ Main chat completion endpoint. Supports both streaming and non-streaming respons
 | Header | Description | Required |
 |--------|-------------|----------|
 | `Content-Type` | `application/json` | Yes |
-| `X-Provider` | Override provider: `lmstudio`, `ollama`, `gemini` | No |
-| `X-Session-Id` | Continue existing session | No |
 | `X-Async` | `true` to get 202 + ticket for large prompts | No |
 | `Accept` | `text/event-stream` for streaming | No |
 
@@ -150,7 +150,7 @@ Main chat completion endpoint. Supports both streaming and non-streaming respons
 
 ```json
 {
-  "model": "auto",
+  "model": "gemini-flash",
   "messages": [
     {"role": "system", "content": "You are helpful"},
     {"role": "user", "content": "Explain quantum computing"}
@@ -172,8 +172,7 @@ Main chat completion endpoint. Supports both streaming and non-streaming respons
   "id": "chatcmpl-xxx",
   "object": "chat.completion",
   "created": 1739999999,
-  "model": "qwen2.5-14b",
-  "provider": "lmstudio",
+  "model": "gemini-flash",
   "choices": [{
     "index": 0,
     "message": { "role": "assistant", "content": "..." }
@@ -203,7 +202,7 @@ Main chat completion endpoint. Supports both streaming and non-streaming respons
 curl http://localhost:3400/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
-  -d '{"model": "auto", "messages": [{"role": "user", "content": "Hello"}], "stream": true}'
+  -d '{"model": "gemini-flash", "messages": [{"role": "user", "content": "Hello"}], "stream": true}'
 ```
 
 **Response:**
@@ -219,7 +218,7 @@ data: [DONE]
 curl http://localhost:3400/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
-  -d '{"model": "auto", "messages": [{"role": "user", "content": "...(45k tokens)"}], "stream": true}'
+  -d '{"model": "gemini-flash", "messages": [{"role": "user", "content": "...(45k tokens)"}], "stream": true}'
 ```
 
 **Response:**
@@ -257,7 +256,7 @@ Generate embeddings for text input.
 ```json
 {
   "input": ["text to embed", "second text"],
-  "model": "nomic-embed-text"
+  "model": "gemini-embedding"
 }
 ```
 
@@ -268,7 +267,7 @@ Generate embeddings for text input.
   "data": [
     { "object": "embedding", "embedding": [0.0023, ...], "index": 0 }
   ],
-  "model": "nomic-embed-text",
+  "model": "gemini-embedding",
   "usage": { "prompt_tokens": 8, "total_tokens": 8 }
 }
 ```
@@ -277,11 +276,10 @@ Generate embeddings for text input.
 
 ### GET /v1/models
 
-List available models from all configured providers.
+List available models from config.
 
 ```bash
 GET /v1/models
-GET /v1/models?type=embeddings
 ```
 
 **Response:**
@@ -290,13 +288,13 @@ GET /v1/models?type=embeddings
   "object": "list",
   "data": [
     {
-      "id": "qwen2.5-14b",
+      "id": "gemini-flash",
       "object": "model",
-      "owned_by": "lmstudio",
+      "owned_by": "gemini",
       "capabilities": {
-        "embeddings": false,
-        "structured_output": true,
-        "context_window": 32768
+        "contextWindow": 1048576,
+        "vision": true,
+        "streaming": true
       }
     }
   ]
@@ -317,13 +315,12 @@ OpenAI-compatible image generation endpoint.
 | Header | Description | Required |
 |--------|-------------|----------|
 | `Content-Type` | `application/json` | Yes |
-| `X-Provider` | Force provider selection | No |
 
 **Request Body:**
 
 ```json
 {
-  "model": "openai:gpt-image-1",
+  "model": "dall-e-3",
   "prompt": "A cinematic cyberpunk street at night",
   "size": "1024x1024",
   "quality": "high",
@@ -360,13 +357,12 @@ OpenAI-compatible text-to-speech endpoint.
 | Header | Description | Required |
 |--------|-------------|----------|
 | `Content-Type` | `application/json` | Yes |
-| `X-Provider` | Force provider selection | No |
 
 **Request Body:**
 
 ```json
 {
-  "model": "openai:gpt-4o-mini-tts",
+  "model": "tts-model",
   "input": "Welcome to the LLM Gateway",
   "voice": "alloy",
   "response_format": "mp3",
@@ -396,7 +392,7 @@ GET /v1/media/media_1741068842000_a1b2c3d4.png
 
 ### GET /health
 
-Health check endpoint with provider status.
+Health check endpoint with adapter status.
 
 ```bash
 GET /health
@@ -406,14 +402,12 @@ GET /health
 ```json
 {
   "status": "ok",
-  "providers": {
-    "lmstudio": {
-      "status": "healthy",
-      "model": "qwen2.5-14b",
-      "queue_depth": 0,
-      "active_requests": 1
-    }
-  }
+  "version": "2.0.0",
+  "adapters": {
+    "gemini": { "state": "CLOSED" },
+    "openai": { "state": "CLOSED" }
+  },
+  "models": ["gemini-flash", "local-llama", ...]
 }
 ```
 
@@ -425,67 +419,6 @@ Returns this API documentation rendered as HTML.
 
 ```bash
 GET /help
-```
-
----
-
-### POST /v1/sessions
-
-Create a new conversation session.
-
-```bash
-POST /v1/sessions
-```
-
-**Response:**
-```json
-{ "session_id": "sess_abc123", "created_at": "2026-02-28T19:00:00Z" }
-```
-
-### GET /v1/sessions/:id
-
-Get an existing conversation session.
-
-```bash
-GET /v1/sessions/sess_abc123
-```
-
-**Response:**
-```json
-{
-  "session_id": "sess_abc123",
-  "created_at": "2026-02-28T19:00:00Z",
-  "messages": [...]
-}
-```
-
-### PATCH /v1/sessions/:id
-
-Update an existing conversation session's properties.
-
-```bash
-PATCH /v1/sessions/sess_abc123
-Content-Type: application/json
-
-{
-  "ttl": 3600
-}
-```
-
-### DELETE /v1/sessions/:id
-
-Delete a conversation session.
-
-```bash
-DELETE /v1/sessions/sess_abc123
-```
-
-### POST /v1/sessions/:id/compress
-
-Manually trigger compaction on a session to reduce token count.
-
-```bash
-POST /v1/sessions/sess_abc123/compress
 ```
 
 ---
@@ -547,10 +480,9 @@ Task stream emits SSE events, including:
 
 | Use Case | Request | Resolution |
 |----------|---------|------------|
-| Default model | Omit `model` or use `"auto"` | Adapter's `resolveModel()` finds loaded model or uses config default |
-| List models | `GET /v1/models` | Aggregates from all adapters with `capabilities` filter |
-| Specific model | `"model": "qwen2.5-14b"` | Searches all adapters, requires `X-Provider` if ambiguous |
-| Namespaced model | `"model": "lmstudio:qwen2.5-14b"` | Routes to specific adapter |
+| Default model | Omit `model` or use configured default | Uses `routing.defaultChatModel` from config |
+| Specific model | `"model": "gemini-flash"` | Looks up model by ID in config |
+| List models | `GET /v1/models` | Returns flat list from config |
 
 ### Chat Completions
 
@@ -560,8 +492,7 @@ Task stream emits SSE events, including:
 | Large prompt (default) | `200 OK` — server compacts transparently, then responds |
 | Large prompt (async) | `202 Accepted` — requires `X-Async: true` header |
 | Streaming | Unified SSE (small=tokens, large=progress+tokens) |
-| With/without system prompt | Standard messages array |
-| Structured output | `response_format: { type: "json_schema" }` — routed only to providers with `structuredOutput` capability |
+| Structured output | `response_format: { type: "json_schema" }` — routed only to models with `structuredOutput` capability |
 | Token constraints | `max_tokens` respected by all adapters |
 
 ### Media Generation
@@ -570,57 +501,9 @@ Task stream emits SSE events, including:
 |----------|---------------|
 | Text-to-image | `POST /v1/images/generations` always returns `202 + ticket` |
 | Text-to-speech | `POST /v1/audio/speech` returns synchronous binary audio |
-| Provider mismatch | Router enforces capability flags (`imageGeneration`, `tts`, `stt`) |
+| Provider mismatch | Router enforces capability flags (type must match) |
 | Temporary assets | Staged under `/v1/media/*` when enabled |
-| Asset cleanup | TTL-based eviction logs `evicted_files_count` |
-
-### Sessions
-
-| Use Case | Implementation |
-|----------|---------------|
-| Create session | `POST /v1/sessions` → returns `session_id` |
-| Follow-up question | Include `X-Session-Id: sess_xxx` header |
-| Context management | Auto-compaction of older messages (preserve-last-N) |
-| TTL | Sessions expire 1 hour after last interaction |
-| Persistence | **In-memory only** - lost on server restart |
-
-### Session Context Management
-
-```
-Given:
-- contextWindow: Provider's max context
-- outputBuffer: max_tokens or default
-- preserveLastN: Recent message pairs to keep (default: 4)
-- systemPrompt: Always preserved
-
-Algorithm:
-1. Load session messages from memory
-2. If total tokens < available: Send full conversation
-3. Else:
-   a. Preserve: System prompt + last N exchanges
-   b. If preserved content alone exceeds available tokens:
-      - Dynamically reduce N until it fits, minimum N=1
-      - If N=1 still exceeds: truncate the oldest message in the preserved set
-      - If system prompt alone exceeds: return 413 Payload Too Large
-   c. Compact: Older messages into rolling summary
-   d. Final: [System] + [Summary] + [Recent N]
-4. If compaction fails mid-session:
-   - Fall back to truncation (drop oldest, keep recent N)
-   - Log the failure, do not block the request
-5. On successful compaction: replace older messages with summary in session store
-```
-
----
-
-## Headers
-
-| Header | Format | Description |
-|--------|--------|-------------|
-| `X-Provider` | `lmstudio`, `ollama`, `gemini`, etc. | Override the default provider for this request |
-| `X-Session-Id` | `sess_xxx` | Continue an existing conversation session |
-| `X-Async` | `true` or `false` | Enable async ticket-based processing for large prompts |
-
-`X-Async` is ignored for `/v1/images/generations` because image generation is already forced-async.
+| Asset cleanup | TTL-based eviction |
 
 ---
 
@@ -630,9 +513,8 @@ Algorithm:
 |------|---------|
 | 200 | Success (small prompt or transparent compaction complete) |
 | 202 | Accepted (large prompt, async ticket created) |
-| 400 | Bad request |
-| 422 | Capability mismatch (for example, routing image generation to a non-image provider) |
-| 404 | Provider/model/session/ticket not found |
+| 400 | Bad request (wrong model type, missing fields) |
+| 404 | Model not found |
 | 413 | Payload too large (even after compaction) |
 | 429 | Rate limit or queue full |
 | 502 | Provider unavailable |
@@ -640,34 +522,108 @@ Algorithm:
 
 ---
 
-## Media Storage Configuration
+## Configuration
 
-Temporary media staging is configured under `mediaStorage`:
+### Model Definition
 
 ```json
 {
-  "mediaStorage": {
-    "enabled": true,
-    "baseDir": "<tmp>/llm-gateway-media",
-    "ttlMinutes": 60,
-    "cleanupIntervalMs": 60000
+  "models": {
+    "model-id": {
+      "type": "chat",
+      "adapter": "gemini",
+      "endpoint": "https://...",
+      "apiKey": "${ENV_VAR}",
+      "adapterModel": "provider-model-name",
+      "capabilities": {
+        "contextWindow": 1048576,
+        "vision": true,
+        "structuredOutput": "json_schema",
+        "streaming": true
+      }
+    }
   }
 }
 ```
 
-Observability fields currently emitted by the gateway:
+### Model Types
 
-- `media_generation_latency`
-- `async_ticket_age_before_poll`
-- `evicted_files_count`
+- `chat` - Chat completion models
+- `embedding` - Text embedding models
+- `image` - Image generation models
+- `audio` - Audio generation models
+
+### Capability Fields
+
+**Chat Models:**
+- `contextWindow` (number) - Maximum context window in tokens
+- `vision` (boolean) - Supports image inputs
+- `structuredOutput` (boolean | string) - Supports JSON output
+- `streaming` (boolean) - Supports streaming responses
+
+**Embedding Models:**
+- `contextWindow` (number) - Maximum input tokens
+- `dimensions` (number) - Output embedding dimensions
+
+**Image Models:**
+- `maxResolution` (string) - Maximum image resolution
+- `supportedFormats` (array) - Supported output formats
 
 ---
 
-## Conventions
+## Migration from v1.x
 
-### Field Naming
+### Removed Features
 
-- **API payloads (request/response JSON):** snake_case (`context_window`, `max_tokens`, `session_id`)
-- **HTTP headers:** X-Prefixed-Kebab-Case (`X-Session-Id`, `X-Provider`, `X-Async`)
+- **Sessions** - No `X-Session-Id` header, no session endpoints
+- **Provider-centric routing** - Models are referenced by ID, not `provider:model`
+- **Capability inference** - All capabilities explicitly declared
 
-Translation happens at the API boundary layer (route handlers).
+### Config Changes
+
+**v1.x:**
+```json
+{
+  "providers": {
+    "gemini": {
+      "type": "gemini",
+      "model": "gemini-flash"
+    }
+  }
+}
+```
+
+**v2.0:**
+```json
+{
+  "models": {
+    "gemini-flash": {
+      "type": "chat",
+      "adapter": "gemini",
+      "capabilities": {...}
+    }
+  }
+}
+```
+
+### Client Changes
+
+**v1.x:**
+```javascript
+// Create session, then use X-Session-Id
+const session = await fetch('/v1/sessions', {method: 'POST'});
+await fetch('/v1/chat/completions', {
+  headers: {'X-Session-Id': session.id}
+});
+```
+
+**v2.0:**
+```javascript
+// Send full history each time
+await fetch('/v1/chat/completions', {
+  body: JSON.stringify({
+    model: 'gemini-flash',
+    messages: fullHistory
+  })
+});
+```

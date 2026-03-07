@@ -3,4 +3,5 @@ config.json
 .vcode/
 .DS_Store
 *.log
+logs/
 .env

@@ -1,167 +1,173 @@
-# LLM Gateway
+# LLM Gateway v2.0
 
-**Centralized LLM service with transparent context-window management and multi-provider routing.**
+A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface with support for multiple providers.
 
-The **LLM Gateway** is a centralized, OpenAI-compatible service that transparently routes requests and mitigates context window limitations for massive text inputs. It supports fallback precedence routing, structured output limitation blocks, stateful sessions, and advanced metrics to protect your downstream local or remote endpoints from large contexts, enforcing load bounds efficiently.
-
----
-
-## Features
-
-- **OpenAI-Compatible HTTP API** - Seamlessly works with existing OpenAI SDKs (standard `200` responses by default).
-- **Multi-Provider Routing** - First-class adapter support for LM Studio, Ollama, Gemini, OpenAI, Kimi, and Minimax. Note: Grok, GLM, and Qwen can be connected via the generic OpenAI adapter.
-- **Unified Streaming Architecture** - Manages keep-alives via `heartbeat`, efficiently tracks Node backpressure limits with sliding window buffers (`drain` handler), and outputs standard OpenAI SSE streaming.
-- **Context Mitigation Strategies** - Enforces `truncate`, `compress`, and `rolling` reduction behaviors on large inputs transparently to prevent downstream `413 Payload Too Large` errors.
-- **Multimodal Media Endpoints (Phase 2)** - Supports `POST /v1/images/generations` (forced async ticket workflow) and `POST /v1/audio/speech` (synchronous binary TTS).
-- **Temporary Media Staging & Eviction** - Generated media can be staged under `/v1/media/*` with TTL cleanup to prevent disk growth.
-- **Stateful Sessions** - `SessionStore` utilizing in-memory TTL with sliding windows tracking multi-turn context (1hr default TTL).
-- **Intelligent Embeddings Routing** - Standardized `/v1/embeddings` endpoint with batch request wrappers and automatic fallback.
-- **Resilience & Production Hardened** - Built-in Circuit Breakers protecting adapted endpoints with exponential backoff and `/health` reporting. Heavily load-tested against multi-gigabyte concurrent workloads without memory exhaustion.
-
----
-
-## Quick Start (Local Development)
-
-### Requirements
-- Node.js (v20+ recommended)
-- Standard environment configured via `.env` (Optional but recommended)
-
-### Setup
+## Quick Start
 
 ```bash
-# 1. Install Dependencies
+# Install dependencies
 npm install
 
-# 2. Configure Settings
+# Configure - copy example and edit with your API keys
 cp config.example.json config.json
 
-# 3. Add any necessary credentials in .env
-# Example: GEMINI_API_KEY=your_key_here
-
-# 4. Start the Application
+# Start server
 npm start
-# Service runs by default on http://localhost:3400
 ```
 
-### Running Tests
+The gateway runs on `http://localhost:3400` by default.
 
-```bash
-# Unit tests (no server required)
-npm test
+## What This Is
 
-# Integration tests (requires running server)
-npm run test:integration
+LLM Gateway provides a unified interface to multiple LLM providers:
 
-# Provider tests (tests all configured providers)
-npm run test:providers
+- **OpenAI-compatible API** - Drop-in replacement for OpenAI client libraries
+- **Multi-provider** - Gemini, OpenAI, Ollama, LM Studio, MiniMax, Kimi
+- **Stateless** - No server-side session management
+- **Model-centric config** - Each model configured independently
+- **Context compaction** - Automatic context window management
 
-# All tests
-npm run test:all
-```
+## Configuration
 
----
-
-## Docker Deployment (Production)
-
-The LLM Gateway is designed to be easily containerized and runs efficiently in isolated environments.
-
-### Option 1: Using Docker Compose (Recommended)
-
-Included is a `docker-compose.yml` for quick and reproducible setups.
-
-1. Ensure Docker and Docker Compose are installed.
-2. Edit or supply your `config.json` in the root folder (or map it via `docker-compose.yml` volumes).
-3. If using local LLM providers like Ollama running on your host machine, you may map endpoints inside your configuration to `http://host.docker.internal:11434`.
-4. Run:
-```bash
-docker-compose up -d --build
-```
-
-### Option 2: Building the Image Manually
-
-To manually build and run the Docker image without Compose:
-
-```bash
-# Build the Docker image
-docker build -t llm-gateway .
-
-# Run the container (Mapping port 3400 and injecting typical ENV vars)
-docker run -d \
-  --name llm-gateway \
-  -p 3400:3400 \
-  -e NODE_ENV=production \
-  -e GEMINI_API_KEY=your_key \
-  llm-gateway
-```
-
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [API Documentation](./docs/api_documentation.md) | Complete API reference, endpoint details, response patterns, and usage examples |
-| [Developer Notes](./docs/dev-notes.md) | Architecture, project structure, adapter development, and technical implementation details |
-
----
-
-## Configuration Guide
-
-The `config.json` supports environment variable substitution automatically. For instance, putting `${MY_KEY}` in the JSON file will evaluate `process.env.MY_KEY` at runtime.
-
-Providers and specific fallback routing rules are declared directly inside `config.json`. Refer to the `config.example.json` to review structure configurations.
-
-### Quick Configuration Example
+Define models in `config.json`:
 
 ```json
 {
-  "port": 3400,
-  "routing": {
-    "defaultProvider": "lmstudio"
-  },
-  "mediaStorage": {
-    "enabled": true,
-    "ttlMinutes": 60,
-    "cleanupIntervalMs": 60000
-  },
-  "providers": {
-    "lmstudio": {
-      "type": "lmstudio",
-      "endpoint": "http://localhost:1234",
-      "model": "qwen2.5-14b",
+  "models": {
+    "gemini-flash": {
+      "type": "chat",
+      "adapter": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "${GEMINI_API_KEY}",
+      "adapterModel": "gemini-2.0-flash-001",
       "capabilities": {
-        "embeddings": true,
-        "structuredOutput": true,
-        "streaming": true,
-        "imageGeneration": false,
-        "tts": false,
-        "stt": false
+        "contextWindow": 1048576,
+        "vision": true,
+        "structuredOutput": "json_schema",
+        "streaming": true
+      }
+    },
+    "local-llama": {
+      "type": "chat",
+      "adapter": "ollama",
+      "endpoint": "http://localhost:11434",
+      "adapterModel": "llama3.2",
+      "capabilities": {
+        "contextWindow": 128000,
+        "streaming": true
       }
     }
+  },
+  "routing": {
+    "defaultChatModel": "gemini-flash"
   }
 }
 ```
 
----
+## Usage
 
-## Supported Providers
+### Chat Completions
 
-| Provider | Type | Embeddings | Streaming | Structured Output | Image Gen | TTS |
-|----------|------|------------|-----------|-------------------|-----------|-----|
-| Gemini | `gemini` | ✅ | ✅ | ✅ | Configurable | Configurable |
-| LM Studio | `lmstudio` | ✅ | ✅ | ✅ | Configurable | Configurable |
-| Ollama | `ollama` | ✅ | ✅ | ❌ | Configurable | Configurable |
-| OpenAI | `openai` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Grok (xAI) | `openai` | ❌ | ✅ | ✅ | Configurable | Configurable |
-| GLM | `openai` | ❌ | ✅ | ✅ | Configurable | Configurable |
-| MiniMax | `minimax` | ❌ | ❌ | ✅ | Configurable | Configurable |
-| Kimi | `kimi-cli` | ❌ | Simulated | ❌ | ❌ | ❌ |
-| Qwen | `openai` | ❌ | ✅ | ✅ | Configurable | Configurable |
+```bash
+curl http://localhost:3400/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-flash",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'
+```
 
-See [Provider Adapters Documentation](./src/adapters/adapters.md) for detailed configuration of each provider.
+### Streaming
 
----
+```bash
+curl http://localhost:3400/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-flash",
+    "messages": [{"role": "user", "content": "Count to 5"}],
+    "stream": true
+  }'
+```
+
+### Embeddings
+
+```bash
+curl http://localhost:3400/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "embedding-model",
+    "input": "Text to embed"
+  }'
+```
+
+## Architecture
+
+### Model-Centric Design
+
+Each model is independently configured with:
+- **Type**: chat, embedding, image, audio
+- **Adapter**: Protocol handler (gemini, openai, ollama, etc.)
+- **Capabilities**: Explicit declaration (contextWindow, vision, etc.)
+- **Endpoint/Auth**: Per-model configuration
+
+### Stateless Operation
+
+- Client sends full message history with each request
+- No server-side session management
+- No `X-Session-Id` header
+- Automatic context compaction when needed
+
+### Supported Adapters
+
+| Adapter | Chat | Embeddings | Images | Audio |
+|---------|------|------------|--------|-------|
+| Gemini | ✅ | ✅ | ❌ | ✅ |
+| OpenAI | ✅ | ✅ | ✅ | ✅ |
+| Ollama | ✅ | ✅ | ❌ | ❌ |
+| LM Studio | ✅ | ✅ | ❌ | ❌ |
+| MiniMax | ✅ | ❌ | ❌ | ❌ |
+| Kimi-CLI | ✅ | ❌ | ❌ | ❌ |
+
+## API Documentation
+
+See [docs/api_documentation.md](docs/api_documentation.md) for complete API reference.
+
+## Development
+
+```bash
+# Run tests
+npm test
+
+# Run specific test file
+npx mocha tests/new-core.test.js
+
+# Development mode with auto-restart
+npm run dev
+```
+
+## Key Differences from v1.x
+
+| v1.x | v2.0 |
+|------|------|
+| Provider-centric config | Model-centric config |
+| Session-based (`X-Session-Id`) | Stateless |
+| Capability inference from model IDs | Explicit capabilities |
+| `providers` in config | `models` in config |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `GROK_API_KEY` | xAI Grok API key |
+| `GLM_API_KEY` | GLM API key |
+| `QWEN_API_KEY` | Qwen API key |
+| `MINIMAX_API_KEY` | MiniMax API key |
+| `CORS_ORIGINS` | Comma-separated allowed origins |
 
 ## License
 
-MIT
+ISC

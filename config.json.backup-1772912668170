@@ -1,0 +1,156 @@
+{
+  "port": 3400,
+  "host": "0.0.0.0",
+  
+  "models": {
+    "lmstudio-chat": {
+      "type": "chat",
+      "adapter": "lmstudio",
+      "endpoint": "http://localhost:12345",
+      "adapterModel": "qwen/qwen3.5-9b",
+      "capabilities": {
+        "contextWindow": 30000,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "lmstudio-embed": {
+      "type": "embedding",
+      "adapter": "lmstudio",
+      "endpoint": "http://localhost:12345",
+      "adapterModel": "text-embedding-embeddinggemma-300m-qate",
+      "capabilities": {
+        "contextWindow": 512,
+        "dimensions": 768
+      }
+    },
+    "ollama-chat": {
+      "type": "chat",
+      "adapter": "ollama",
+      "endpoint": "http://192.168.0.145:11434",
+      "adapterModel": "gemma3:12b",
+      "capabilities": {
+        "contextWindow": 8192,
+        "vision": false,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "ollama-embed": {
+      "type": "embedding",
+      "adapter": "ollama",
+      "endpoint": "http://192.168.0.145:11434",
+      "adapterModel": "nomic-embed-text-v2-moe",
+      "capabilities": {
+        "contextWindow": 512,
+        "dimensions": 768
+      }
+    },
+    "gemini-flash": {
+      "type": "chat",
+      "adapter": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "${GEMINI_API_KEY}",
+      "adapterModel": "gemini-flash-latest",
+      "capabilities": {
+        "contextWindow": 1000000,
+        "vision": true,
+        "structuredOutput": "json_schema",
+        "streaming": true
+      }
+    },
+    "gemini-embedding": {
+      "type": "embedding",
+      "adapter": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "${GEMINI_API_KEY}",
+      "adapterModel": "gemini-embedding-001",
+      "capabilities": {
+        "contextWindow": 2048,
+        "dimensions": 768
+      }
+    },
+    "grok-chat": {
+      "type": "chat",
+      "adapter": "openai",
+      "endpoint": "https://api.x.ai/v1",
+      "apiKey": "${GROK_API_KEY}",
+      "adapterModel": "grok-4-fast-non-reasoning",
+      "capabilities": {
+        "contextWindow": 1000000,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "kimi-chat": {
+      "type": "chat",
+      "adapter": "kimi-cli",
+      "adapterModel": "kimi-k2.5",
+      "capabilities": {
+        "contextWindow": 256000,
+        "streaming": true
+      },
+      "timeout": 120000
+    },
+    "glm-chat": {
+      "type": "chat",
+      "adapter": "openai",
+      "endpoint": "https://api.z.ai/api/coding/paas/v4",
+      "apiKey": "${GLM_API_KEY}",
+      "adapterModel": "glm-5",
+      "capabilities": {
+        "contextWindow": 256000,
+        "vision": false,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "qwen-chat": {
+      "type": "chat",
+      "adapter": "openai",
+      "endpoint": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "apiKey": "${QWEN_API_KEY}",
+      "adapterModel": "qwen3.5-plus",
+      "capabilities": {
+        "contextWindow": 1000000,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    "minimax-chat": {
+      "type": "chat",
+      "adapter": "anthropic",
+      "endpoint": "https://api.minimax.io/anthropic",
+      "apiKey": "${MINIMAX_API_KEY}",
+      "adapterModel": "MiniMax-M2.5",
+      "capabilities": {
+        "contextWindow": 200000,
+        "vision": false,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    }
+  },
+  
+  "thinking": {
+    "enabled": false,
+    "stripTags": ["think", "thinking", "thought", "reasoning"],
+    "orphanCloseAsSeparator": true
+  },
+  
+  "routing": {
+    "defaultChatModel": "lmstudio-chat",
+    "defaultEmbeddingModel": "lmstudio-embed"
+  },
+  
+  "compaction": {
+    "enabled": true,
+    "mode": "truncate",
+    "minTokensToCompact": 2000,
+    "preserveSystemPrompt": true,
+    "preserveLastN": 4
+  }
+}
