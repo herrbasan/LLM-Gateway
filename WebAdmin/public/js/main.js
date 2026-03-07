@@ -14,9 +14,15 @@ const navigationData = [
         href: '#feature=dashboard'
     },
     {
-        label: 'Providers',
+        label: 'Models',
         icon: 'grid_on',
-        href: '#page=providers'
+        items: [
+            { label: 'Chat', href: '#page=models-chat' },
+            { label: 'Image', href: '#page=models-image' },
+            { label: 'Video', href: '#page=models-video' },
+            { label: 'Audio', href: '#page=models-audio' },
+            { label: 'Speech', href: '#page=models-speech' }
+        ]
     },
     {
         label: 'Test Tools',
@@ -26,7 +32,6 @@ const navigationData = [
             { label: 'Vision', href: '#page=test-vision' },
             { label: 'Embeddings', href: '#page=test-embeddings' },
             { label: 'Compaction', href: '#page=test-compaction' },
-            { label: 'Sessions', href: '#page=test-sessions' },
             { label: 'Image Generation', href: '#page=test-images' },
             { label: 'Audio Speech', href: '#page=test-audio' }
         ]

@@ -8,8 +8,8 @@ export class Dashboard {
         this.element = element;
         this.pollInterval = null;
         this.eventSource = null;
-        this.providersRendered = false;
-        this.providerElements = new Map(); // Cache provider row elements
+        this.modelsRendered = false;
+        this.modelElements = new Map(); // Cache model row elements
     }
     
     render() {
@@ -31,14 +31,14 @@ export class Dashboard {
                         </div>
                     </div>
                     <div class="stat-card">
-                        <h3>Providers</h3>
-                        <div class="stat-value" id="provider-count">-</div>
+                        <h3>Models</h3>
+                        <div class="stat-value" id="model-count">-</div>
                         <small class="text-dim">configured</small>
                     </div>
                     <div class="stat-card">
-                        <h3>Online</h3>
-                        <div class="stat-value" id="online-count">-</div>
-                        <small class="text-dim">healthy</small>
+                        <h3>Adapters</h3>
+                        <div class="stat-value" id="adapter-count">-</div>
+                        <small class="text-dim">available</small>
                     </div>
                     <div class="stat-card">
                         <h3>In-Flight</h3>
@@ -59,14 +59,14 @@ export class Dashboard {
                     </div>
                 </div>
                 
-                <div class="providers-section">
-                    <h3>Provider Status</h3>
-                    <div id="providers-list" class="providers-list">
-                        <div class="loading-placeholder">Loading providers...</div>
+                <div class="models-section">
+                    <h3>Model Status</h3>
+                    <div id="models-list" class="models-list">
+                        <div class="loading-placeholder">Loading models...</div>
                     </div>
                 </div>
 
-                <div class="providers-section">
+                <div class="models-section">
                     <h3>Recent Gateway Activity</h3>
                     <div id="activity-list" class="requests-list">
                         <div class="loading-placeholder">Waiting for events...</div>
@@ -139,7 +139,7 @@ export class Dashboard {
             try {
                 const payload = JSON.parse(evt.data);
                 this.updateStatus(payload.gateway || {});
-                this.updateProviders(payload.gateway?.providers || {});
+                this.updateModels(payload.gateway?.models || []);
                 this.updateStat('active-count', payload.webadmin?.in_flight ?? '-');
             } catch {
                 // ignore malformed payload
@@ -169,7 +169,7 @@ export class Dashboard {
 
     applyMonitorSnapshot(snapshot) {
         this.updateStatus(snapshot.gateway || {});
-        this.updateProviders(snapshot.gateway?.providers || {});
+        this.updateModels(snapshot.gateway?.models || []);
         this.updateStat('active-count', snapshot.webadmin?.in_flight ?? '-');
         this.renderActivity(snapshot.recentEvents || []);
     }
@@ -184,57 +184,50 @@ export class Dashboard {
                 : '<span class="status-indicator offline">Offline</span>';
         }
         
-        // Update provider counts
-        const providers = data.providers || {};
-        const providerNames = Object.keys(providers);
-        const onlineCount = providerNames.filter(name => {
-            const p = providers[name];
-            return p.state === 'CLOSED' || p.state === 'UNKNOWN';
-        }).length;
+        // Update model count
+        const models = data.models || [];
+        this.updateStat('model-count', models.length);
         
-        this.updateStat('provider-count', providerNames.length);
-        this.updateStat('online-count', onlineCount);
+        // Update adapter count from adapters object
+        const adapters = data.adapters || {};
+        this.updateStat('adapter-count', Object.keys(adapters).length);
     }
     
-    // Render provider table once, then only update values
-    updateProviders(providers) {
-        const container = this.element.querySelector('#providers-list');
+    // Render model table once, then only update values
+    updateModels(models) {
+        const container = this.element.querySelector('#models-list');
         if (!container) return;
         
-        const providerNames = Object.keys(providers);
-        
-        if (providerNames.length === 0) {
+        if (!Array.isArray(models) || models.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
-                    <p>No providers configured</p>
+                    <p>No models configured</p>
                 </div>
             `;
-            this.providersRendered = false;
+            this.modelsRendered = false;
             return;
         }
         
         // First render: Create the table structure
-        if (!this.providersRendered) {
+        if (!this.modelsRendered) {
             container.innerHTML = `
                 <nui-table>
                     <table>
                         <thead>
                             <tr>
-                                <th>Provider</th>
-                                <th>State</th>
-                                <th>Failures</th>
-                                <th>Success Rate</th>
+                                <th>Model</th>
+                                <th>Type</th>
+                                <th>Adapter</th>
+                                <th>Capabilities</th>
                             </tr>
                         </thead>
-                        <tbody id="providers-tbody">
-                            ${providerNames.map(name => `
-                                <tr data-provider="${name}">
-                                    <td class="provider-name"><strong>${name}</strong></td>
-                                    <td class="provider-state">
-                                        <span class="status-badge">-</span>
-                                    </td>
-                                    <td class="provider-failures">-</td>
-                                    <td class="provider-success">-</td>
+                        <tbody id="models-tbody">
+                            ${models.map(model => `
+                                <tr data-model="${model.id || model}">
+                                    <td class="model-name"><strong>${model.id || model}</strong></td>
+                                    <td class="model-type">-</td>
+                                    <td class="model-adapter">-</td>
+                                    <td class="model-caps">-</td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -243,43 +236,27 @@ export class Dashboard {
             `;
             
             // Cache row elements for fast updates
-            const tbody = container.querySelector('#providers-tbody');
+            const tbody = container.querySelector('#models-tbody');
             if (tbody) {
-                providerNames.forEach(name => {
-                    const row = tbody.querySelector(`tr[data-provider="${name}"]`);
+                models.forEach(model => {
+                    const id = model.id || model;
+                    const row = tbody.querySelector(`tr[data-model="${id}"]`);
                     if (row) {
-                        this.providerElements.set(name, {
-                            state: row.querySelector('.provider-state .status-badge'),
-                            failures: row.querySelector('.provider-failures'),
-                            success: row.querySelector('.provider-success')
+                        this.modelElements.set(id, {
+                            type: row.querySelector('.model-type'),
+                            adapter: row.querySelector('.model-adapter'),
+                            caps: row.querySelector('.model-caps')
                         });
                     }
                 });
             }
             
-            this.providersRendered = true;
+            this.modelsRendered = true;
         }
         
         // Update values only (no re-rendering)
-        providerNames.forEach(name => {
-            const p = providers[name];
-            const els = this.providerElements.get(name);
-            
-            if (els) {
-                const isHealthy = p.state === 'CLOSED' || p.state === 'UNKNOWN';
-                const isOpen = p.state === 'OPEN';
-                
-                // Update state badge
-                els.state.textContent = p.state || 'UNKNOWN';
-                els.state.className = `status-badge ${isHealthy ? 'healthy' : isOpen ? 'error' : 'warning'}`;
-                
-                // Update failures
-                els.failures.textContent = p.failures !== undefined ? p.failures : '-';
-                
-                // Update success rate
-                els.success.textContent = p.successRate !== undefined ? (p.successRate * 100).toFixed(1) + '%' : '-';
-            }
-        });
+        // Note: Full model details come from /v1/models, health only returns IDs
+        // So we just show the model ID list here
     }
     
     updateStat(id, value) {
@@ -289,7 +266,7 @@ export class Dashboard {
     
     renderEventRow(e) {
         if (e.type === 'gateway_event') {
-            const idInfo = e.payload?.sessionId || e.payload?.ticketId || e.payload?.id || '';
+            const idInfo = e.payload?.ticketId || e.payload?.id || '';
             const statusInfo = e.payload?.status || '';
             let details = idInfo;
             if (statusInfo) details += (details ? ` (${statusInfo})` : statusInfo);
@@ -406,8 +383,8 @@ export class Dashboard {
         if (activeSection) activeSection.hidden = true;
         
         // Don't clear the table, just show it's stale
-        const container = this.element.querySelector('#providers-list');
-        if (container && !this.providersRendered) {
+        const container = this.element.querySelector('#models-list');
+        if (container && !this.modelsRendered) {
             container.innerHTML = `
                 <div class="error-message">
                     <nui-icon name="warning"></nui-icon>

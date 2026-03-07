@@ -3,31 +3,67 @@ dotenv.config();
 
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';
+import { createLogger } from './utils/logger.js';
 
 async function main() {
+  // Initialize logger first - creates timestamped log file
+  const logger = createLogger();
+  
   try {
+    logger.info('Starting LLM Gateway', { 
+      nodeEnv: process.env.NODE_ENV || 'development',
+      nodeVersion: process.version 
+    });
+    
     const config = await loadConfig();
+    logger.info('Configuration loaded', { 
+      port: config.port, 
+      host: config.host,
+      modelsConfigured: Object.keys(config.models || {}).length 
+    });
+    
     const app = createServer(config);
     
-    // app.listen() returns the HTTP server instance
     const server = app.listen(config.port, config.host, () => {
+      logger.info('Gateway started', { 
+        url: `http://${config.host}:${config.port}`,
+        logFile: logger.getSessionInfo().logFile
+      });
       console.log(`LLM Gateway running on http://${config.host}:${config.port}`);
+      console.log(`Log file: ${logger.getSessionInfo().logFile}`);
     });
 
-    const shutdown = () => {
-      console.log('Shutting down...');
+    const shutdown = (signal) => {
+      logger.info(`Received ${signal}, shutting down...`);
       server.close(() => {
+        logger.close();
         process.exit(0);
       });
       // Force exit after 5s
-      setTimeout(() => process.exit(1), 5000);
+      setTimeout(() => {
+        logger.error('Forced shutdown after timeout');
+        logger.close();
+        process.exit(1);
+      }, 5000);
     };
 
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    
+    // Log uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      logger.error('Uncaught exception', error);
+      logger.close();
+      process.exit(1);
+    });
+    
+    process.on('unhandledRejection', (reason, promise) => {
+      logger.error('Unhandled rejection', null, { reason, promise });
+    });
 
   } catch (error) {
-    console.error('Failed to start LLM Gateway:', error);
+    logger.error('Failed to start LLM Gateway', error);
+    logger.close();
     process.exit(1);
   }
 }

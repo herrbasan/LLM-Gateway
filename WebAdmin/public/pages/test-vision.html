@@ -6,19 +6,10 @@
     
     <form id="vision-form">
         <div class="form-group">
-            <label for="provider">Provider</label>
-            <nui-select id="provider-select">
-                <select id="provider" name="provider">
-                    <option value="">Auto-select</option>
-                </select>
-            </nui-select>
-        </div>
-        
-        <div class="form-group">
             <label for="model">Model</label>
             <nui-select id="model-select">
                 <select id="model" name="model">
-                    <option value="">Select provider first</option>
+                    <option value="">Loading models...</option>
                 </select>
             </nui-select>
         </div>
@@ -59,12 +50,12 @@
             <label for="detail">Detail Level</label>
             <nui-select>
                 <select id="detail" name="detail">
-                    <option value="" selected>Default (provider decides)</option>
+                    <option value="" selected>Default (adapter decides)</option>
                     <option value="low">Low (512x512, faster)</option>
                     <option value="high">High (up to 2048x2048)</option>
                 </select>
             </nui-select>
-            <small class="text-dim">Some providers (GLM, etc.) don't support detail parameter - use "Default" for compatibility</small>
+            <small class="text-dim">Some adapters don't support detail parameter - use "Default" for compatibility</small>
         </div>
         
         <div class="form-group">
@@ -81,145 +72,162 @@
         </nui-button-container>
     </form>
     
-    <!-- Image Preview -->
-    <div class="response-panel" id="preview-panel" hidden>
+    <div class="preview-panel" id="preview-panel" hidden>
         <h4>Image Preview</h4>
-        <div class="image-preview-container">
-            <img id="image-preview" src="" alt="Preview">
-        </div>
-        <div class="image-info" id="image-info"></div>
+        <img id="image-preview" class="image-preview" alt="Preview">
     </div>
     
-    <!-- Response Panel -->
     <div class="response-panel" id="response-panel" hidden>
         <h4>Response</h4>
-        <div class="response-content" id="response-content"></div>
-        <pre class="response-raw" id="response-raw"></pre>
+        <pre class="response-content" id="response-content"></pre>
     </div>
 </section>
 
 <script type="nui/page">
 function init(element, params) {
     const form = element.querySelector('#vision-form');
-    const responsePanel = element.querySelector('#response-panel');
-    const responseContent = element.querySelector('#response-content');
-    const responseRaw = element.querySelector('#response-raw');
-    const providerSelect = element.querySelector('#provider');
     const modelSelect = element.querySelector('#model');
-    const previewPanel = element.querySelector('#preview-panel');
-    const imagePreview = element.querySelector('#image-preview');
-    const imageInfo = element.querySelector('#image-info');
-    const imageFile = element.querySelector('#image-file');
+    const fileInput = element.querySelector('#image-file');
     const fileSelectBtn = element.querySelector('#file-select-btn');
     const fileName = element.querySelector('#file-name');
     const imageUrl = element.querySelector('#image-url');
+    const previewPanel = element.querySelector('#preview-panel');
+    const imagePreview = element.querySelector('#image-preview');
+    const responsePanel = element.querySelector('#response-panel');
+    const responseContent = element.querySelector('#response-content');
     const tabUpload = element.querySelector('#tab-upload');
     const tabUrl = element.querySelector('#tab-url');
     const uploadSection = element.querySelector('#upload-section');
     const urlSection = element.querySelector('#url-section');
+
+    function isVisionCapable(model) {
+        return !!model?.capabilities?.vision;
+    }
     
     let currentImageData = null;
-    let currentImageMimeType = null;
-
-    function isVisionCapableModel(model) {
-        // Use the explicit capability flag from the API
-        // Adapters now properly detect vision support based on model names
-        return model?.capabilities?.vision === true;
-    }
-
+    let useUrlMode = false;
+    
     // Tab switching
     tabUpload.addEventListener('click', () => {
+        useUrlMode = false;
         tabUpload.classList.add('tab-active');
         tabUrl.classList.remove('tab-active');
         uploadSection.classList.remove('hidden');
         urlSection.classList.add('hidden');
         imageUrl.value = '';
     });
-
+    
     tabUrl.addEventListener('click', () => {
+        useUrlMode = true;
         tabUrl.classList.add('tab-active');
         tabUpload.classList.remove('tab-active');
         urlSection.classList.remove('hidden');
         uploadSection.classList.add('hidden');
-        imageFile.value = '';
+        fileInput.value = '';
         fileName.textContent = 'No file selected';
         currentImageData = null;
         previewPanel.hidden = true;
     });
     
-    // Populate providers when models are loaded
-    function updateProviders() {
-        const state = window.modelsService?.getState?.();
-        
-        const currentProvider = providerSelect.value;
-        
-        providerSelect.innerHTML = '<option value="">Auto-select</option>';
-        
-        const eligibleProviders = (state?.providers || []).filter(provider => {
-            const models = window.modelsService?.getModelsForProvider?.(provider) || [];
-            return models.some(isVisionCapableModel);
-        });
-
-        if (!state || eligibleProviders.length === 0) {
-            const loadingOption = document.createElement('option');
-            loadingOption.value = '';
-            loadingOption.textContent = state ? 'No vision-capable providers' : 'Loading providers...';
-            loadingOption.disabled = true;
-            providerSelect.appendChild(loadingOption);
-            providerSelect.disabled = true;
-        } else {
-            providerSelect.disabled = false;
-            
-            for (const provider of eligibleProviders) {
-                const option = document.createElement('option');
-                option.value = provider;
-                option.textContent = provider.charAt(0).toUpperCase() + provider.slice(1);
-                providerSelect.appendChild(option);
-            }
-            
-            if (currentProvider && eligibleProviders.includes(currentProvider)) {
-                providerSelect.value = currentProvider;
-            }
+    fileSelectBtn.addEventListener('click', () => fileInput.click());
+    
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) {
+            fileName.textContent = 'No file selected';
+            currentImageData = null;
+            previewPanel.hidden = true;
+            return;
         }
         
-        providerSelect.closest('nui-select')?.refresh?.();
-        updateModels();
-    }
+        if (file.size > 20 * 1024 * 1024) {
+            alert('File too large. Max 20MB.');
+            fileInput.value = '';
+            return;
+        }
+        
+        fileName.textContent = file.name;
+        
+        try {
+            const base64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            
+            currentImageData = base64;
+            imagePreview.src = base64;
+            previewPanel.hidden = false;
+        } catch (err) {
+            console.error('Failed to read file:', err);
+            alert('Failed to read image file');
+        }
+    });
     
-    // Update models based on selected provider
+    imageUrl.addEventListener('change', () => {
+        const url = imageUrl.value.trim();
+        if (url) {
+            imagePreview.src = url;
+            previewPanel.hidden = false;
+        } else {
+            previewPanel.hidden = true;
+        }
+        currentImageData = null;
+        fileInput.value = '';
+        fileName.textContent = 'No file selected';
+    });
+    
+    // Populate models when loaded
     function updateModels() {
-        const provider = providerSelect.value;
+        const state = window.modelsService?.getState?.();
         const currentModel = modelSelect.value;
         
         modelSelect.innerHTML = '';
         
-        if (!provider) {
-            modelSelect.innerHTML = '<option value="">Auto-selected by gateway</option>';
-            modelSelect.disabled = true;
-            modelSelect.closest('nui-select')?.refresh?.();
-            return;
-        }
-        
-        modelSelect.disabled = false;
-        
-        const autoOption = document.createElement('option');
-        autoOption.value = '';
-        autoOption.textContent = 'Auto-select model';
-        modelSelect.appendChild(autoOption);
-        
-        const allModels = window.modelsService?.getModelsForProvider?.(provider) || [];
-        const models = allModels.filter(isVisionCapableModel);
-        
-        for (const model of models) {
+        const visionModels = (state?.models || []).filter(isVisionCapable);
+
+        if (!state || visionModels.length === 0) {
             const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = model.id;
+            option.value = '';
+            option.textContent = state ? 'No vision-capable models' : 'Loading models...';
+            option.disabled = true;
             modelSelect.appendChild(option);
-        }
-        
-        const modelIds = models.map(m => m.id);
-        if (currentModel && modelIds.includes(currentModel)) {
-            modelSelect.value = currentModel;
+            modelSelect.disabled = true;
+        } else {
+            modelSelect.disabled = false;
+            
+            // Add auto option
+            const autoOption = document.createElement('option');
+            autoOption.value = '';
+            autoOption.textContent = 'Auto-select';
+            modelSelect.appendChild(autoOption);
+            
+            // Group by adapter
+            const byAdapter = new Map();
+            for (const model of visionModels) {
+                const adapter = model.owned_by || model.provider || 'unknown';
+                if (!byAdapter.has(adapter)) byAdapter.set(adapter, []);
+                byAdapter.get(adapter).push(model);
+            }
+            
+            for (const [adapter, models] of byAdapter) {
+                const group = document.createElement('optgroup');
+                group.label = adapter.charAt(0).toUpperCase() + adapter.slice(1);
+                
+                for (const model of models) {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.id;
+                    group.appendChild(option);
+                }
+                
+                modelSelect.appendChild(group);
+            }
+            
+            if (currentModel && visionModels.map(m => m.id).includes(currentModel)) {
+                modelSelect.value = currentModel;
+            }
         }
         
         modelSelect.closest('nui-select')?.refresh?.();
@@ -233,296 +241,93 @@ function init(element, params) {
         
         if (!selectedModel) return;
         
-        const provider = providerSelect.value;
-        const models = window.modelsService?.getModelsForProvider?.(provider) || [];
-        const model = models.find(m => m.id === selectedModel);
+        const state = window.modelsService?.getState?.();
+        const model = state?.models?.find(m => m.id === selectedModel);
         
-        const visionPatterns = ['vision', '-v', 'v-', '4v', 'gpt-4o', 'gemini', 'claude-3', 'llava', 'bakllava', 'moondream'];
-        const id = selectedModel.toLowerCase();
-        const looksLikeVision = visionPatterns.some(p => id.includes(p));
-        
-        if (model && !model.capabilities?.vision && !looksLikeVision) {
+        if (model && !model.capabilities?.vision) {
             const warning = document.createElement('div');
-            warning.className = 'form-group vision-warning';
+            warning.className = 'vision-warning form-group';
             warning.innerHTML = `
-                <div class="warning-box">
-                    <span class="warning-icon">⚠️</span>
-                    <span>This model (<strong>${escapeHtml(selectedModel)}</strong>) may not support vision input. 
-                    If you get an error, try a model with "vision", "4v", "gemini", or "llava" in the name.</span>
-                </div>
+                <nui-banner priority="warning">
+                    <span>⚠️ ${selectedModel} may not support vision. Results may vary.</span>
+                </nui-banner>
             `;
-            
-            const modelGroup = modelSelect.closest('.form-group');
-            modelGroup.after(warning);
+            form.insertBefore(warning, form.querySelector('nui-button-container'));
         }
     }
     
     modelSelect.addEventListener('change', updateVisionWarning);
     
-    // Handle file button click
-    fileSelectBtn.addEventListener('click', () => {
-        imageFile.click();
-    });
-
-    // Handle file selection
-    imageFile.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) {
-            previewPanel.hidden = true;
-            currentImageData = null;
-            fileName.textContent = 'No file selected';
-            return;
-        }
-
-        // Check file size (20MB max)
-        if (file.size > 20 * 1024 * 1024) {
-            alert('File too large. Maximum size is 20MB.');
-            imageFile.value = '';
-            fileName.textContent = 'No file selected';
-            return;
-        }
-
-        // Update file name display
-        fileName.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-
-        // Read file as base64
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const result = event.target.result;
-            currentImageData = result.split(',')[1]; // Remove data:image/...;base64, prefix
-            currentImageMimeType = file.type;
-            
-            // Show preview
-            imagePreview.src = result;
-            imageInfo.textContent = `${file.name} • ${(file.size / 1024).toFixed(1)} KB • ${file.type}`;
-            previewPanel.hidden = false;
-        };
-        reader.readAsDataURL(file);
-    });
-
-    // Handle URL input (just preview, actual fetch happens on server)
-    imageUrl.addEventListener('input', (e) => {
-        const url = e.target.value.trim();
-        if (url) {
-            imagePreview.src = url;
-            imageInfo.textContent = 'Remote URL (will be fetched by gateway)';
-            previewPanel.hidden = false;
-            currentImageData = null; // Will be fetched by gateway
-        } else {
-            previewPanel.hidden = true;
-        }
-    });
-    
-    // Subscribe to model updates
     const unsubscribe = window.modelsService?.subscribe?.((state) => {
-        updateProviders();
+        updateModels();
     });
     
-    // Initial population
-    updateProviders();
-    
-    // Handle provider change
-    providerSelect.addEventListener('change', updateModels);
+    updateModels();
     
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         
         const formData = new FormData(form);
-        const provider = formData.get('provider');
-        const model = formData.get('model');
-        const detail = formData.get('detail') || 'auto';
+        const model = formData.get('model') || undefined;
         const prompt = formData.get('prompt');
-        const imageUrlValue = formData.get('image-url');
-        
-        // Build message content
-        let imageUrlForRequest;
-        
-        if (imageUrlValue && tabUrl.classList.contains('tab-active')) {
-            // Using remote URL - gateway will fetch it
-            imageUrlForRequest = imageUrlValue;
-        } else if (currentImageData) {
-            // Using uploaded file
-            imageUrlForRequest = `data:${currentImageMimeType};base64,${currentImageData}`;
-        } else {
-            alert('Please select an image file or enter an image URL');
-            return;
-        }
-        
-        // Build image_url object - only include detail if explicitly set
-        const imageUrlObj = { url: imageUrlForRequest };
-        if (detail && detail !== '') {
-            imageUrlObj.detail = detail;
-        }
-        
-        const request = {
-            model: model || undefined,
-            messages: [
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: prompt },
-                        { type: 'image_url', image_url: imageUrlObj }
-                    ]
-                }
-            ]
-        };
+        const detail = formData.get('detail') || undefined;
         
         responsePanel.hidden = false;
         responseContent.textContent = 'Sending request...';
-        responseRaw.textContent = '';
         
         try {
-            const gatewayUrl = window.location.origin.replace(':3401', ':3400');
-            const headers = { 'Content-Type': 'application/json' };
-            if (provider) {
-                headers['x-provider'] = provider;
+            let imageContent;
+            
+            if (useUrlMode) {
+                const url = imageUrl.value.trim();
+                if (!url) {
+                    alert('Please enter an image URL');
+                    return;
+                }
+                imageContent = { type: 'image_url', image_url: { url, detail } };
+            } else {
+                if (!currentImageData) {
+                    alert('Please select an image file');
+                    return;
+                }
+                imageContent = { type: 'image_url', image_url: { url: currentImageData, detail } };
             }
+            
+            const gatewayUrl = window.location.origin.replace(':3401', ':3400');
+            const request = {
+                model,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: prompt },
+                            imageContent
+                        ]
+                    }
+                ]
+            };
             
             const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request)
             });
             
             const data = await response.json();
             
             if (!response.ok) {
-                throw new Error(data.error || `HTTP ${response.status}`);
+                throw new Error(data.error?.message || `HTTP ${response.status}`);
             }
             
-            // Display response
-            const content = data.choices?.[0]?.message?.content || 'No content';
-            responseContent.innerHTML = `<div class="vision-response">${escapeHtml(content).replace(/\n/g, '<br>')}</div>`;
-            responseRaw.textContent = JSON.stringify(data, null, 2);
+            responseContent.textContent = data.choices?.[0]?.message?.content || 'No response content';
             
         } catch (error) {
-            responseContent.innerHTML = `<div class="error-message">Error: ${escapeHtml(error.message)}</div>`;
-            responseRaw.textContent = '';
+            responseContent.textContent = `Error: ${error.message}`;
         }
     });
-
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
     
-    // Cleanup
     element.hide = () => {
         if (unsubscribe) unsubscribe();
     };
 }
 </script>
-
-<style>
-.image-source-tabs {
-    display: flex;
-    gap: var(--nui-space-half);
-    margin-bottom: var(--nui-space-half);
-}
-
-.image-source-tabs nui-button.tab-active button {
-    background: var(--nui-primary);
-    color: white;
-}
-
-.hidden {
-    display: none !important;
-}
-
-.image-preview-container {
-    max-width: 100%;
-    overflow: hidden;
-    border: 1px solid var(--nui-border);
-    border-radius: var(--nui-radius);
-    margin-bottom: var(--nui-space);
-}
-
-.image-preview-container img {
-    max-width: 100%;
-    max-height: 300px;
-    display: block;
-    margin: 0 auto;
-}
-
-.image-info {
-    font-size: 0.875rem;
-    color: var(--nui-text-dim);
-    text-align: center;
-}
-
-.vision-response {
-    line-height: 1.6;
-    padding: var(--nui-space);
-    background: var(--nui-surface);
-    border-radius: var(--nui-radius);
-    border: 1px solid var(--nui-border);
-}
-
-.error-message {
-    color: var(--nui-error, #dc2626);
-    padding: var(--nui-space);
-    background: var(--nui-error-bg, #fef2f2);
-    border-radius: var(--nui-radius);
-    border: 1px solid var(--nui-error-border, #fecaca);
-}
-
-.response-content {
-    margin-bottom: var(--nui-space);
-}
-
-.response-raw {
-    max-height: 300px;
-    overflow: auto;
-    background: var(--nui-surface);
-    padding: var(--nui-space);
-    border-radius: var(--nui-radius);
-    font-size: 0.75rem;
-    opacity: 0.8;
-}
-
-.file-input-wrapper {
-    display: flex;
-    align-items: center;
-    gap: var(--nui-space);
-    padding: var(--nui-space);
-    border: 2px dashed var(--nui-border);
-    border-radius: var(--nui-radius);
-    background: var(--nui-surface);
-}
-
-.file-input-wrapper:hover {
-    border-color: var(--nui-primary);
-}
-
-.file-name {
-    color: var(--nui-text-dim);
-    font-size: 0.875rem;
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.vision-warning {
-    margin-top: calc(var(--nui-space) * -0.5);
-}
-
-.warning-box {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--nui-space-half);
-    padding: var(--nui-space);
-    background: var(--nui-warning-bg, #fffbeb);
-    border: 1px solid var(--nui-warning-border, #fcd34d);
-    border-radius: var(--nui-radius);
-    color: var(--nui-warning-text, #92400e);
-    font-size: 0.875rem;
-    line-height: 1.5;
-}
-
-.warning-icon {
-    font-size: 1rem;
-    flex-shrink: 0;
-}
-</style>

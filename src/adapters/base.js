@@ -1,40 +1,65 @@
-// Base Adapter Structure that defines the contract all adapters must follow.
+/**
+ * Base adapter interface for model-centric architecture.
+ * Adapters are pure protocol handlers - stateless and config-agnostic.
+ */
 
-export function createBaseAdapter(name, adapterConfig, capabilities) {
-    const defaultCapabilities = {
-        embeddings: false,
-        structuredOutput: false,
-        streaming: false,
-        vision: false,
-        ...capabilities,
-    };
-
+/**
+ * Creates a base adapter with the required interface.
+ * All methods receive modelConfig as the first parameter.
+ */
+export function createBaseAdapter() {
     return {
-        name,
-        capabilities: defaultCapabilities,
-
-        async resolveModel(requestedModel) {
-            throw new Error(`[${name}] resolveModel not implemented`);
+        /**
+         * Chat completion.
+         * @param {Object} modelConfig - Model configuration from registry
+         * @param {Object} request - Standardized request with messages, max_tokens, etc.
+         */
+        async chatComplete(modelConfig, request) {
+            throw new Error('[BaseAdapter] chatComplete not implemented');
         },
 
-        async predict({ prompt, systemPrompt, maxTokens, temperature, schema, messages }) {
-            throw new Error(`[${name}] predict not implemented`);
+        /**
+         * Streaming chat completion.
+         * @param {Object} modelConfig - Model configuration from registry
+         * @param {Object} request - Standardized request
+         */
+        async *streamComplete(modelConfig, request) {
+            throw new Error('[BaseAdapter] streamComplete not implemented');
         },
 
-        async *streamComplete({ prompt, systemPrompt, maxTokens, temperature, schema, messages }) {
-            throw new Error(`[${name}] streamComplete not implemented`);
+        /**
+         * Create embeddings.
+         * @param {Object} modelConfig - Model configuration from registry
+         * @param {Object} request - Request with input (string or array)
+         */
+        async createEmbedding(modelConfig, request) {
+            throw new Error('[BaseAdapter] createEmbedding not implemented');
         },
 
-        async embedText(text, requestedModel) {
-            throw new Error(`[${name}] embedText not implemented`);
+        /**
+         * Generate image.
+         * @param {Object} modelConfig - Model configuration from registry
+         * @param {Object} request - Request with prompt, size, etc.
+         */
+        async generateImage(modelConfig, request) {
+            throw new Error('[BaseAdapter] generateImage not implemented');
         },
 
-        async listModels() {
-            throw new Error(`[${name}] listModels not implemented`);
+        /**
+         * Synthesize speech.
+         * @param {Object} modelConfig - Model configuration from registry
+         * @param {Object} request - Request with input, voice, etc.
+         */
+        async synthesizeSpeech(modelConfig, request) {
+            throw new Error('[BaseAdapter] synthesizeSpeech not implemented');
         },
 
-        async getContextWindow() {
-            return adapterConfig.contextWindow || 8192; // Default fallback context window limit
+        /**
+         * List available models.
+         * @param {Object} modelConfig - Model configuration (for API key/endpoint if needed)
+         */
+        async listModels(modelConfig) {
+            throw new Error('[BaseAdapter] listModels not implemented');
         }
     };
 }

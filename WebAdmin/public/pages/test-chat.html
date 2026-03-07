@@ -6,19 +6,10 @@
     
     <form id="chat-form">
         <div class="form-group">
-            <label for="provider">Provider</label>
-            <nui-select id="provider-select">
-                <select id="provider" name="provider">
-                    <option value="">Auto-select</option>
-                </select>
-            </nui-select>
-        </div>
-        
-        <div class="form-group">
             <label for="model">Model</label>
             <nui-select id="model-select">
                 <select id="model" name="model">
-                    <option value="">Select provider first</option>
+                    <option value="">Loading models...</option>
                 </select>
             </nui-select>
         </div>
@@ -55,123 +46,84 @@ function init(element, params) {
     const form = element.querySelector('#chat-form');
     const responsePanel = element.querySelector('#response-panel');
     const responseContent = element.querySelector('#response-content');
-    const providerSelect = element.querySelector('#provider');
     const modelSelect = element.querySelector('#model');
 
-    function isChatCapableModel(model) {
+    function isChatCapable(model) {
         return model?.capabilities?.chat !== false;
     }
     
-    // Populate providers when models are loaded
-    function updateProviders() {
+    // Populate models when loaded
+    function updateModels() {
         const state = window.modelsService?.getState?.();
-        console.log('[TestChat] updateProviders called, state:', state);
+        console.log('[TestChat] updateModels called, state:', state);
         
-        // Save current selection before rebuilding
-        const currentProvider = providerSelect.value;
+        const currentModel = modelSelect.value;
         
         // Clear and rebuild
-        providerSelect.innerHTML = '<option value="">Auto-select</option>';
+        modelSelect.innerHTML = '';
         
-        const eligibleProviders = (state?.providers || []).filter(provider => {
-            const models = window.modelsService?.getModelsForProvider?.(provider) || [];
-            return models.some(isChatCapableModel);
-        });
+        const chatModels = (state?.models || []).filter(isChatCapable);
 
-        if (!state || eligibleProviders.length === 0) {
-            console.log('[TestChat] No providers yet, showing loading state');
-            const loadingOption = document.createElement('option');
-            loadingOption.value = '';
-            loadingOption.textContent = state ? 'No chat-capable providers' : 'Loading providers...';
-            loadingOption.disabled = true;
-            providerSelect.appendChild(loadingOption);
-            providerSelect.disabled = true;
+        if (!state || chatModels.length === 0) {
+            console.log('[TestChat] No models yet, showing loading state');
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = state ? 'No chat-capable models' : 'Loading models...';
+            option.disabled = true;
+            modelSelect.appendChild(option);
+            modelSelect.disabled = true;
         } else {
-            providerSelect.disabled = false;
+            modelSelect.disabled = false;
             
-            for (const provider of eligibleProviders) {
-                const option = document.createElement('option');
-                option.value = provider;
-                option.textContent = provider.charAt(0).toUpperCase() + provider.slice(1);
-                providerSelect.appendChild(option);
+            // Add auto option
+            const autoOption = document.createElement('option');
+            autoOption.value = '';
+            autoOption.textContent = `Auto-select (default: ${state.models.find(m => m.id)?.id || 'none'})`;
+            modelSelect.appendChild(autoOption);
+            
+            // Group by adapter for better organization
+            const byAdapter = new Map();
+            for (const model of chatModels) {
+                const adapter = model.owned_by || model.provider || 'unknown';
+                if (!byAdapter.has(adapter)) byAdapter.set(adapter, []);
+                byAdapter.get(adapter).push(model);
+            }
+            
+            for (const [adapter, models] of byAdapter) {
+                const group = document.createElement('optgroup');
+                group.label = adapter.charAt(0).toUpperCase() + adapter.slice(1);
+                
+                for (const model of models) {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.id;
+                    group.appendChild(option);
+                }
+                
+                modelSelect.appendChild(group);
             }
             
             // Restore selection if still valid
-            if (currentProvider && eligibleProviders.includes(currentProvider)) {
-                providerSelect.value = currentProvider;
+            const modelIds = chatModels.map(m => m.id);
+            if (currentModel && modelIds.includes(currentModel)) {
+                modelSelect.value = currentModel;
             }
         }
         
         // Refresh nui-select to reflect changes
-        const nuiSelect = providerSelect.closest('nui-select');
-        console.log('[TestChat] Refreshing provider nui-select:', nuiSelect);
+        const nuiSelect = modelSelect.closest('nui-select');
         if (nuiSelect && typeof nuiSelect.refresh === 'function') {
             nuiSelect.refresh();
-            console.log('[TestChat] Provider refresh called');
-        }
-        
-        // Trigger model update
-        updateModels();
-    }
-    
-    // Update models based on selected provider
-    function updateModels() {
-        const provider = providerSelect.value;
-        const currentModel = modelSelect.value;
-        
-        modelSelect.innerHTML = '';
-        
-        if (!provider) {
-            modelSelect.innerHTML = '<option value="">Auto-selected by gateway</option>';
-            modelSelect.disabled = true;
-            modelSelect.closest('nui-select')?.refresh();
-            return;
-        }
-        
-        modelSelect.disabled = false;
-        
-        // Add empty option for auto
-        const autoOption = document.createElement('option');
-        autoOption.value = '';
-        autoOption.textContent = 'Auto-select model';
-        modelSelect.appendChild(autoOption);
-        
-        // Get chat-capable models for provider (filter out embedding-only models)
-        const allModels = window.modelsService?.getModelsForProvider?.(provider) || [];
-        const models = allModels.filter(isChatCapableModel);
-        
-        for (const model of models) {
-            const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = model.id;
-            modelSelect.appendChild(option);
-        }
-        
-        // Restore selection if still valid
-        const modelIds = models.map(m => m.id);
-        if (currentModel && modelIds.includes(currentModel)) {
-            modelSelect.value = currentModel;
-        }
-        
-        // Refresh nui-select to reflect changes
-        const modelNuiSelect = modelSelect.closest('nui-select');
-        console.log('[TestChat] Refreshing model nui-select:', modelNuiSelect);
-        if (modelNuiSelect && typeof modelNuiSelect.refresh === 'function') {
-            modelNuiSelect.refresh();
-            console.log('[TestChat] Model refresh called, options:', modelSelect.innerHTML);
         }
     }
     
     // Subscribe to model updates
     const unsubscribe = window.modelsService?.subscribe?.((state) => {
-        updateProviders();
+        updateModels();
     });
     
     // Initial population
-    updateProviders();
-    
-    // Handle provider change
-    providerSelect.addEventListener('change', updateModels);
+    updateModels();
     
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -179,7 +131,6 @@ function init(element, params) {
         const formData = new FormData(form);
         const request = {
             model: formData.get('model') || undefined,
-            provider: formData.get('provider') || undefined,
             stream: formData.has('stream'),
             messages: [
                 { role: 'user', content: formData.get('message') }
@@ -192,14 +143,10 @@ function init(element, params) {
         try {
             // Call gateway directly (CORS is enabled)
             const gatewayUrl = window.location.origin.replace(':3401', ':3400');
-            const headers = { 'Content-Type': 'application/json' };
-            if (request.provider) {
-                headers['x-provider'] = request.provider;
-            }
             
             const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request)
             });
             

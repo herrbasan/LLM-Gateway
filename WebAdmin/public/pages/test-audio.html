@@ -6,19 +6,10 @@
 
     <form id="audio-form">
         <div class="form-group">
-            <label for="provider">Provider</label>
-            <nui-select>
-                <select id="provider" name="provider">
-                    <option value="">Auto-select</option>
-                </select>
-            </nui-select>
-        </div>
-
-        <div class="form-group">
             <label for="model">Model</label>
             <nui-select>
                 <select id="model" name="model">
-                    <option value="">Auto-select model</option>
+                    <option value="">Loading models...</option>
                 </select>
             </nui-select>
         </div>
@@ -79,7 +70,6 @@
 <script type="nui/page">
 function init(element) {
     const form = element.querySelector('#audio-form');
-    const providerSelect = element.querySelector('#provider');
     const modelSelect = element.querySelector('#model');
     const resultPanel = element.querySelector('#audio-result-panel');
     const rawPanel = element.querySelector('#audio-raw-panel');
@@ -89,26 +79,9 @@ function init(element) {
     const downloadLink = element.querySelector('#download-link');
 
     let currentObjectUrl = null;
-    let providerCapabilities = {};
 
-    function isTtsCapableModel(model) {
-        return !!model?.capabilities?.tts;
-    }
-
-    function isTtsCapableProvider(provider) {
-        const providerCaps = providerCapabilities?.[provider]?.capabilities || {};
-        return providerCaps.tts === true;
-    }
-
-    async function loadProviderCapabilities() {
-        try {
-            const response = await fetch('/api/config');
-            if (!response.ok) return;
-            const config = await response.json();
-            providerCapabilities = config.providers || {};
-        } catch {
-            providerCapabilities = {};
-        }
+    function isTtsCapable(model) {
+        return !!model?.capabilities?.tts || model?.type === 'audio';
     }
 
     function cleanupAudioUrl() {
@@ -118,89 +91,55 @@ function init(element) {
         }
     }
 
-    function updateProviders() {
-        const state = window.modelsService?.getState?.();
-        const currentProvider = providerSelect.value;
-
-        providerSelect.innerHTML = '<option value="">Auto-select</option>';
-
-        const modelProviders = state?.providers || [];
-        const configuredProviders = Object.keys(providerCapabilities || {});
-        const allProviders = Array.from(new Set([...modelProviders, ...configuredProviders]));
-        const eligibleProviders = allProviders.filter(provider => {
-            const models = window.modelsService?.getModelsForProvider?.(provider) || [];
-            const hasModelSupport = models.some(isTtsCapableModel);
-            return hasModelSupport || isTtsCapableProvider(provider);
-        });
-
-        if (!state || eligibleProviders.length === 0) {
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = state ? 'No TTS-capable providers' : 'Loading providers...';
-            option.disabled = true;
-            providerSelect.appendChild(option);
-            providerSelect.disabled = true;
-        } else {
-            providerSelect.disabled = false;
-            for (const provider of eligibleProviders) {
-                const option = document.createElement('option');
-                option.value = provider;
-                option.textContent = provider;
-                providerSelect.appendChild(option);
-            }
-            if (currentProvider && eligibleProviders.includes(currentProvider)) {
-                providerSelect.value = currentProvider;
-            }
-        }
-
-        providerSelect.closest('nui-select')?.refresh?.();
-        updateModels();
-    }
-
     function updateModels() {
-        const provider = providerSelect.value;
+        const state = window.modelsService?.getState?.();
         const currentModel = modelSelect.value;
 
         modelSelect.innerHTML = '';
 
-        const autoOption = document.createElement('option');
-        autoOption.value = '';
-        autoOption.textContent = 'Auto-select model';
-        modelSelect.appendChild(autoOption);
+        const ttsModels = (state?.models || []).filter(isTtsCapable);
 
-        if (!provider) {
-            modelSelect.disabled = true;
-            modelSelect.closest('nui-select')?.refresh?.();
-            return;
-        }
-
-        modelSelect.disabled = false;
-
-        const allModels = window.modelsService?.getModelsForProvider?.(provider) || [];
-        const models = allModels.filter(isTtsCapableModel);
-
-        for (const model of models) {
+        if (!state || ttsModels.length === 0) {
             const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = model.id;
+            option.value = '';
+            option.textContent = state ? 'No TTS-capable models' : 'Loading models...';
+            option.disabled = true;
             modelSelect.appendChild(option);
-        }
-
-        if (models.length === 0) {
-            if (isTtsCapableProvider(provider)) {
-                autoOption.textContent = 'Use provider default TTS model';
-            } else {
-                const noneOption = document.createElement('option');
-                noneOption.value = '';
-                noneOption.textContent = 'No TTS-capable models found';
-                noneOption.disabled = true;
-                modelSelect.appendChild(noneOption);
+            modelSelect.disabled = true;
+        } else {
+            modelSelect.disabled = false;
+            
+            // Add auto option
+            const autoOption = document.createElement('option');
+            autoOption.value = '';
+            autoOption.textContent = 'Auto-select';
+            modelSelect.appendChild(autoOption);
+            
+            // Group by adapter
+            const byAdapter = new Map();
+            for (const model of ttsModels) {
+                const adapter = model.owned_by || model.provider || 'unknown';
+                if (!byAdapter.has(adapter)) byAdapter.set(adapter, []);
+                byAdapter.get(adapter).push(model);
             }
-        }
-
-        const modelIds = models.map(m => m.id);
-        if (currentModel && modelIds.includes(currentModel)) {
-            modelSelect.value = currentModel;
+            
+            for (const [adapter, models] of byAdapter) {
+                const group = document.createElement('optgroup');
+                group.label = adapter.charAt(0).toUpperCase() + adapter.slice(1);
+                
+                for (const model of models) {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.id;
+                    group.appendChild(option);
+                }
+                
+                modelSelect.appendChild(group);
+            }
+            
+            if (currentModel && ttsModels.map(m => m.id).includes(currentModel)) {
+                modelSelect.value = currentModel;
+            }
         }
 
         modelSelect.closest('nui-select')?.refresh?.();
@@ -216,7 +155,6 @@ function init(element) {
 
         const formData = new FormData(form);
         const payload = {
-            provider: formData.get('provider') || undefined,
             model: formData.get('model') || undefined,
             input: formData.get('input'),
             voice: formData.get('voice'),
@@ -261,10 +199,8 @@ function init(element) {
         }
     });
 
-    providerSelect.addEventListener('change', updateModels);
-
-    const unsubscribe = window.modelsService?.subscribe?.(() => updateProviders());
-    loadProviderCapabilities().finally(() => updateProviders());
+    const unsubscribe = window.modelsService?.subscribe?.(() => updateModels());
+    updateModels();
 
     element.hide = () => {
         cleanupAudioUrl();
@@ -273,19 +209,4 @@ function init(element) {
 }
 </script>
 
-<style>
-.form-grid-2 {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--nui-space);
-}
-.audio-player {
-    width: 100%;
-    margin-bottom: var(--nui-space-half);
-}
-.audio-meta {
-    font-size: 0.875rem;
-    color: var(--nui-fg-dim);
-    margin-bottom: var(--nui-space-half);
-}
-</style>
+

@@ -296,10 +296,7 @@ setupGatewayEventsListener();
 // GET /api/models - Available models
 router.get('/models', async (req, res) => {
     try {
-        const provider = req.query.provider;
-        const headers = provider ? { 'x-provider': provider } : {};
-        
-        const response = await gatewayFetch('/v1/models', { headers });
+        const response = await gatewayFetch('/v1/models');
         const data = await response.json();
         res.status(response.status).json(data);
     } catch (error) {
@@ -317,17 +314,11 @@ router.get('/models', async (req, res) => {
 // POST /api/proxy/chat/completions
 router.post('/proxy/chat/completions', async (req, res) => {
     try {
-        // Pass provider as header if specified in body
-        const headers = { 'Content-Type': 'application/json' };
-        if (req.body.provider) {
-            headers['x-provider'] = req.body.provider;
-        }
-        
-        console.log('[WebAdmin Proxy] Chat request:', { provider: req.body.provider, model: req.body.model });
+        console.log('[WebAdmin Proxy] Chat request:', { model: req.body.model });
         
         const response = await gatewayFetch('/v1/chat/completions', {
             method: 'POST',
-            headers,
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req.body)
         });
         
@@ -367,15 +358,9 @@ router.post('/proxy/chat/completions', async (req, res) => {
 // POST /api/proxy/embeddings
 router.post('/proxy/embeddings', async (req, res) => {
     try {
-        // Pass provider as header if specified in body
-        const headers = { 'Content-Type': 'application/json' };
-        if (req.body.provider) {
-            headers['x-provider'] = req.body.provider;
-        }
-        
         const response = await gatewayFetch('/v1/embeddings', {
             method: 'POST',
-            headers,
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req.body)
         });
         const data = await response.json();
@@ -391,14 +376,9 @@ router.post('/proxy/embeddings', async (req, res) => {
 // POST /api/proxy/images/generations
 router.post('/proxy/images/generations', async (req, res) => {
     try {
-        const headers = { 'Content-Type': 'application/json' };
-        if (req.body.provider) {
-            headers['x-provider'] = req.body.provider;
-        }
-
         const response = await gatewayFetch('/v1/images/generations', {
             method: 'POST',
-            headers,
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req.body)
         });
 
@@ -415,14 +395,9 @@ router.post('/proxy/images/generations', async (req, res) => {
 // POST /api/proxy/audio/speech
 router.post('/proxy/audio/speech', async (req, res) => {
     try {
-        const headers = { 'Content-Type': 'application/json' };
-        if (req.body.provider) {
-            headers['x-provider'] = req.body.provider;
-        }
-
         const response = await gatewayFetch('/v1/audio/speech', {
             method: 'POST',
-            headers,
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req.body)
         });
 
@@ -475,105 +450,6 @@ router.get('/proxy/media/:filename', async (req, res) => {
 });
 
 // ============================================
-// Sessions
-// ============================================
-
-// GET /api/sessions - List all sessions
-router.get('/sessions', async (req, res) => {
-    try {
-        // The gateway doesn't have a list endpoint, return empty for now
-        // This could be extended to track sessions in WebAdmin
-        res.json({ sessions: [] });
-    } catch (error) {
-        res.status(500).json({ 
-            error: 'Failed to fetch sessions',
-            message: error.message 
-        });
-    }
-});
-
-// POST /api/sessions - Create new session
-router.post('/sessions', async (req, res) => {
-    try {
-        const response = await gatewayFetch('/v1/sessions', {
-            method: 'POST',
-            body: JSON.stringify(req.body)
-        });
-        const data = await response.json();
-        res.status(response.status).json(data);
-    } catch (error) {
-        res.status(502).json({ 
-            error: 'Failed to create session',
-            message: error.message 
-        });
-    }
-});
-
-// GET /api/sessions/:id - Get session
-router.get('/sessions/:id', async (req, res) => {
-    try {
-        const response = await gatewayFetch(`/v1/sessions/${req.params.id}`);
-        const data = await response.json();
-        res.status(response.status).json(data);
-    } catch (error) {
-        res.status(502).json({ 
-            error: 'Failed to fetch session',
-            message: error.message 
-        });
-    }
-});
-
-// PATCH /api/sessions/:id - Update session
-router.patch('/sessions/:id', async (req, res) => {
-    try {
-        const response = await gatewayFetch(`/v1/sessions/${req.params.id}`, {
-            method: 'PATCH',
-            body: JSON.stringify(req.body)
-        });
-        const data = await response.json();
-        res.status(response.status).json(data);
-    } catch (error) {
-        res.status(502).json({ 
-            error: 'Failed to update session',
-            message: error.message 
-        });
-    }
-});
-
-// DELETE /api/sessions/:id - Delete session
-router.delete('/sessions/:id', async (req, res) => {
-    try {
-        const response = await gatewayFetch(`/v1/sessions/${req.params.id}`, {
-            method: 'DELETE'
-        });
-        const data = await response.json().catch(() => ({}));
-        res.status(response.status).json(data);
-    } catch (error) {
-        res.status(502).json({ 
-            error: 'Failed to delete session',
-            message: error.message 
-        });
-    }
-});
-
-// POST /api/sessions/:id/compress - Compress session
-router.post('/sessions/:id/compress', async (req, res) => {
-    try {
-        const response = await gatewayFetch(`/v1/sessions/${req.params.id}/compress`, {
-            method: 'POST',
-            body: JSON.stringify(req.body)
-        });
-        const data = await response.json();
-        res.status(response.status).json(data);
-    } catch (error) {
-        res.status(502).json({ 
-            error: 'Failed to compress session',
-            message: error.message 
-        });
-    }
-});
-
-// ============================================
 // Tasks
 // ============================================
 
@@ -616,6 +492,165 @@ router.get('/tasks/:id/stream', async (req, res) => {
 });
 
 // ============================================
+// Model Management (from config.json)
+// ============================================
+
+// GET /api/config/models - Get all models from config
+router.get('/config/models', async (req, res) => {
+    try {
+        const data = await fs.readFile(CONFIG_PATH, 'utf-8');
+        const config = JSON.parse(data);
+        res.json({ 
+            models: config.models || {},
+            routing: config.routing || {}
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            error: 'Failed to read models config',
+            message: error.message 
+        });
+    }
+});
+
+// POST /api/config/models - Create a new model
+router.post('/config/models', async (req, res) => {
+    try {
+        const { modelId, modelConfig } = req.body;
+        
+        if (!modelId || !modelConfig) {
+            return res.status(400).json({ error: 'modelId and modelConfig required' });
+        }
+        
+        // Validate model config structure
+        if (!modelConfig.type || !modelConfig.adapter) {
+            return res.status(400).json({ error: 'modelConfig must have type and adapter' });
+        }
+        
+        const data = await fs.readFile(CONFIG_PATH, 'utf-8');
+        const config = JSON.parse(data);
+        
+        // Check if model already exists
+        if (config.models && config.models[modelId]) {
+            return res.status(409).json({ error: `Model '${modelId}' already exists` });
+        }
+        
+        // Initialize models if not exists
+        if (!config.models) {
+            config.models = {};
+        }
+        
+        // Add new model
+        config.models[modelId] = modelConfig;
+        
+        // Create backup
+        const backupPath = `${CONFIG_PATH}.backup-${Date.now()}`;
+        try {
+            await fs.writeFile(backupPath, data);
+        } catch {
+            // Ignore backup failure
+        }
+        
+        // Save config
+        await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
+        
+        res.json({ 
+            success: true,
+            modelId,
+            modelConfig
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            error: 'Failed to create model',
+            message: error.message 
+        });
+    }
+});
+
+// PUT /api/config/models/:id - Update a model
+router.put('/config/models/:id', async (req, res) => {
+    try {
+        const modelId = req.params.id;
+        const { modelConfig } = req.body;
+        
+        if (!modelConfig) {
+            return res.status(400).json({ error: 'modelConfig required' });
+        }
+        
+        const data = await fs.readFile(CONFIG_PATH, 'utf-8');
+        const config = JSON.parse(data);
+        
+        // Check if model exists
+        if (!config.models || !config.models[modelId]) {
+            return res.status(404).json({ error: `Model '${modelId}' not found` });
+        }
+        
+        // Create backup
+        const backupPath = `${CONFIG_PATH}.backup-${Date.now()}`;
+        try {
+            await fs.writeFile(backupPath, data);
+        } catch {
+            // Ignore backup failure
+        }
+        
+        // Update model
+        config.models[modelId] = modelConfig;
+        
+        // Save config
+        await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
+        
+        res.json({ 
+            success: true,
+            modelId,
+            modelConfig
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            error: 'Failed to update model',
+            message: error.message 
+        });
+    }
+});
+
+// DELETE /api/config/models/:id - Delete a model
+router.delete('/config/models/:id', async (req, res) => {
+    try {
+        const modelId = req.params.id;
+        
+        const data = await fs.readFile(CONFIG_PATH, 'utf-8');
+        const config = JSON.parse(data);
+        
+        // Check if model exists
+        if (!config.models || !config.models[modelId]) {
+            return res.status(404).json({ error: `Model '${modelId}' not found` });
+        }
+        
+        // Create backup
+        const backupPath = `${CONFIG_PATH}.backup-${Date.now()}`;
+        try {
+            await fs.writeFile(backupPath, data);
+        } catch {
+            // Ignore backup failure
+        }
+        
+        // Delete model
+        delete config.models[modelId];
+        
+        // Save config
+        await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
+        
+        res.json({ 
+            success: true,
+            modelId
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            error: 'Failed to delete model',
+            message: error.message 
+        });
+    }
+});
+
+// ============================================
 // Configuration
 // ============================================
 
@@ -646,8 +681,8 @@ router.post('/config', async (req, res) => {
             return res.status(400).json({ error: 'Invalid port: Expected number' });
         }
 
-        if (config.providers !== undefined && typeof config.providers !== 'object') {
-            return res.status(400).json({ error: 'Invalid providers: Expected object' });
+        if (config.models !== undefined && typeof config.models !== 'object') {
+            return res.status(400).json({ error: 'Invalid models: Expected object' });
         }
 
         // Create backup before saving

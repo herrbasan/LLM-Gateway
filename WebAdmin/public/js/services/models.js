@@ -10,7 +10,15 @@ class ModelsService {
         this.listeners = new Set();
         this.lastFetch = 0;
         this.cacheTTL = 30000; // 30 seconds cache
+        
+        // Config-based model management
+        this.configModels = {};
+        this.configListeners = new Set();
     }
+
+    // ============================================
+    // Gateway Models (from /v1/models)
+    // ============================================
 
     subscribe(callback) {
         this.listeners.add(callback);
@@ -118,6 +126,192 @@ class ModelsService {
 
     getAllModels() {
         return this.models;
+    }
+
+    // ============================================
+    // Config Models (from config.json) - CRUD
+    // ============================================
+
+    subscribeConfig(callback) {
+        this.configListeners.add(callback);
+        // Immediately call with current data
+        callback(this.getConfigState());
+        return () => this.configListeners.delete(callback);
+    }
+
+    notifyConfig() {
+        const state = this.getConfigState();
+        this.configListeners.forEach(cb => cb(state));
+    }
+
+    getConfigState() {
+        return {
+            models: this.configModels
+        };
+    }
+
+    /**
+     * Fetch models from config.json via admin API
+     */
+    async fetchConfigModels() {
+        try {
+            console.log('[ModelsService] Fetching config models...');
+            const response = await fetch('/api/config/models');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            this.configModels = data.models || {};
+            this.notifyConfig();
+            return this.configModels;
+        } catch (error) {
+            console.error('[ModelsService] Failed to fetch config models:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get models filtered by type
+     * @param {string} type - 'chat', 'embedding', 'image', 'video', 'audio', 'speech'
+     */
+    getModelsByType(type) {
+        const result = {};
+        for (const [modelId, config] of Object.entries(this.configModels)) {
+            if (config.type === type) {
+                result[modelId] = config;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Create a new model in config
+     * @param {string} modelId - Unique model identifier
+     * @param {object} modelConfig - Model configuration
+     */
+    async createModel(modelId, modelConfig) {
+        try {
+            const response = await fetch('/api/config/models', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modelId, modelConfig })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || `HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            // Update local state
+            this.configModels[modelId] = modelConfig;
+            this.notifyConfig();
+            return data;
+        } catch (error) {
+            console.error('[ModelsService] Failed to create model:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update an existing model
+     * @param {string} modelId - Model identifier
+     * @param {object} modelConfig - Updated model configuration
+     */
+    async updateModel(modelId, modelConfig) {
+        try {
+            const response = await fetch(`/api/config/models/${encodeURIComponent(modelId)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modelConfig })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || `HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            // Update local state
+            this.configModels[modelId] = modelConfig;
+            this.notifyConfig();
+            return data;
+        } catch (error) {
+            console.error('[ModelsService] Failed to update model:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete a model from config
+     * @param {string} modelId - Model identifier to delete
+     */
+    async deleteModel(modelId) {
+        try {
+            const response = await fetch(`/api/config/models/${encodeURIComponent(modelId)}`, {
+                method: 'DELETE'
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || `HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            // Update local state
+            delete this.configModels[modelId];
+            this.notifyConfig();
+            return data;
+        } catch (error) {
+            console.error('[ModelsService] Failed to delete model:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get available adapter types
+     */
+    getAvailableAdapters() {
+        return [
+            { id: 'openai', name: 'OpenAI Compatible', description: 'OpenAI API format' },
+            { id: 'gemini', name: 'Google Gemini', description: 'Google Gemini API' },
+            { id: 'anthropic', name: 'Anthropic Claude', description: 'Anthropic Claude API' },
+            { id: 'ollama', name: 'Ollama', description: 'Local Ollama server' },
+            { id: 'lmstudio', name: 'LM Studio', description: 'Local LM Studio server' },
+            { id: 'kimi-cli', name: 'Kimi CLI', description: 'Local Kimi CLI' }
+        ];
+    }
+
+    /**
+     * Get default capabilities for a model type
+     * @param {string} type - Model type
+     */
+    getDefaultCapabilities(type) {
+        const defaults = {
+            chat: {
+                contextWindow: 8192,
+                vision: false,
+                structuredOutput: false,
+                streaming: true
+            },
+            embedding: {
+                contextWindow: 512,
+                dimensions: 768
+            },
+            image: {
+                // Image generation capabilities
+            },
+            video: {
+                // Video generation capabilities
+            },
+            audio: {
+                // Audio processing capabilities
+            },
+            speech: {
+                // Speech synthesis capabilities
+            }
+        };
+        return defaults[type] || {};
     }
 }
 
