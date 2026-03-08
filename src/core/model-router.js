@@ -292,8 +292,8 @@ export class ModelRouter {
             return messages;
         }
 
-        const visionLimits = modelConfig.visionLimits;
-        if (!visionLimits?.maxDimension) {
+        const imageInputLimit = modelConfig.imageInputLimit;
+        if (!imageInputLimit?.maxDimension) {
             logger.debug('[ModelRouter] No visionLimits configured, skipping image processing');
             return messages;
         }
@@ -323,7 +323,7 @@ export class ModelRouter {
                     const { mimeType, base64 } = await imageFetcher.fetchImage(imageUrl);
 
                     // Determine max dimension based on detail level and model limits
-                    let maxDimension = visionLimits.maxDimension || 2048;
+                    let maxDimension = imageInputLimit.maxDimension || 2048;
                     if (detail === 'low') {
                         maxDimension = Math.min(512, maxDimension);
                     } else if (detail === 'auto') {
