@@ -163,15 +163,16 @@ export class MediaProcessorClient {
      *   - 'high': Keep high resolution up to provider's max
      *   - 'auto': Let the processor decide based on image size
      * @param {string} provider - Provider name for provider-specific limits (default: 'default').
+     * @param {number} explicitMaxDimension - Optional explicit max dimension (overrides provider limits).
      * @returns {Promise<string>} The optimized base64 string.
      */
-    async optimizeImage(base64Data, mimeType, detail = 'auto', provider = 'default') {
+    async optimizeImage(base64Data, mimeType, detail = 'auto', provider = 'default', explicitMaxDimension = null) {
         if (!this.isEnabled) {
             return base64Data; // Bypass if not configured
         }
 
-        // Get provider-specific max dimension
-        const maxDimension = this.getMaxDimensionForDetail(detail, provider);
+        // Get provider-specific max dimension (or use explicit if provided)
+        const maxDimension = explicitMaxDimension || this.getMaxDimensionForDetail(detail, provider);
         const limits = this.getProviderLimits(provider);
 
         console.log(`[MediaProcessor] Optimizing for provider=${provider}, detail=${detail}, maxDimension=${maxDimension}`);
