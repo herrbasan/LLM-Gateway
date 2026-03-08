@@ -155,50 +155,54 @@ export class MediaProcessorClient {
     }
 
     /**
-     * Sends base64 image data to the processor node to be downscaled.
+     * Process image with explicit options (resize, transcode, quality).
      * @param {string} base64Data - The original image base64 data.
      * @param {string} mimeType - The mime type of the image.
-     * @param {string} detail - Detail level: 'low', 'high', or 'auto' (default: 'auto').
-     *   - 'low': Resize to provider's low-res size (512x512 for OpenAI)
-     *   - 'high': Keep high resolution up to provider's max
-     *   - 'auto': Let the processor decide based on image size
-     * @param {string} provider - Provider name for provider-specific limits (default: 'default').
-     * @param {number} explicitMaxDimension - Optional explicit max dimension (overrides provider limits).
-     * @returns {Promise<string>} The optimized base64 string.
+     * @param {Object} options - Processing options.
+     * @param {number} [options.maxDimension] - Max width/height in pixels (null = no resize).
+     * @param {string} [options.format] - Output format: 'jpeg', 'png', 'webp' (null = keep original).
+     * @param {number} [options.quality] - Quality 1-100 for lossy formats (default: 85).
+     * @returns {Promise<string>} The processed base64 string.
      */
-    async optimizeImage(base64Data, mimeType, detail = 'auto', provider = 'default', explicitMaxDimension = null) {
+    async processImage(base64Data, mimeType, options = {}) {
         if (!this.isEnabled) {
             return base64Data; // Bypass if not configured
         }
 
-        // Get provider-specific max dimension (or use explicit if provided)
-        const maxDimension = explicitMaxDimension || this.getMaxDimensionForDetail(detail, provider);
-        const limits = this.getProviderLimits(provider);
+        const { maxDimension, format, quality = 85 } = options;
 
-        console.log(`[MediaProcessor] Optimizing for provider=${provider}, detail=${detail}, maxDimension=${maxDimension}`);
+        console.log(`[MediaProcessor] Processing: maxDimension=${maxDimension}, format=${format}, quality=${quality}`);
 
         const endpoint = `${this.config.endpoint}/v1/optimize/image`;
         try {
+            const body = {
+                base64: base64Data,
+                quality,
+                response_type: 'base64'
+            };
+
+            // Only include max_dimension if explicitly set
+            if (maxDimension) {
+                body.max_dimension = maxDimension;
+            }
+
+            // Only include format if explicitly set
+            if (format) {
+                body.format = format;
+            }
+
             const res = await request(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    base64: base64Data,
-                    max_dimension: maxDimension,
-                    quality: detail === 'low' ? 70 : 85,
-                    format: 'jpeg',
-                    response_type: 'base64'
-                })
+                body: JSON.stringify(body)
             });
             
             if (!res.ok) {
-                console.warn(`[MediaProcessor] Failed to optimize image. Status: ${res.status}`);
+                console.warn(`[MediaProcessor] Failed to process image. Status: ${res.status}`);
                 return base64Data; // fallback to original
             }
 
             const data = await res.json();
-            // The service returns the fully qualified data URI: "data:image/jpeg;base64,..."
-            // Let's strip the prefix out so it seamlessly drops back into our existing pipeline.
             if (data.base64) {
                  return data.base64.replace(/^data:[^;]+;base64,/, '');
             }
@@ -208,6 +212,19 @@ export class MediaProcessorClient {
             console.error(`[MediaProcessor] Error communicating with media-processor node:`, error.message);
             return base64Data; // Fail gracefully by returning original
         }
+    }
+
+    /**
+     * Legacy method for backward compatibility.
+     * @deprecated Use processImage() instead.
+     */
+    async optimizeImage(base64Data, mimeType, detail = 'auto', provider = 'default', explicitMaxDimension = null) {
+        const maxDimension = explicitMaxDimension || this.getMaxDimensionForDetail(detail, provider);
+        return this.processImage(base64Data, mimeType, {
+            maxDimension,
+            format: 'jpeg',
+            quality: detail === 'low' ? 70 : 85
+        });
     }
 
     /**

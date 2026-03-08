@@ -56,10 +56,11 @@ export class ModelRouter {
         // Transform request to adapter format
         const opts = this._buildChatOptions(request);
 
-        // Process images (fetch remote URLs and resize if needed)
+        // Process images only if requested (fetch remote URLs and resize/transcode)
         const processedMessages = await this._processImagesInMessages(
             opts.messages,
-            modelConfig
+            modelConfig,
+            request.image_processing  // { resize: 'auto'|'low'|'high'|number, transcode: 'jpg'|'png'|'webp' }
         );
 
         // Apply context compaction if needed
@@ -280,22 +281,28 @@ export class ModelRouter {
     }
 
     /**
-     * Process images in messages: fetch remote URLs and resize via MediaProcessor.
+     * Process images in messages: fetch remote URLs and optionally resize/transcode.
+     * 
+     * Image processing is OPT-IN via request.image_processing options:
+     * - resize: 'auto' | 'low' | 'high' | number (max dimension in pixels)
+     * - transcode: 'jpg' | 'jpeg' | 'png' | 'webp' (output format)
+     * - quality: number (1-100, for lossy formats)
+     * 
+     * By default, only remote URLs are fetched (no resizing/transcoding).
      */
-    async _processImagesInMessages(messages, modelConfig) {
+    async _processImagesInMessages(messages, modelConfig, imageProcessing = null) {
+        const shouldResize = imageProcessing?.resize;
+        const shouldTranscode = imageProcessing?.transcode;
+        
+        // If no processing requested and MediaService not enabled, just pass through
+        if (!shouldResize && !shouldTranscode) {
+            // Still fetch remote URLs even without processing
+            return this._fetchRemoteImagesOnly(messages);
+        }
+
         if (!this.mediaProcessor.isEnabled) {
-            return messages;
-        }
-
-        // Check if model supports vision
-        if (!modelConfig.capabilities?.vision) {
-            return messages;
-        }
-
-        const imageInputLimit = modelConfig.imageInputLimit;
-        if (!imageInputLimit?.maxDimension) {
-            logger.debug('[ModelRouter] No visionLimits configured, skipping image processing');
-            return messages;
+            logger.warn('[ModelRouter] Image processing requested but MediaService not enabled');
+            return this._fetchRemoteImagesOnly(messages);
         }
 
         const processedMessages = [];
@@ -322,36 +329,39 @@ export class ModelRouter {
                     // Fetch image (handles both data URLs and remote URLs)
                     const { mimeType, base64 } = await imageFetcher.fetchImage(imageUrl);
 
-                    // Determine max dimension based on detail level and model limits
-                    let maxDimension = imageInputLimit.maxDimension || 2048;
-                    if (detail === 'low') {
-                        maxDimension = Math.min(512, maxDimension);
-                    } else if (detail === 'auto') {
-                        maxDimension = Math.min(1024, maxDimension);
-                    }
+                    // Determine processing options
+                    const processOptions = this._resolveImageProcessingOptions(
+                        imageProcessing,
+                        detail,
+                        modelConfig.imageInputLimit
+                    );
 
-                    // Optimize image via MediaProcessor
-                    const optimizedBase64 = await this.mediaProcessor.optimizeImage(
+                    // Process image via MediaProcessor
+                    const processedBase64 = await this.mediaProcessor.processImage(
                         base64,
                         mimeType,
-                        detail,
-                        modelConfig.adapter,
-                        maxDimension
+                        processOptions
                     );
+
+                    // Determine output mime type based on transcode option
+                    let outputMimeType = mimeType;
+                    if (processOptions.format) {
+                        outputMimeType = `image/${processOptions.format === 'jpg' ? 'jpeg' : processOptions.format}`;
+                    }
 
                     processedContent.push({
                         type: 'image_url',
                         image_url: {
-                            url: `data:${mimeType};base64,${optimizedBase64}`,
+                            url: `data:${outputMimeType};base64,${processedBase64}`,
                             detail
                         }
                     });
                     processedCount++;
 
                     logger.debug('[ModelRouter] Image processed', {
-                        detail,
-                        maxDimension,
-                        adapter: modelConfig.adapter
+                        resize: processOptions.maxDimension,
+                        format: processOptions.format,
+                        quality: processOptions.quality
                     });
                 } catch (error) {
                     logger.warn('[ModelRouter] Failed to process image, using original', {
@@ -373,5 +383,91 @@ export class ModelRouter {
         }
 
         return processedMessages;
+    }
+
+    /**
+     * Fetch remote images without any processing.
+     */
+    async _fetchRemoteImagesOnly(messages) {
+        const processedMessages = [];
+
+        for (const message of messages) {
+            if (!Array.isArray(message.content)) {
+                processedMessages.push(message);
+                continue;
+            }
+
+            const processedContent = [];
+
+            for (const part of message.content) {
+                if (part.type !== 'image_url') {
+                    processedContent.push(part);
+                    continue;
+                }
+
+                const imageUrl = part.image_url?.url || '';
+
+                // Skip if already a data URL
+                if (imageUrl.startsWith('data:')) {
+                    processedContent.push(part);
+                    continue;
+                }
+
+                try {
+                    const { mimeType, base64 } = await imageFetcher.fetchImage(imageUrl);
+                    processedContent.push({
+                        type: 'image_url',
+                        image_url: {
+                            url: `data:${mimeType};base64,${base64}`,
+                            detail: part.image_url?.detail || 'auto'
+                        }
+                    });
+                } catch (error) {
+                    logger.warn('[ModelRouter] Failed to fetch remote image, using original URL', {
+                        error: error.message
+                    });
+                    processedContent.push(part);
+                }
+            }
+
+            processedMessages.push({
+                ...message,
+                content: processedContent
+            });
+        }
+
+        return processedMessages;
+    }
+
+    /**
+     * Resolve image processing options from request and defaults.
+     */
+    _resolveImageProcessingOptions(imageProcessing, detail, imageInputLimit) {
+        const options = {
+            quality: imageProcessing?.quality || (detail === 'low' ? 70 : 85)
+        };
+
+        // Resolve resize option
+        const resize = imageProcessing?.resize;
+        if (typeof resize === 'number') {
+            options.maxDimension = resize;
+        } else if (resize === 'auto') {
+            options.maxDimension = imageInputLimit?.maxDimension || 2048;
+        } else if (resize === 'low') {
+            options.maxDimension = 512;
+        } else if (resize === 'high') {
+            options.maxDimension = imageInputLimit?.maxDimension || 2048;
+        }
+
+        // Resolve transcode option
+        const transcode = imageProcessing?.transcode;
+        if (transcode) {
+            options.format = transcode === 'jpg' ? 'jpeg' : transcode;
+        } else if (resize) {
+            // Default to jpeg if resizing but no explicit transcode
+            options.format = 'jpeg';
+        }
+
+        return options;
     }
 }
