@@ -119,6 +119,35 @@
                         </nui-checkbox>
                     </nui-layout>
                 </fieldset>
+                
+                <fieldset class="nui-fieldset model-image-limits">
+                    <legend>Image Input Limits</legend>
+                    <span class="description">Limits for vision and image generation models</span>
+                    
+                    <nui-layout columns="3" gap="var(--nui-space)">
+                        <nui-input-group>
+                            <label for="img-max-dimension">Max Dimension (px)</label>
+                            <nui-input>
+                                <input type="number" id="img-max-dimension" name="imageInputLimit.maxDimension" min="1" placeholder="2048">
+                            </nui-input>
+                        </nui-input-group>
+                        
+                        <nui-input-group>
+                            <label for="img-max-filesize">Max File Size (bytes)</label>
+                            <nui-input>
+                                <input type="number" id="img-max-filesize" name="imageInputLimit.maxFileSize" min="1" placeholder="52428800">
+                            </nui-input>
+                        </nui-input-group>
+                        
+                        <nui-input-group>
+                            <label for="img-formats">Supported Formats</label>
+                            <nui-input>
+                                <input type="text" id="img-formats" name="imageInputLimit.supportedFormats" placeholder="png, jpeg, webp">
+                            </nui-input>
+                            <span class="description">Comma-separated list</span>
+                        </nui-input-group>
+                    </nui-layout>
+                </fieldset>
             </form>
             
             <nui-button-container align="end" class="dialog-actions">
@@ -264,6 +293,12 @@ function init(element, params) {
             element.querySelector('#cap-vision').checked = !!caps.vision;
             element.querySelector('#cap-streaming').checked = !!caps.streaming;
             element.querySelector('#cap-structured').checked = !!caps.structuredOutput;
+            
+            // Image input limits
+            const imgLimits = config.imageInputLimit || {};
+            element.querySelector('#img-max-dimension').value = imgLimits.maxDimension || '';
+            element.querySelector('#img-max-filesize').value = imgLimits.maxFileSize || '';
+            element.querySelector('#img-formats').value = imgLimits.supportedFormats?.join(', ') || '';
         } else {
             form.reset();
             element.querySelector('#model-original-id').value = '';
@@ -325,6 +360,20 @@ function init(element, params) {
         
         const timeout = element.querySelector('#model-timeout').value;
         if (timeout) config.timeout = parseInt(timeout);
+        
+        // Image input limits
+        const imgMaxDimension = element.querySelector('#img-max-dimension').value;
+        const imgMaxFileSize = element.querySelector('#img-max-filesize').value;
+        const imgFormats = element.querySelector('#img-formats').value.trim();
+        
+        if (imgMaxDimension || imgMaxFileSize || imgFormats) {
+            config.imageInputLimit = {};
+            if (imgMaxDimension) config.imageInputLimit.maxDimension = parseInt(imgMaxDimension);
+            if (imgMaxFileSize) config.imageInputLimit.maxFileSize = parseInt(imgMaxFileSize);
+            if (imgFormats) {
+                config.imageInputLimit.supportedFormats = imgFormats.split(',').map(f => f.trim()).filter(f => f);
+            }
+        }
         
         try {
             if (isEditing && originalId) {
