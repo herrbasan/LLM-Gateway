@@ -392,6 +392,25 @@ router.post('/proxy/images/generations', async (req, res) => {
     }
 });
 
+// POST /api/proxy/videos/generations
+router.post('/proxy/videos/generations', async (req, res) => {
+    try {
+        const response = await gatewayFetch('/v1/videos/generations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req.body)
+        });
+
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (error) {
+        res.status(502).json({
+            error: 'Gateway proxy failed',
+            message: error.message
+        });
+    }
+});
+
 // POST /api/proxy/audio/speech
 router.post('/proxy/audio/speech', async (req, res) => {
     try {

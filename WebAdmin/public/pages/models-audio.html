@@ -2,16 +2,401 @@
     <header class="page-header">
         <div>
             <h2>Audio Models</h2>
-            <p class="text-dim">Configure audio processing models (transcription, etc.)</p>
+            <p class="text-dim">Configure text-to-speech models (TTS)</p>
         </div>
+        <nui-button variant="primary" data-action="create-model">
+            <button type="button">
+                <nui-icon name="add"></nui-icon>
+                <span>Add Model</span>
+            </button>
+        </nui-button>
     </header>
     
-    <div class="placeholder-state">
-        <nui-icon name="headphones" class="placeholder-icon"></nui-icon>
-        <h3>Coming Soon</h3>
-        <p>Audio processing model management will be available in a future update.</p>
-        <small>For now, configure audio models directly in <code>config.json</code></small>
+    <div id="models-container">
+        <div class="loading-placeholder">
+            <nui-progress type="circular-busy" size="2rem"></nui-progress>
+            <span>Loading models...</span>
+        </div>
     </div>
 </section>
 
+<!-- Model Edit Dialog -->
+<nui-dialog id="model-dialog" mode="page">
+    <dialog class="model-edit-dialog">
+        <header>
+            <h2 id="dialog-title">Edit Model</h2>
+            <nui-button variant="icon" class="icon-only" data-action="dialog-close@#model-dialog">
+                <button type="button">
+                    <nui-icon name="close"></nui-icon>
+                </button>
+            </nui-button>
+        </header>
+        
+        <main>
+            <form id="model-form" class="model-form-layout">
+                <input type="hidden" id="model-original-id">
+                
+                <nui-input-group>
+                    <label for="model-id">Model ID</label>
+                    <nui-input>
+                        <input type="text" id="model-id" name="modelId" required placeholder="e.g., my-tts-model">
+                    </nui-input>
+                    <span class="description">Unique identifier for this model configuration</span>
+                </nui-input-group>
+                
+                <nui-layout columns="2" gap="var(--nui-space)">
+                    <nui-input-group>
+                        <label for="model-adapter">Adapter</label>
+                        <nui-select>
+                            <select id="model-adapter" name="adapter" required>
+                                <option value="">Select adapter...</option>
+                                <option value="openai">OpenAI Compatible</option>
+                                <option value="gemini">Google Gemini</option>
+                            </select>
+                        </nui-select>
+                        <span class="description">Protocol handler</span>
+                    </nui-input-group>
+                    
+                    <nui-input-group>
+                        <label for="model-adapter-model">Adapter Model Name</label>
+                        <nui-input>
+                            <input type="text" id="model-adapter-model" name="adapterModel" placeholder="e.g., tts-1">
+                        </nui-input>
+                        <span class="description">Provider's model name</span>
+                    </nui-input-group>
+                </nui-layout>
+                
+                <nui-input-group>
+                    <label for="model-endpoint">Endpoint URL</label>
+                    <nui-input>
+                        <input type="url" id="model-endpoint" name="endpoint" placeholder="e.g., https://api.openai.com/v1">
+                    </nui-input>
+                    <span class="description">Custom API endpoint (optional for some adapters)</span>
+                </nui-input-group>
+                
+                <nui-input-group>
+                    <label for="model-api-key">API Key</label>
+                    <nui-input>
+                        <input type="password" id="model-api-key" name="apiKey" placeholder="Enter API key" autocomplete="current-password">
+                    </nui-input>
+                    <span class="description">API key stored directly in config (config.json is gitignored)</span>
+                </nui-input-group>
+                
+                <fieldset class="nui-fieldset model-capabilities">
+                    <legend>Audio Capabilities</legend>
+                    
+                    <nui-layout columns="2" gap="var(--nui-space)">
+                        <nui-input-group>
+                            <label for="cap-max-duration">Max Duration (seconds)</label>
+                            <nui-input>
+                                <input type="number" id="cap-max-duration" name="maxDuration" min="1" placeholder="e.g., 300">
+                            </nui-input>
+                            <span class="description">Maximum audio duration</span>
+                        </nui-input-group>
+                        
+                        <nui-input-group>
+                            <label for="cap-supported-formats">Supported Formats</label>
+                            <nui-input>
+                                <input type="text" id="cap-supported-formats" name="supportedFormats" placeholder="mp3, wav, pcm, ogg">
+                            </nui-input>
+                            <span class="description">Comma-separated list</span>
+                        </nui-input-group>
+                    </nui-layout>
+                </fieldset>
+            </form>
+        </main>
+        
+        <footer>
+            <nui-button-container align="end">
+                <nui-button variant="outline" data-action="dialog-close@#model-dialog">
+                    <button type="button">Cancel</button>
+                </nui-button>
+                <nui-button variant="primary" data-action="save-model">
+                    <button type="button">
+                        <nui-icon name="save"></nui-icon>
+                        <span>Save Model</span>
+                    </button>
+                </nui-button>
+            </nui-button-container>
+        </footer>
+    </dialog>
+</nui-dialog>
 
+<script type="nui/page">
+function init(element, params) {
+    const container = element.querySelector('#models-container');
+    const dialog = element.querySelector('#model-dialog');
+    const form = element.querySelector('#model-form');
+    
+    let models = {};
+    let isEditing = false;
+    
+    async function loadModels() {
+        try {
+            await window.modelsService?.fetchConfigModels?.();
+            models = window.modelsService?.getModelsByType?.('audio') || {};
+            renderModels();
+        } catch (error) {
+            console.error('Failed to load models:', error);
+            container.innerHTML = `
+                <div class="error-state">
+                    <nui-icon name="warning"></nui-icon>
+                    <p>Failed to load models</p>
+                    <small>${error.message}</small>
+                </div>
+            `;
+        }
+    }
+    
+    function renderModels() {
+        const modelEntries = Object.entries(models);
+        
+        if (modelEntries.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <nui-icon name="info"></nui-icon>
+                    <p>No audio models configured</p>
+                    <small>Click "Add Model" to create your first text-to-speech model</small>
+                </div>
+            `;
+            return;
+        }
+        
+        const modelsHtml = modelEntries.map(([modelId, config]) => {
+            const caps = config.capabilities || {};
+            const badges = [];
+            
+            if (caps.maxDuration) badges.push({ icon: 'schedule', label: `${caps.maxDuration}s` });
+            
+            const formats = caps.supportedFormats?.join(', ') || '-';
+            
+            return `
+                <div class="nui-card model-card" data-model-id="${escapeHtml(modelId)}">
+                    <header class="model-card-header">
+                        <h4 class="model-card-title">${escapeHtml(modelId)}</h4>
+                        <div class="model-card-badges">
+                            ${badges.map(b => `<nui-icon name="${b.icon}" title="${b.label}"></nui-icon>`).join('')}
+                        </div>
+                    </header>
+                    <div class="model-card-body">
+                        <div class="model-info-row">
+                            <span class="model-info-label">Adapter</span>
+                            <span class="model-info-value">${escapeHtml(config.adapter)}</span>
+                        </div>
+                        <div class="model-info-row">
+                            <span class="model-info-label">Model</span>
+                            <span class="model-info-value" title="${escapeHtml(config.adapterModel || '-')}">${escapeHtml(config.adapterModel || '-')}</span>
+                        </div>
+                        <div class="model-info-row">
+                            <span class="model-info-label">Formats</span>
+                            <span class="model-info-value" title="${escapeHtml(formats)}">${escapeHtml(formats)}</span>
+                        </div>
+                    </div>
+                    <nui-button-container align="end" class="model-card-actions">
+                        <nui-button variant="ghost" data-action="edit-model" data-model-id="${escapeHtml(modelId)}">
+                            <button type="button" aria-label="Edit model ${escapeHtml(modelId)}">
+                                <nui-icon name="edit"></nui-icon>
+                                <span>Edit</span>
+                            </button>
+                        </nui-button>
+                        <nui-button variant="ghost" data-action="delete-model" data-model-id="${escapeHtml(modelId)}">
+                            <button type="button" class="btn-delete-icon" aria-label="Delete model ${escapeHtml(modelId)}">
+                                <nui-icon name="delete"></nui-icon>
+                                <span>Delete</span>
+                            </button>
+                        </nui-button>
+                    </nui-button-container>
+                </div>
+            `;
+        }).join('');
+        
+        container.innerHTML = `
+            <nui-layout columns="2" gap="var(--nui-space)">
+                ${modelsHtml}
+            </nui-layout>
+        `;
+    }
+    
+    function openDialog(mode, modelId = null) {
+        isEditing = mode === 'edit';
+        const title = element.querySelector('#dialog-title');
+        title.textContent = isEditing ? 'Edit Model' : 'Create Model';
+        
+        if (isEditing && modelId && models[modelId]) {
+            const config = models[modelId];
+            element.querySelector('#model-original-id').value = modelId;
+            element.querySelector('#model-id').value = modelId;
+            
+            const adapterSelect = element.querySelector('#model-adapter');
+            const nuiSelect = adapterSelect.closest('nui-select');
+            
+            if (nuiSelect && typeof nuiSelect.setValue === 'function') {
+                nuiSelect.setValue(config.adapter || '');
+            } else {
+                adapterSelect.value = config.adapter || '';
+            }
+            
+            element.querySelector('#model-endpoint').value = config.endpoint || '';
+            element.querySelector('#model-adapter-model').value = config.adapterModel || '';
+            element.querySelector('#model-api-key').value = config.apiKey || '';
+            
+            const caps = config.capabilities || {};
+            element.querySelector('#cap-max-duration').value = caps.maxDuration || '';
+            element.querySelector('#cap-supported-formats').value = caps.supportedFormats?.join(', ') || '';
+        } else {
+            form.reset();
+            element.querySelector('#model-original-id').value = '';
+            
+            const adapterSelect = element.querySelector('#model-adapter');
+            const nuiSelect = adapterSelect.closest('nui-select');
+            
+            if (nuiSelect && typeof nuiSelect.setValue === 'function') {
+                nuiSelect.setValue('');
+            } else {
+                adapterSelect.value = '';
+            }
+        }
+        
+        dialog.showModal();
+    }
+    
+    function closeDialog() {
+        dialog.close();
+        form.reset();
+    }
+    
+    async function saveModel() {
+        const modelId = element.querySelector('#model-id').value.trim();
+        const originalId = element.querySelector('#model-original-id').value;
+        
+        if (!modelId) {
+            showBanner('Model ID is required', 'error');
+            return;
+        }
+        
+        const adapter = element.querySelector('#model-adapter').value;
+        if (!adapter) {
+            showBanner('Adapter is required', 'error');
+            return;
+        }
+        
+        const config = {
+            type: 'audio',
+            adapter: adapter,
+            capabilities: {}
+        };
+        
+        const maxDuration = element.querySelector('#cap-max-duration').value;
+        if (maxDuration) config.capabilities.maxDuration = parseInt(maxDuration);
+        
+        const supportedFormats = element.querySelector('#cap-supported-formats').value.trim();
+        if (supportedFormats) {
+            config.capabilities.supportedFormats = supportedFormats.split(',').map(f => f.trim()).filter(f => f);
+        }
+        
+        const endpoint = element.querySelector('#model-endpoint').value.trim();
+        if (endpoint) config.endpoint = endpoint;
+        
+        const adapterModel = element.querySelector('#model-adapter-model').value.trim();
+        if (adapterModel) config.adapterModel = adapterModel;
+        
+        const apiKey = element.querySelector('#model-api-key').value.trim();
+        if (apiKey) config.apiKey = apiKey;
+        
+        try {
+            if (isEditing && originalId) {
+                if (originalId !== modelId) {
+                    await window.modelsService?.deleteModel?.(originalId);
+                    await window.modelsService?.createModel?.(modelId, config);
+                } else {
+                    await window.modelsService?.updateModel?.(modelId, config);
+                }
+            } else {
+                await window.modelsService?.createModel?.(modelId, config);
+            }
+            
+            closeDialog();
+            await loadModels();
+            showBanner(`Model '${modelId}' saved successfully`, 'success');
+        } catch (error) {
+            showBanner(error.message || 'Failed to save model', 'error');
+        }
+    }
+    
+    async function deleteModel(modelId) {
+        const confirmed = await nui.components.dialog.confirm(
+            'Delete Model?',
+            `Are you sure you want to delete '${modelId}'? This cannot be undone.`
+        );
+        
+        if (!confirmed) return;
+        
+        try {
+            await window.modelsService?.deleteModel?.(modelId);
+            await loadModels();
+            showBanner(`Model '${modelId}' deleted`, 'success');
+        } catch (error) {
+            showBanner(error.message || 'Failed to delete model', 'error');
+        }
+    }
+    
+    function escapeHtml(text) {
+        if (text == null) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    function showBanner(message, priority = 'info') {
+        nui.components.banner.show({
+            content: message,
+            priority,
+            autoClose: priority === 'error' ? 5000 : 3000
+        });
+    }
+    
+    element.addEventListener('click', (e) => {
+        const action = e.target.closest('[data-action]');
+        if (!action) return;
+        
+        const actionName = action.dataset.action;
+        const modelId = action.dataset.modelId;
+        
+        switch (actionName) {
+            case 'create-model':
+                openDialog('create');
+                break;
+            case 'edit-model':
+                if (modelId) openDialog('edit', modelId);
+                break;
+            case 'delete-model':
+                if (modelId) deleteModel(modelId);
+                break;
+            case 'save-model':
+                saveModel();
+                break;
+            case 'dialog-close@#model-dialog':
+                closeDialog();
+                break;
+        }
+    });
+    
+    form?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            saveModel();
+        }
+    });
+    
+    const unsubscribe = window.modelsService?.subscribeConfig?.((state) => {
+        models = window.modelsService?.getModelsByType?.('audio') || {};
+        renderModels();
+    });
+    
+    loadModels();
+    
+    element.hide = () => {
+        if (unsubscribe) unsubscribe();
+    };
+}
+</script>

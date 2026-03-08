@@ -176,7 +176,7 @@ export function validateGlobalConfig(config) {
     // Routing config
     if (config.routing) {
         // Routing defaults are optional but must be strings if present
-        for (const field of ['defaultChatModel', 'defaultEmbeddingModel', 'defaultImageModel']) {
+        for (const field of ['defaultChatModel', 'defaultEmbeddingModel', 'defaultImageModel', 'defaultAudioModel', 'defaultVideoModel']) {
             if (field in config.routing && typeof config.routing[field] !== 'string') {
                 throw new Error(`[Config] routing.${field} must be a string`);
             }

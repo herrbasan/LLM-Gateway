@@ -10,6 +10,7 @@ import { createModelsHandler } from './routes/models.js';
 import { createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
 import { createImagesHandler } from './routes/images.js';
 import { createAudioSpeechHandler } from './routes/audio.js';
+import { createVideosHandler } from './routes/videos.js';
 import { createSystemEventsHandler } from './routes/events.js';
 import { ModelRouter } from './core/model-router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
@@ -156,6 +157,7 @@ export function createServer(config) {
   // Media generation endpoints
   app.post('/v1/images/generations', createImagesHandler(router));
   app.post('/v1/audio/speech', createAudioSpeechHandler(router));
+  app.post('/v1/videos/generations', createVideosHandler(router));
 
   // Non-existent routes
   app.use((req, res) => {

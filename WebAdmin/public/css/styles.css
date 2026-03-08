@@ -477,6 +477,9 @@ nui-link-list[mode="fold"] li.list-item a {
     font-size: 0.875rem;
     text-transform: uppercase;
     color: var(--nui-fg-dim);
+    display: flex;
+    align-items: center;
+    gap: var(--nui-space-half);
 }
 
 .response-content {
@@ -583,8 +586,10 @@ nui-link-list[mode="fold"] li.list-item a {
 /* Loading state */
 .loading-placeholder {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: var(--nui-space);
     min-height: 200px;
     color: var(--nui-fg-dim);
 }

@@ -1,7 +1,19 @@
+// Skip NUI auto-init to configure first
+window.nuiInitialized = true;
+
 import '/NUI/nui.js';
 import { Dashboard } from './sections/Dashboard.js';
 import { SettingsEditor } from './sections/SettingsEditor.js';
 import { modelsService } from './services/models.js';
+
+// Configure NUI to suppress a11y warnings, then init
+nui.configure({
+    a11y: {
+        warnings: 'silent',  // Suppress icon-only button warnings
+        autoLabel: true      // Still auto-generate labels silently
+    }
+});
+nui.init();
 
 // ============================================
 // Navigation Configuration
@@ -33,7 +45,8 @@ const navigationData = [
             { label: 'Embeddings', href: '#page=test-embeddings' },
             { label: 'Compaction', href: '#page=test-compaction' },
             { label: 'Image Generation', href: '#page=test-images' },
-            { label: 'Audio Speech', href: '#page=test-audio' }
+            { label: 'Audio Speech', href: '#page=test-audio' },
+            { label: 'Video Generation', href: '#page=test-video' }
         ]
     },
     {

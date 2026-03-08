@@ -232,6 +232,10 @@ export function createAnthropicAdapter() {
             throw new Error('[AnthropicAdapter] TTS not supported');
         },
 
+        async generateVideo(modelConfig, request) {
+            throw new Error('[AnthropicAdapter] Video generation not supported');
+        },
+
         async listModels(modelConfig) {
             const { endpoint, apiKey, capabilities } = modelConfig;
             const contextWindow = capabilities?.contextWindow || 200000;

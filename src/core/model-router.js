@@ -158,10 +158,40 @@ export class ModelRouter {
     }
 
     /**
-     * List all available models.
+     * Route a video generation request.
      */
-    async listModels() {
-        return this.registry.listModels();
+    async routeVideoGeneration(request) {
+        if (!request || typeof request !== 'object') {
+            throw new Error('[ModelRouter] Request must be an object');
+        }
+
+        if (!request.prompt) {
+            const err = new Error('[ModelRouter] Missing required field: prompt');
+            err.status = 400;
+            throw err;
+        }
+
+        const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'video');
+        const adapter = this._getAdapter(modelConfig.adapter);
+
+        logger.info('[ModelRouter] Routing video generation', { model: modelId, adapter: modelConfig.adapter });
+
+        return adapter.generateVideo(modelConfig, request);
+    }
+
+    /**
+     * List all available models.
+     * @param {string} [type] - Optional filter by model type
+     */
+    async listModels(type) {
+        return this.registry.listModels(type);
+    }
+
+    /**
+     * List models grouped by type.
+     */
+    async listModelsByType() {
+        return this.registry.listModelsByType();
     }
 
     /**

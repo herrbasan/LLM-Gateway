@@ -229,6 +229,13 @@ export function createGeminiAdapter() {
         },
 
         /**
+         * Generate video (Gemini doesn't support this natively).
+         */
+        async generateVideo(modelConfig, request) {
+            throw new Error('[GeminiAdapter] Video generation not supported');
+        },
+
+        /**
          * List available models.
          * @param {Object} modelConfig - Model configuration (for API key/endpoint)
          */

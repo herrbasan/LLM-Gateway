@@ -82,6 +82,13 @@ export function createKimiCliAdapter() {
         },
 
         /**
+         * Generate video - not supported.
+         */
+        async generateVideo(modelConfig, request) {
+            throw new Error('[KimiCliAdapter] Video generation not supported');
+        },
+
+        /**
          * List available models.
          */
         async listModels(modelConfig) {

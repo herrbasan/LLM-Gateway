@@ -54,6 +54,7 @@
         <h4>Ticket Task SSE Listener</h4>
         <div class="ticket-row">
             <code id="ticket-id">-</code>
+            <nui-progress id="ticket-busy" type="circular-busy" size="1rem" hidden></nui-progress>
         </div>
         <pre class="response-content" id="ticket-status"></pre>
     </div>
@@ -71,11 +72,16 @@ function init(element) {
     const ticketPanel = element.querySelector('#ticket-panel');
     const ticketIdEl = element.querySelector('#ticket-id');
     const ticketStatus = element.querySelector('#ticket-status');
+    const ticketBusy = element.querySelector('#ticket-busy');
     const resultPanel = element.querySelector('#image-result-panel');
     const resultContainer = element.querySelector('#image-result');
 
     let activeTicket = null;
     let eventSource = null;
+
+    function setBusy(busy) {
+        if (ticketBusy) ticketBusy.hidden = !busy;
+    }
 
     function stopPolling() {
         if (eventSource) {
@@ -85,7 +91,7 @@ function init(element) {
     }
 
     function isImageCapable(model) {
-        return !!model?.capabilities?.imageGeneration || model?.type === 'image';
+        return model?.type === 'image';
     }
 
     function showStatus(obj) {
@@ -141,6 +147,7 @@ function init(element) {
                 showStatus(data);
                 
                 if (data.status === 'complete' || data.status === 'failed') {
+                    setBusy(false);
                     handleTaskCompletion(data);
                 }
             } catch (err) {
@@ -151,6 +158,7 @@ function init(element) {
         eventSource.addEventListener('completion.result', (event) => {
             try {
                 const data = JSON.parse(event.data);
+                setBusy(false);
                 handleTaskCompletion(data);
                 stopPolling();
             } catch (err) {
@@ -161,6 +169,7 @@ function init(element) {
         eventSource.addEventListener('completion.error', (event) => {
             try {
                 const data = JSON.parse(event.data);
+                setBusy(false);
                 showStatus(data);
                 stopPolling();
             } catch (err) {
@@ -178,18 +187,26 @@ function init(element) {
         };
     }
 
+    async function loadConfigModels() {
+        try {
+            await window.modelsService?.fetchConfigModels?.();
+            updateModels();
+        } catch (error) {
+            console.error('Failed to load config models:', error);
+        }
+    }
+
     function updateModels() {
-        const state = window.modelsService?.getState?.();
         const currentModel = modelSelect.value;
+        const imageModels = window.modelsService?.getModelsByType?.('image') || {};
+        const modelEntries = Object.entries(imageModels);
 
         modelSelect.innerHTML = '';
 
-        const imageModels = (state?.models || []).filter(isImageCapable);
-
-        if (!state || imageModels.length === 0) {
+        if (modelEntries.length === 0) {
             const option = document.createElement('option');
             option.value = '';
-            option.textContent = state ? 'No image-generation models' : 'Loading models...';
+            option.textContent = 'No image models configured';
             option.disabled = true;
             modelSelect.appendChild(option);
             modelSelect.disabled = true;
@@ -199,15 +216,15 @@ function init(element) {
             // Add auto option
             const autoOption = document.createElement('option');
             autoOption.value = '';
-            autoOption.textContent = 'Auto-select';
+            autoOption.textContent = 'Auto-select (default)';
             modelSelect.appendChild(autoOption);
             
             // Group by adapter
             const byAdapter = new Map();
-            for (const model of imageModels) {
-                const adapter = model.owned_by || model.provider || 'unknown';
+            for (const [modelId, config] of modelEntries) {
+                const adapter = config.adapter || 'unknown';
                 if (!byAdapter.has(adapter)) byAdapter.set(adapter, []);
-                byAdapter.get(adapter).push(model);
+                byAdapter.get(adapter).push({ id: modelId, ...config });
             }
             
             for (const [adapter, models] of byAdapter) {
@@ -224,7 +241,7 @@ function init(element) {
                 modelSelect.appendChild(group);
             }
             
-            if (currentModel && imageModels.map(m => m.id).includes(currentModel)) {
+            if (currentModel && modelEntries.find(([id]) => id === currentModel)) {
                 modelSelect.value = currentModel;
             }
         }
@@ -249,6 +266,7 @@ function init(element) {
         };
 
         ticketPanel.hidden = false;
+        setBusy(true);
         showStatus({ status: 'submitting' });
 
         try {
@@ -270,12 +288,13 @@ function init(element) {
                 ticketIdEl.textContent = '-';
             }
         } catch (error) {
+            setBusy(false);
             showStatus({ error: error.message });
         }
     });
 
-    const unsubscribe = window.modelsService?.subscribe?.(() => updateModels());
-    updateModels();
+    const unsubscribe = window.modelsService?.subscribeConfig?.(() => updateModels());
+    loadConfigModels();
 
     element.hide = () => {
         stopPolling();

@@ -62,7 +62,7 @@
     </div>
 
     <div class="response-panel" id="audio-raw-panel" hidden>
-        <h4>Request Status</h4>
+        <h4>Request Status <nui-progress id="audio-busy" type="circular-busy" size="0.8rem" hidden></nui-progress></h4>
         <pre class="response-content" id="audio-raw"></pre>
     </div>
 </section>
@@ -77,11 +77,16 @@ function init(element) {
     const audioPlayer = element.querySelector('#audio-player');
     const audioMeta = element.querySelector('#audio-meta');
     const downloadLink = element.querySelector('#download-link');
+    const audioBusy = element.querySelector('#audio-busy');
 
     let currentObjectUrl = null;
 
+    function setBusy(busy) {
+        if (audioBusy) audioBusy.hidden = !busy;
+    }
+
     function isTtsCapable(model) {
-        return !!model?.capabilities?.tts || model?.type === 'audio';
+        return model?.type === 'audio';
     }
 
     function cleanupAudioUrl() {
@@ -91,18 +96,26 @@ function init(element) {
         }
     }
 
+    async function loadConfigModels() {
+        try {
+            await window.modelsService?.fetchConfigModels?.();
+            updateModels();
+        } catch (error) {
+            console.error('Failed to load config models:', error);
+        }
+    }
+
     function updateModels() {
-        const state = window.modelsService?.getState?.();
         const currentModel = modelSelect.value;
+        const audioModels = window.modelsService?.getModelsByType?.('audio') || {};
+        const modelEntries = Object.entries(audioModels);
 
         modelSelect.innerHTML = '';
 
-        const ttsModels = (state?.models || []).filter(isTtsCapable);
-
-        if (!state || ttsModels.length === 0) {
+        if (modelEntries.length === 0) {
             const option = document.createElement('option');
             option.value = '';
-            option.textContent = state ? 'No TTS-capable models' : 'Loading models...';
+            option.textContent = 'No audio models configured';
             option.disabled = true;
             modelSelect.appendChild(option);
             modelSelect.disabled = true;
@@ -112,15 +125,15 @@ function init(element) {
             // Add auto option
             const autoOption = document.createElement('option');
             autoOption.value = '';
-            autoOption.textContent = 'Auto-select';
+            autoOption.textContent = 'Auto-select (default)';
             modelSelect.appendChild(autoOption);
             
             // Group by adapter
             const byAdapter = new Map();
-            for (const model of ttsModels) {
-                const adapter = model.owned_by || model.provider || 'unknown';
+            for (const [modelId, config] of modelEntries) {
+                const adapter = config.adapter || 'unknown';
                 if (!byAdapter.has(adapter)) byAdapter.set(adapter, []);
-                byAdapter.get(adapter).push(model);
+                byAdapter.get(adapter).push({ id: modelId, ...config });
             }
             
             for (const [adapter, models] of byAdapter) {
@@ -137,7 +150,7 @@ function init(element) {
                 modelSelect.appendChild(group);
             }
             
-            if (currentModel && ttsModels.map(m => m.id).includes(currentModel)) {
+            if (currentModel && modelEntries.find(([id]) => id === currentModel)) {
                 modelSelect.value = currentModel;
             }
         }
@@ -151,6 +164,7 @@ function init(element) {
 
         rawPanel.hidden = false;
         resultPanel.hidden = true;
+        setBusy(true);
         audioRaw.textContent = 'Submitting...';
 
         const formData = new FormData(form);
@@ -173,6 +187,7 @@ function init(element) {
                 try {
                     errText = await response.text();
                 } catch {}
+                setBusy(false);
                 audioRaw.textContent = `Error: ${errText}`;
                 return;
             }
@@ -189,18 +204,20 @@ function init(element) {
             downloadLink.href = currentObjectUrl;
             downloadLink.download = `tts-output.${ext}`;
 
+            setBusy(false);
             audioRaw.textContent = JSON.stringify({
                 status: response.status,
                 content_type: blob.type || null,
                 size_bytes: blob.size
             }, null, 2);
         } catch (error) {
+            setBusy(false);
             audioRaw.textContent = `Error: ${error.message}`;
         }
     });
 
-    const unsubscribe = window.modelsService?.subscribe?.(() => updateModels());
-    updateModels();
+    const unsubscribe = window.modelsService?.subscribeConfig?.(() => updateModels());
+    loadConfigModels();
 
     element.hide = () => {
         cleanupAudioUrl();
