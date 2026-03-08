@@ -58,6 +58,55 @@
             <small class="text-dim">Some adapters don't support detail parameter - use "Default" for compatibility</small>
         </div>
         
+        <fieldset class="nui-fieldset">
+            <legend>Image Processing</legend>
+            <small class="text-dim">Optional: resize and/or transcode images before sending to model</small>
+            
+            <div class="form-group" style="margin-top: var(--nui-space);">
+                <nui-checkbox>
+                    <input type="checkbox" id="enable-processing" name="enable-processing">
+                    <label for="enable-processing">Enable image processing</label>
+                </nui-checkbox>
+                <small class="text-dim">Resize and/or transcode images via MediaService</small>
+            </div>
+            
+            <div id="processing-options" class="processing-options hidden">
+                <div class="form-group">
+                    <label for="processing-resize">Resize</label>
+                    <nui-select>
+                        <select id="processing-resize" name="processing-resize">
+                            <option value="">No resize</option>
+                            <option value="auto" selected>Auto (use model limits)</option>
+                            <option value="low">Low (512px)</option>
+                            <option value="high">High (model max)</option>
+                            <option value="1024">1024px</option>
+                            <option value="2048">2048px</option>
+                        </select>
+                    </nui-select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="processing-transcode">Transcode Format</label>
+                    <nui-select>
+                        <select id="processing-transcode" name="processing-transcode">
+                            <option value="">Keep original</option>
+                            <option value="jpg">JPEG (smaller, lossy)</option>
+                            <option value="png">PNG (lossless, larger)</option>
+                            <option value="webp">WebP (modern, efficient)</option>
+                        </select>
+                    </nui-select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="processing-quality">Quality (for lossy formats)</label>
+                    <nui-layout columns="2" gap="var(--nui-space)">
+                        <input type="range" id="processing-quality" name="processing-quality" min="1" max="100" value="85" style="width: 100%;">
+                        <span id="quality-value" class="text-dim">85</span>
+                    </nui-layout>
+                </div>
+            </div>
+        </fieldset>
+        
         <div class="form-group">
             <label for="prompt">Prompt</label>
             <nui-textarea>
@@ -99,6 +148,10 @@ function init(element, params) {
     const tabUrl = element.querySelector('#tab-url');
     const uploadSection = element.querySelector('#upload-section');
     const urlSection = element.querySelector('#url-section');
+    const enableProcessing = element.querySelector('#enable-processing');
+    const processingOptions = element.querySelector('#processing-options');
+    const qualitySlider = element.querySelector('#processing-quality');
+    const qualityValue = element.querySelector('#quality-value');
 
     function isVisionCapable(model) {
         return !!model?.capabilities?.vision;
@@ -176,6 +229,20 @@ function init(element, params) {
         currentImageData = null;
         fileInput.value = '';
         fileName.textContent = 'No file selected';
+    });
+    
+    // Image processing options toggle
+    enableProcessing.addEventListener('change', () => {
+        if (enableProcessing.checked) {
+            processingOptions.classList.remove('hidden');
+        } else {
+            processingOptions.classList.add('hidden');
+        }
+    });
+    
+    // Quality slider display
+    qualitySlider.addEventListener('input', () => {
+        qualityValue.textContent = qualitySlider.value;
     });
     
     // Populate models when loaded
@@ -306,6 +373,34 @@ function init(element, params) {
                     }
                 ]
             };
+            
+            // Add image processing options if enabled
+            if (enableProcessing.checked) {
+                const resizeValue = element.querySelector('#processing-resize').value;
+                const transcodeValue = element.querySelector('#processing-transcode').value;
+                const qualityValue = parseInt(element.querySelector('#processing-quality').value);
+                
+                const imageProcessing = {};
+                
+                if (resizeValue) {
+                    // Convert numeric strings to numbers
+                    imageProcessing.resize = ['1024', '2048'].includes(resizeValue) 
+                        ? parseInt(resizeValue) 
+                        : resizeValue;
+                }
+                
+                if (transcodeValue) {
+                    imageProcessing.transcode = transcodeValue;
+                }
+                
+                if (qualityValue && qualityValue !== 85) {
+                    imageProcessing.quality = qualityValue;
+                }
+                
+                if (Object.keys(imageProcessing).length > 0) {
+                    request.image_processing = imageProcessing;
+                }
+            }
             
             const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
                 method: 'POST',
