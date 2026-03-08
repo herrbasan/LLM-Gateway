@@ -27,7 +27,7 @@ export class Dashboard {
                     <div class="stat-card">
                         <h3>Gateway Status</h3>
                         <div class="stat-value" id="gateway-status">
-                            <span class="status-indicator checking">Checking...</span>
+                            <nui-progress type="circular-busy" size="1.5rem"></nui-progress>
                         </div>
                     </div>
                     <div class="stat-card">
@@ -55,21 +55,29 @@ export class Dashboard {
                 <div class="active-requests-section" id="active-requests-section">
                     <h3>Recent Activity</h3>
                     <div id="active-requests-list" class="requests-list">
-                        <div class="loading-placeholder">Loading...</div>
+                        <div class="loading-placeholder">
+                            <nui-progress type="busy" style="max-width: 200px;"></nui-progress>
+                        </div>
                     </div>
                 </div>
                 
                 <div class="models-section">
                     <h3>Model Status</h3>
                     <div id="models-list" class="models-list">
-                        <div class="loading-placeholder">Loading models...</div>
+                        <div class="loading-placeholder">
+                            <nui-progress type="circular-busy" size="2rem"></nui-progress>
+                            <span>Loading models...</span>
+                        </div>
                     </div>
                 </div>
 
                 <div class="models-section">
                     <h3>Recent Gateway Activity</h3>
                     <div id="activity-list" class="requests-list">
-                        <div class="loading-placeholder">Waiting for events...</div>
+                        <div class="loading-placeholder">
+                            <nui-progress type="busy" style="max-width: 200px;"></nui-progress>
+                            <span>Waiting for events...</span>
+                        </div>
                     </div>
                 </div>
             </div>

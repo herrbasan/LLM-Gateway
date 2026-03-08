@@ -204,6 +204,41 @@ export function createOpenAIAdapter() {
         },
 
         /**
+         * Generate video.
+         * Note: OpenAI doesn't have a public video generation API yet.
+         * This is a placeholder for future compatibility.
+         */
+        async generateVideo(modelConfig, request) {
+            const { endpoint, apiKey, adapterModel } = modelConfig;
+
+            const payload = {
+                model: adapterModel || 'sora-1',
+                prompt: request.prompt,
+                duration: request.duration || 5,
+                resolution: request.resolution || '720p'
+            };
+
+            if (request.quality) payload.quality = request.quality;
+
+            const headers = buildHeaders(apiKey);
+            const res = await httpRequest(`${endpoint}/videos/generations`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+            if (data.error) {
+                throw new Error(`OpenAI Video Error: ${data.error.message}`);
+            }
+
+            return {
+                created: data.created,
+                data: data.data || []
+            };
+        },
+
+        /**
          * List available models.
          */
         async listModels(modelConfig) {

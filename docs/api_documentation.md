@@ -276,10 +276,15 @@ Generate embeddings for text input.
 
 ### GET /v1/models
 
-List available models from config.
+List available models from config. Supports filtering by type.
 
 ```bash
 GET /v1/models
+GET /v1/models?type=chat
+GET /v1/models?type=image
+GET /v1/models?type=audio
+GET /v1/models?type=video
+GET /v1/models?type=embedding
 ```
 
 **Response:**
@@ -291,6 +296,7 @@ GET /v1/models
       "id": "gemini-flash",
       "object": "model",
       "owned_by": "gemini",
+      "type": "chat",
       "capabilities": {
         "contextWindow": 1048576,
         "vision": true,
@@ -374,6 +380,45 @@ OpenAI-compatible text-to-speech endpoint.
 
 - Binary audio body
 - `Content-Type: audio/<format>`
+
+---
+
+### POST /v1/videos/generations
+
+OpenAI-compatible video generation endpoint.
+
+- Behavior is intentionally asynchronous in the gateway.
+- Returns `202 Accepted` with a ticket so long-running video jobs do not block HTTP connections.
+
+**Headers:**
+
+| Header | Description | Required |
+|--------|-------------|----------|
+| `Content-Type` | `application/json` | Yes |
+
+**Request Body:**
+
+```json
+{
+  "model": "video-model",
+  "prompt": "A serene landscape with mountains and flowing rivers",
+  "duration": 5,
+  "resolution": "720p",
+  "quality": "high"
+}
+```
+
+**Response 202:**
+
+```json
+{
+  "object": "media.generation.task",
+  "ticket": "tkt_vid123abc",
+  "status": "accepted",
+  "estimated_chunks": 1,
+  "stream_url": "/v1/tasks/tkt_vid123abc/stream"
+}
+```
 
 ---
 
@@ -551,7 +596,8 @@ Task stream emits SSE events, including:
 - `chat` - Chat completion models
 - `embedding` - Text embedding models
 - `image` - Image generation models
-- `audio` - Audio generation models
+- `audio` - Audio/speech generation models
+- `video` - Video generation models
 
 ### Capability Fields
 
@@ -568,6 +614,14 @@ Task stream emits SSE events, including:
 **Image Models:**
 - `maxResolution` (string) - Maximum image resolution
 - `supportedFormats` (array) - Supported output formats
+
+**Audio Models:**
+- `maxDuration` (number) - Maximum audio duration in seconds
+- `supportedFormats` (array) - Supported output formats
+
+**Video Models:**
+- `maxDuration` (number) - Maximum video duration in seconds
+- `maxResolution` (string) - Maximum video resolution (e.g., "1080p")
 
 ---
 

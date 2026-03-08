@@ -171,6 +171,13 @@ export function createOllamaAdapter() {
         },
 
         /**
+         * Generate video - not supported by Ollama.
+         */
+        async generateVideo(modelConfig, request) {
+            throw new Error('[OllamaAdapter] Video generation not supported');
+        },
+
+        /**
          * List available models.
          */
         async listModels(modelConfig) {

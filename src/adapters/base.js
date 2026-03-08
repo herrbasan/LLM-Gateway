@@ -55,6 +55,15 @@ export function createBaseAdapter() {
         },
 
         /**
+         * Generate video.
+         * @param {Object} modelConfig - Model configuration from registry
+         * @param {Object} request - Request with prompt, duration, etc.
+         */
+        async generateVideo(modelConfig, request) {
+            throw new Error('[BaseAdapter] generateVideo not implemented');
+        },
+
+        /**
          * List available models.
          * @param {Object} modelConfig - Model configuration (for API key/endpoint if needed)
          */

@@ -141,6 +141,13 @@ export function createLmStudioAdapter() {
         },
 
         /**
+         * Generate video - not supported by LM Studio.
+         */
+        async generateVideo(modelConfig, request) {
+            throw new Error('[LMStudioAdapter] Video generation not supported');
+        },
+
+        /**
          * List available models.
          */
         async listModels(modelConfig) {

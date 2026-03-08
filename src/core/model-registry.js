@@ -119,18 +119,52 @@ export class ModelRegistry {
 
     /**
      * Get OpenAI-compatible model list.
+     * @param {string} [type] - Optional filter by model type (chat, embedding, image, audio, video)
      */
-    listModels() {
+    listModels(type) {
         const data = [];
         for (const [id, config] of this.models.entries()) {
+            if (type && config.type !== type) {
+                continue;
+            }
             data.push({
                 id,
                 object: 'model',
                 owned_by: config.adapter,
+                type: config.type,
                 capabilities: { ...config.capabilities }
             });
         }
         return { object: 'list', data };
+    }
+
+    /**
+     * Get models grouped by type.
+     * Returns an object with keys for each model type.
+     */
+    listModelsByType() {
+        const result = {
+            chat: [],
+            embedding: [],
+            image: [],
+            audio: [],
+            video: []
+        };
+
+        for (const [id, config] of this.models.entries()) {
+            const modelInfo = {
+                id,
+                object: 'model',
+                owned_by: config.adapter,
+                capabilities: { ...config.capabilities }
+            };
+
+            if (result[config.type]) {
+                result[config.type].push(modelInfo);
+            }
+        }
+
+        return result;
     }
 
     /**

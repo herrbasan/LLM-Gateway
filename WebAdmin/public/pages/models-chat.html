@@ -13,7 +13,10 @@
     </header>
     
     <div id="models-container">
-        <div class="loading-placeholder">Loading models...</div>
+        <div class="loading-placeholder">
+            <nui-progress type="circular-busy" size="2rem"></nui-progress>
+            <span>Loading models...</span>
+        </div>
     </div>
 </section>
 
@@ -22,8 +25,8 @@
     <dialog class="model-edit-dialog">
         <header>
             <h2 id="dialog-title">Edit Model</h2>
-            <nui-button variant="icon" class="icon-only">
-                <button type="button" data-action="dialog-close@#model-dialog" aria-label="Close">
+            <nui-button variant="icon" class="icon-only" data-action="dialog-close@#model-dialog">
+                <button type="button">
                     <nui-icon name="close"></nui-icon>
                 </button>
             </nui-button>
@@ -79,7 +82,7 @@
                     <nui-input-group>
                         <label for="model-api-key">API Key</label>
                         <nui-input>
-                            <input type="password" id="model-api-key" name="apiKey" placeholder="Enter API key">
+                            <input type="password" id="model-api-key" name="apiKey" placeholder="Enter API key" autocomplete="current-password">
                         </nui-input>
                         <span class="description">API key stored directly in config (config.json is gitignored)</span>
                     </nui-input-group>
