@@ -323,11 +323,11 @@ export class ModelRouter {
                     const { mimeType, base64 } = await imageFetcher.fetchImage(imageUrl);
 
                     // Determine max dimension based on detail level and model limits
-                    let maxDimension = visionLimits.maxDimension;
+                    let maxDimension = visionLimits.maxDimension || 2048;
                     if (detail === 'low') {
-                        maxDimension = Math.min(512, visionLimits.maxDimension);
+                        maxDimension = Math.min(512, maxDimension);
                     } else if (detail === 'auto') {
-                        maxDimension = Math.min(1024, visionLimits.maxDimension);
+                        maxDimension = Math.min(1024, maxDimension);
                     }
 
                     // Optimize image via MediaProcessor
