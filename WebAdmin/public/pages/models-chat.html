@@ -473,6 +473,9 @@ function init(element, params) {
             case 'save-model':
                 saveModel();
                 break;
+            case 'dialog-close@#model-dialog':
+                closeDialog();
+                break;
         }
     });
     
