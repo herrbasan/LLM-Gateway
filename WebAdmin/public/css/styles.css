@@ -615,3 +615,8 @@ nui-link-list[mode="fold"] li.list-item a {
 .scroll-top-icon {
     transform: rotate(-90deg);
 }
+
+/* Utility: Hidden */
+.hidden {
+    display: none !important;
+}
