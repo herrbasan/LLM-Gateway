@@ -93,10 +93,11 @@
                     
                     <nui-layout columns="2" gap="var(--nui-space)" class="model-capabilities-row">
                         <nui-input-group>
-                            <label for="cap-context">Context Window</label>
+                            <label for="cap-context">Context Window (×1000 tokens)</label>
                             <nui-input>
-                                <input type="number" id="cap-context" name="contextWindow" min="1" placeholder="8192">
+                                <input type="number" id="cap-context" name="contextWindow" min="1" step="0.1" placeholder="8 = 8192">
                             </nui-input>
+                            <span class="description">Enter kilotokens (4 = 4096, 128 = 128000)</span>
                         </nui-input-group>
                         
                         <div class="checkbox-vertical-align">
@@ -133,10 +134,11 @@
                         </nui-input-group>
                         
                         <nui-input-group>
-                            <label for="img-max-filesize">Max File Size (bytes)</label>
+                            <label for="img-max-filesize">Max File Size (MB)</label>
                             <nui-input>
-                                <input type="number" id="img-max-filesize" name="imageInputLimit.maxFileSize" min="1" placeholder="52428800">
+                                <input type="number" id="img-max-filesize" name="imageInputLimit.maxFileSize" min="1" step="1" placeholder="50">
                             </nui-input>
+                            <span class="description">Enter megabytes (50 = 52,428,800 bytes)</span>
                         </nui-input-group>
                         
                         <nui-input-group>
@@ -289,7 +291,8 @@ function init(element, params) {
             element.querySelector('#model-timeout').value = config.timeout || '';
             
             const caps = config.capabilities || {};
-            element.querySelector('#cap-context').value = caps.contextWindow || '';
+            // Context window: display as kilotokens (4096 → 4)
+            element.querySelector('#cap-context').value = caps.contextWindow ? (caps.contextWindow / 1000) : '';
             element.querySelector('#cap-vision').checked = !!caps.vision;
             element.querySelector('#cap-streaming').checked = !!caps.streaming;
             element.querySelector('#cap-structured').checked = !!caps.structuredOutput;
@@ -297,7 +300,8 @@ function init(element, params) {
             // Image input limits
             const imgLimits = config.imageInputLimit || {};
             element.querySelector('#img-max-dimension').value = imgLimits.maxDimension || '';
-            element.querySelector('#img-max-filesize').value = imgLimits.maxFileSize || '';
+            // File size: display as MB (52428800 → 50)
+            element.querySelector('#img-max-filesize').value = imgLimits.maxFileSize ? Math.round(imgLimits.maxFileSize / 1048576) : '';
             element.querySelector('#img-formats').value = imgLimits.supportedFormats?.join(', ') || '';
         } else {
             form.reset();
@@ -338,11 +342,15 @@ function init(element, params) {
             return;
         }
         
+        // Context window: convert kilotokens to tokens (4 → 4096)
+        const contextKilo = parseFloat(element.querySelector('#cap-context').value) || 8;
+        const contextWindow = Math.round(contextKilo * 1000);
+        
         const config = {
             type: 'chat',
             adapter: adapter,
             capabilities: {
-                contextWindow: parseInt(element.querySelector('#cap-context').value) || 8192,
+                contextWindow: contextWindow,
                 vision: element.querySelector('#cap-vision').checked,
                 streaming: element.querySelector('#cap-streaming').checked,
                 structuredOutput: element.querySelector('#cap-structured').checked
@@ -363,13 +371,16 @@ function init(element, params) {
         
         // Image input limits
         const imgMaxDimension = element.querySelector('#img-max-dimension').value;
-        const imgMaxFileSize = element.querySelector('#img-max-filesize').value;
+        const imgMaxFileSizeMB = element.querySelector('#img-max-filesize').value;
         const imgFormats = element.querySelector('#img-formats').value.trim();
         
-        if (imgMaxDimension || imgMaxFileSize || imgFormats) {
+        if (imgMaxDimension || imgMaxFileSizeMB || imgFormats) {
             config.imageInputLimit = {};
             if (imgMaxDimension) config.imageInputLimit.maxDimension = parseInt(imgMaxDimension);
-            if (imgMaxFileSize) config.imageInputLimit.maxFileSize = parseInt(imgMaxFileSize);
+            // Convert MB to bytes (50 → 52428800)
+            if (imgMaxFileSizeMB) {
+                config.imageInputLimit.maxFileSize = parseInt(imgMaxFileSizeMB) * 1048576;
+            }
             if (imgFormats) {
                 config.imageInputLimit.supportedFormats = imgFormats.split(',').map(f => f.trim()).filter(f => f);
             }
