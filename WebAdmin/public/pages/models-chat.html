@@ -249,13 +249,13 @@ function init(element, params) {
                     </div>
                     <nui-button-container align="end" class="model-card-actions">
                         <nui-button variant="ghost" data-action="edit-model" data-model-id="${escapeHtml(modelId)}">
-                            <button type="button">
+                            <button type="button" aria-label="Edit model ${escapeHtml(modelId)}">
                                 <nui-icon name="edit"></nui-icon>
                                 <span>Edit</span>
                             </button>
                         </nui-button>
                         <nui-button variant="ghost" data-action="delete-model" data-model-id="${escapeHtml(modelId)}">
-                            <button type="button" class="btn-delete-icon">
+                            <button type="button" class="btn-delete-icon" aria-label="Delete model ${escapeHtml(modelId)}">
                                 <nui-icon name="delete"></nui-icon>
                                 <span>Delete</span>
                             </button>
