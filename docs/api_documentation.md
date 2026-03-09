@@ -10,8 +10,10 @@ Complete API reference for the LLM Gateway v2.0 (model-centric, stateless archit
 2. [Response Patterns](#response-patterns)
 3. [Endpoints Reference](#endpoints-reference)
 4. [Ticket-Based API](#ticket-based-api)
-5. [Usage Patterns](#usage-patterns)
-6. [Error Handling](#error-handling)
+5. [System Events](#system-events)
+6. [Usage Patterns](#usage-patterns)
+7. [Error Handling](#error-handling)
+8. [Client Library Design](#client-library-design)
 
 ---
 
@@ -23,12 +25,12 @@ The gateway is **stateless**. Clients send full message history with each reques
 
 ### Unified Response Model
 
-All chat requests go to one endpoint. By default, all responses are OpenAI-compatible `200 OK` — compaction is transparent. The `202` ticket flow is opt-in only.
+All chat requests go to one endpoint. By default, all responses are OpenAI-compatible `200 OK` — compaction is transparent. The `202` ticket flow is opt-in only via `X-Async: true` header.
 
 | Prompt Size | Default Response | With `X-Async: true` |
 |-------------|-----------------|----------------------|
 | Fits in context | `200 OK` — immediate response | `200 OK` — immediate response |
-| Exceeds context (≥`minTokensToCompact` AND > available tokens) | `200 OK` — server blocks, compacts transparently, then responds | `202 Accepted` — ticket created, progress via SSE |
+| Exceeds context (≥`minTokensToCompact` AND > available tokens) | `200 OK` — server blocks, compacts transparently, then responds | `202 Accepted` — ticket created, client polls for result |
 
 > **Note:** `minTokensToCompact` (default: 2000) is the minimum threshold for running the compaction algorithm, not the sole trigger. Both conditions must be met: token count ≥ threshold AND tokens exceed available context window.
 
@@ -49,7 +51,7 @@ data: {"chunk":1,"total":3}
 
 data: {"choices":[{"delta":{"content":"The"}}]}
 
-# Large prompt (X-Async: true): returns 202 + ticket, client reconnects to stream
+# With X-Async: true: returns 202 + ticket, client connects to task stream
 ```
 
 > **Backpressure:** If the client reads slowly, SSE events buffer in memory. For long compaction jobs, the server emits periodic heartbeat comments (`: heartbeat`) to detect stale connections, and caps the internal event buffer to prevent memory exhaustion.
@@ -125,7 +127,7 @@ X-Async: true
   "object": "chat.completion.task",
   "ticket": "tkt_xyz789",
   "status": "accepted",
-  "estimated_chunks": 3,
+  "estimated_chunks": 1,
   "stream_url": "/v1/tasks/tkt_xyz789/stream"
 }
 ```
@@ -143,7 +145,7 @@ Main chat completion endpoint. Supports both streaming and non-streaming respons
 | Header | Description | Required |
 |--------|-------------|----------|
 | `Content-Type` | `application/json` | Yes |
-| `X-Async` | `true` to get 202 + ticket for large prompts | No |
+| `X-Async` | `true` to get 202 + ticket for async processing | No |
 | `Accept` | `text/event-stream` for streaming | No |
 
 **Request Body:**
@@ -161,11 +163,18 @@ Main chat completion endpoint. Supports both streaming and non-streaming respons
   "response_format": {
     "type": "json_schema",
     "json_schema": { "name": "response", "strict": true, "schema": {...} }
+  },
+  "image_processing": {
+    "resize": "auto",
+    "transcode": "webp",
+    "quality": 85
   }
 }
 ```
 
-**Response 200 (Small Prompt):**
+> **Image Processing:** The `image_processing` field is optional. When provided, images in messages are fetched (remote URLs) and optionally resized/transcoded via MediaService. Options: `resize: 'auto'|'low'|'high'|number`, `transcode: 'jpg'|'png'|'webp'`, `quality: 1-100`.
+
+**Response 200 (Small Prompt or Transparent Compaction):**
 
 ```json
 {
@@ -176,18 +185,24 @@ Main chat completion endpoint. Supports both streaming and non-streaming respons
   "choices": [{
     "index": 0,
     "message": { "role": "assistant", "content": "..." }
-  }]
+  }],
+  "context": {
+    "window_size": 1048576,
+    "used_tokens": 2800,
+    "available_tokens": 1045776,
+    "strategy_applied": true
+  }
 }
 ```
 
-**Response 202 (Large Prompt with `X-Async: true`):**
+**Response 202 (With `X-Async: true`):**
 
 ```json
 {
   "object": "chat.completion.task",
   "ticket": "tkt_xyz789",
   "status": "accepted",
-  "estimated_chunks": 3,
+  "estimated_chunks": 1,
   "stream_url": "/v1/tasks/tkt_xyz789/stream"
 }
 ```
@@ -313,14 +328,14 @@ GET /v1/models?type=embedding
 
 OpenAI-compatible image generation endpoint.
 
-- Behavior is intentionally asynchronous in the gateway.
-- Returns `202 Accepted` with a ticket so long-running image jobs do not block HTTP connections.
+> **Note:** Currently synchronous (`200 OK`). Asynchronous mode with tickets is planned but not yet implemented.
 
 **Headers:**
 
 | Header | Description | Required |
 |--------|-------------|----------|
 | `Content-Type` | `application/json` | Yes |
+| `X-Async` | `true` for async ticket-based processing (planned) | No |
 
 **Request Body:**
 
@@ -335,19 +350,19 @@ OpenAI-compatible image generation endpoint.
 }
 ```
 
-**Response 202:**
+**Response 200:**
 
 ```json
 {
-  "object": "media.generation.task",
-  "ticket": "tkt_abc123def456",
-  "status": "accepted",
-  "estimated_chunks": 1,
-  "stream_url": "/v1/tasks/tkt_abc123def456/stream"
+  "created": 1739999999,
+  "data": [
+    {
+      "b64_json": "iVBORw0KGgoAAAANSUhEUgAA...",
+      "revised_prompt": "A cinematic cyberpunk street..."
+    }
+  ]
 }
 ```
-
-When completed, polling `/v1/tasks/:id` returns `result.data[]`. If `b64_json` is present and media staging is enabled, the gateway also includes `local_url` pointing to `/v1/media/<file>`.
 
 ---
 
@@ -387,14 +402,14 @@ OpenAI-compatible text-to-speech endpoint.
 
 OpenAI-compatible video generation endpoint.
 
-- Behavior is intentionally asynchronous in the gateway.
-- Returns `202 Accepted` with a ticket so long-running video jobs do not block HTTP connections.
+> **Note:** Currently synchronous (`200 OK`). Asynchronous mode with tickets is planned but not yet implemented.
 
 **Headers:**
 
 | Header | Description | Required |
 |--------|-------------|----------|
 | `Content-Type` | `application/json` | Yes |
+| `X-Async` | `true` for async ticket-based processing (planned) | No |
 
 **Request Body:**
 
@@ -408,15 +423,12 @@ OpenAI-compatible video generation endpoint.
 }
 ```
 
-**Response 202:**
+**Response 200:**
 
 ```json
 {
-  "object": "media.generation.task",
-  "ticket": "tkt_vid123abc",
-  "status": "accepted",
-  "estimated_chunks": 1,
-  "stream_url": "/v1/tasks/tkt_vid123abc/stream"
+  "created": 1739999999,
+  "data": [{ "url": "https://..." }]
 }
 ```
 
@@ -424,14 +436,9 @@ OpenAI-compatible video generation endpoint.
 
 ### GET /v1/media/:filename
 
-Serves staged media files (for generated outputs or future file workflows).
-
-- Enabled only when `mediaStorage.enabled=true`.
-- Files are temporary and evicted by TTL policy.
-
-```bash
-GET /v1/media/media_1741068842000_a1b2c3d4.png
-```
+> **Not Implemented:** Media staging endpoint is planned but not yet available.
+>
+> Will serve staged media files for generated outputs when `mediaStorage.enabled=true`.
 
 ---
 
@@ -449,10 +456,20 @@ GET /health
   "status": "ok",
   "version": "2.0.0",
   "adapters": {
-    "gemini": { "state": "CLOSED" },
-    "openai": { "state": "CLOSED" }
+    "gemini": {
+      "state": "CLOSED",
+      "failures": 0,
+      "successes": 42,
+      "lastFailure": null
+    },
+    "openai": {
+      "state": "CLOSED",
+      "failures": 0,
+      "successes": 15,
+      "lastFailure": null
+    }
   },
-  "models": ["gemini-flash", "local-llama", ...]
+  "models": ["gemini-flash", "local-llama", "openai-gpt4"]
 }
 ```
 
@@ -472,10 +489,11 @@ GET /help
 
 Used for:
 
-- Large chat prompts when `X-Async: true` is set
-- Image generation jobs (`/v1/images/generations`, always async)
+- Chat requests when `X-Async: true` header is set
+- Future: Image generation jobs (when async is implemented)
+- Future: Video generation jobs (when async is implemented)
 
-Without `X-Async`, chat compaction is transparent and no chat ticket is created.
+Without `X-Async`, compaction is transparent and no ticket is created.
 
 ### Query Task Status
 
@@ -502,7 +520,7 @@ Notes:
 
 - On first poll, the gateway logs `async_ticket_age_before_poll=<ms>` for observability.
 - For failed tickets, response includes `error`.
-- For media generation tickets, `result` is the provider payload (and may include `local_url` entries for staged assets).
+- Tickets expire after 1 hour and are automatically cleaned up.
 
 ### Stream Task Progress
 
@@ -511,11 +529,72 @@ GET /v1/tasks/tkt_xyz789/stream
 Headers: Accept: text/event-stream
 ```
 
-Task stream emits SSE events, including:
+Task stream emits SSE events:
 
-- `chunk` / completion chunks for chat streams
-- `status_update` transitions (`processing`, `complete`, `failed`)
-- terminal `[DONE]`
+```
+// For streaming chat completions
+data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"delta":{"content":" world"}}]}
+data: [DONE]
+
+// Status updates
+event: status_update
+data: {"status":"processing"}
+
+// Completion (non-streaming)
+event: completion.result
+data: {"choices":[{...}], "usage": {...}}
+
+// Errors
+event: completion.error
+data: {"error":"Provider connection failed"}
+data: [DONE]
+```
+
+---
+
+## System Events
+
+Global SSE endpoint for monitoring gateway-wide events.
+
+### GET /v1/system/events
+
+Subscribe to system-level events: task lifecycle, compaction progress, routing metrics.
+
+```bash
+GET /v1/system/events
+Headers: Accept: text/event-stream
+```
+
+**Event Types:**
+
+| Event | Description |
+|-------|-------------|
+| `connected` | Initial connection acknowledgment |
+| `task.created` | New async task created |
+| `task.updated` | Task status changed |
+| `compaction.started` | Context compaction began |
+| `compaction.completed` | Context compaction finished |
+
+**Example Stream:**
+```
+event: connected
+data: {"message":"System events stream connected","timestamp":1739999999000}
+
+event: task.created
+data: {"ticket":"tkt_abc123","status":"accepted"}
+
+event: compaction.started
+data: {"ticket":"tkt_abc123","estimated_chunks":3}
+
+event: compaction.completed
+data: {"ticket":"tkt_abc123","original_tokens":45000,"final_tokens":2800}
+
+event: task.updated
+data: {"ticket":"tkt_abc123","status":"complete"}
+```
+
+> **Use Case:** Dashboards, monitoring tools, or clients that want real-time visibility into all gateway operations without polling individual tickets.
 
 ---
 
@@ -539,16 +618,17 @@ Task stream emits SSE events, including:
 | Streaming | Unified SSE (small=tokens, large=progress+tokens) |
 | Structured output | `response_format: { type: "json_schema" }` — routed only to models with `structuredOutput` capability |
 | Token constraints | `max_tokens` respected by all adapters |
+| Image processing | `image_processing: { resize, transcode, quality }` for automatic optimization |
 
 ### Media Generation
 
 | Use Case | Implementation |
 |----------|---------------|
-| Text-to-image | `POST /v1/images/generations` always returns `202 + ticket` |
-| Text-to-speech | `POST /v1/audio/speech` returns synchronous binary audio |
+| Text-to-image | `POST /v1/images/generations` — currently sync (`200`) |
+| Text-to-speech | `POST /v1/audio/speech` — returns synchronous binary audio |
+| Text-to-video | `POST /v1/videos/generations` — currently sync (`200`) |
+| Async image/video | Planned — will use `202 + ticket` pattern |
 | Provider mismatch | Router enforces capability flags (type must match) |
-| Temporary assets | Staged under `/v1/media/*` when enabled |
-| Asset cleanup | TTL-based eviction |
 
 ---
 
@@ -557,13 +637,64 @@ Task stream emits SSE events, including:
 | Code | Meaning |
 |------|---------|
 | 200 | Success (small prompt or transparent compaction complete) |
-| 202 | Accepted (large prompt, async ticket created) |
+| 202 | Accepted (async ticket created) |
 | 400 | Bad request (wrong model type, missing fields) |
 | 404 | Model not found |
-| 413 | Payload too large (even after compaction) |
+| 413 | Payload too large (even after compaction or compaction disabled) |
 | 429 | Rate limit or queue full |
 | 502 | Provider unavailable |
+| 503 | Circuit breaker open |
 | 504 | Timeout |
+
+---
+
+## Client Library Design
+
+The ticket system is designed to be abstracted by a client library. Here's the recommended pattern:
+
+### Conceptual API
+
+```javascript
+const client = new GatewayClient({ 
+  baseUrl: 'http://localhost:3400',
+  autoAsync: { threshold: 10000 }  // Auto-use X-Async when >10k tokens
+});
+
+// Simple usage — library handles complexity
+const response = await client.chat({
+  model: 'gemini-flash',
+  messages: conversationHistory,
+  onProgress: (chunk) => updateUI(chunk)
+});
+
+// Explicit async mode
+const ticket = await client.chatAsync({
+  model: 'gemini-flash',
+  messages: veryLargeHistory
+});
+
+// Poll with exponential backoff
+const result = await ticket.wait({ 
+  pollInterval: 500,
+  maxWait: 60000 
+});
+
+// Or stream progress
+for await (const event of ticket.stream()) {
+  if (event.type === 'chunk') updateUI(event.data);
+  if (event.type === 'status_update') updateStatus(event.status);
+}
+```
+
+### Library Responsibilities
+
+| Concern | Implementation |
+|---------|---------------|
+| **Token Estimation** | Estimate payload size client-side to decide sync vs async |
+| **Polling Strategy** | Exponential backoff with jitter for `/v1/tasks/:id` |
+| **Stream Reconnection** | Auto-reconnect SSE streams with backoff on disconnect |
+| **Event Aggregation** | Subscribe to `/v1/system/events` for multi-task monitoring |
+| **Error Recovery** | Retry with circuit breaker awareness |
 
 ---
 
@@ -585,6 +716,9 @@ Task stream emits SSE events, including:
         "vision": true,
         "structuredOutput": "json_schema",
         "streaming": true
+      },
+      "imageInputLimit": {
+        "maxDimension": 2048
       }
     }
   }
@@ -680,4 +814,14 @@ await fetch('/v1/chat/completions', {
     messages: fullHistory
   })
 });
+
+// Or use async mode for large payloads
+await fetch('/v1/chat/completions', {
+  headers: {'X-Async': 'true'},
+  body: JSON.stringify({
+    model: 'gemini-flash',
+    messages: veryLargeHistory
+  })
+});
+// Then poll /v1/tasks/{ticket} or stream /v1/tasks/{ticket}/stream
 ```
