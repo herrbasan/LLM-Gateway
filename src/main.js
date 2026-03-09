@@ -62,7 +62,10 @@ async function main() {
     });
 
   } catch (error) {
-    logger.error('Failed to start LLM Gateway', error);
+    logger.error('Failed to start LLM Gateway', error, { 
+      message: error?.message,
+      stack: error?.stack 
+    });
     logger.close();
     process.exit(1);
   }

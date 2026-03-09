@@ -88,15 +88,23 @@ class Logger {
     /**
      * Log an error message
      */
-    error(message, error = null, meta = {}) {
+    error(message, error = null, meta = null) {
         const errorMeta = error ? { 
             error: error.message, 
             stack: error.stack,
-            ...meta 
-        } : meta;
+            ...(meta || {}) 
+        } : (meta || {});
         const formatted = this._formatMessage('ERROR', message, errorMeta);
         this._writeToFile(formatted);
-        console.error(`[ERROR] ${message}`, error || '', meta);
+        
+        // Only log to console if there's something to show
+        const hasError = error && error.message;
+        const hasMeta = meta && Object.keys(meta).length > 0;
+        if (hasError || hasMeta) {
+            console.error(`[ERROR] ${message}`, error || '', meta || '');
+        } else {
+            console.error(`[ERROR] ${message}`);
+        }
     }
     
     /**

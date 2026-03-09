@@ -3,6 +3,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { createSafeLogger } from './safe-logger.js';
+
+const logger = createSafeLogger('[MediaStorage]');
 
 export class MediaStorage {
     constructor(config = {}) {
@@ -93,7 +96,7 @@ export class MediaStorage {
         }
 
         if (evictedCount > 0) {
-            console.log(`[MediaStorage] evicted_files_count=${evictedCount}`);
+            logger.info(`evicted_files_count=${evictedCount}`);
         }
 
         return { evictedCount };

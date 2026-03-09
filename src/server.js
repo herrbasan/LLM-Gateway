@@ -15,6 +15,7 @@ import { createSystemEventsHandler } from './routes/events.js';
 import { ModelRouter } from './core/model-router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
 import { getLogger } from './utils/logger.js';
+import { sanitizeForLogging } from './utils/safe-logger.js';
 
 const logger = getLogger();
 
@@ -171,7 +172,13 @@ export function createServer(config) {
     if (isExpectedError) {
       logger.warn(`[${err.status}] ${err.message || 'Client error'}`);
     } else {
-      logger.error('Unhandled server error', err);
+      // Use safe logging to prevent binary data from hitting logs
+      const safeMeta = sanitizeForLogging({ 
+        stack: err.stack,
+        status: err.status,
+        code: err.code
+      });
+      logger.error(`Unhandled server error: ${err.message}`, safeMeta);
     }
     
     if (res.headersSent) {
