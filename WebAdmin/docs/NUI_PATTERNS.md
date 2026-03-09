@@ -80,7 +80,7 @@ const navigationData = [
     items: [
       { label: 'Chat', href: '#page=test-chat' },
       { label: 'Embeddings', href: '#page=test-embeddings' },
-      { label: 'Sessions', href: '#page=test-sessions' }
+      { label: 'Images', href: '#page=test-images' }
     ]
   },
   {
