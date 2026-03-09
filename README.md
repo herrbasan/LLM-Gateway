@@ -128,7 +128,7 @@ Each model is independently configured with:
 | Ollama | ✅ | ✅ | ❌ | ❌ |
 | LM Studio | ✅ | ✅ | ❌ | ❌ |
 | MiniMax | ✅ | ❌ | ❌ | ❌ |
-| Kimi-CLI | ✅ | ❌ | ❌ | ❌ |
+| Kimi Code | ✅ | ❌ | ❌ | ❌ |
 
 ## API Documentation
 
