@@ -196,7 +196,10 @@ export class MediaProcessorClient {
 
             const res = await request(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
                 body: JSON.stringify(body)
             });
             
@@ -205,7 +208,21 @@ export class MediaProcessorClient {
                 return base64Data; // fallback to original
             }
 
-            const data = await res.json();
+            // Check content-type to debug SSE vs JSON issue
+            const contentType = res.headers.get('content-type');
+            logger.info(`MediaProcessor response content-type: ${contentType}`);
+            
+            // Clone response for potential error debugging
+            const resClone = res.clone();
+            let data;
+            try {
+                data = await res.json();
+            } catch (parseError) {
+                // Try to get raw text for debugging
+                const text = await resClone.text().catch(() => 'unable to get text');
+                logger.error(`JSON parse error. Raw response (first 200 chars):`, text.substring(0, 200));
+                throw parseError;
+            }
             if (data.base64) {
                  return data.base64.replace(/^data:[^;]+;base64,/, '');
             }
