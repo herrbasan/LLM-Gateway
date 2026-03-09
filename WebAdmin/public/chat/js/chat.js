@@ -4,6 +4,7 @@
 
 import { Conversation } from './conversation.js';
 import { StreamingHandler } from './streaming.js';
+import { renderMarkdown, parseThinking, renderThinking } from './markdown.js';
 
 // Gateway URL (WebAdmin runs on :3401, Gateway on :3400)
 const GATEWAY_URL = window.location.origin.replace(':3401', ':3400');
@@ -506,8 +507,39 @@ function updateAssistantContent(el, content) {
     const contentDiv = el.querySelector('.message-content');
     if (!contentDiv) return;
     
-    // Simple text rendering for now (markdown to be added)
-    contentDiv.textContent = content;
+    // Parse thinking and answer
+    const parsed = parseThinking(content);
+    
+    let html = '';
+    
+    // Render thinking block if exists
+    if (parsed.thinking !== null) {
+        const isCollapsed = contentDiv.querySelector('.thinking-block:not(.streaming)') !== null;
+        const thinkingClass = isCollapsed ? 'collapsed' : '';
+        const thinkingId = 'thinking-' + el.dataset.exchangeId;
+        
+        html += `
+            <div class="thinking-block ${thinkingClass}" id="${thinkingId}">
+                <div class="thinking-header" onclick="toggleThinking('${thinkingId}')">
+                    <span class="thinking-icon">🧠</span>
+                    <span class="thinking-title">Thinking</span>
+                    <span class="thinking-toggle">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </span>
+                </div>
+                <div class="thinking-content">${escapeHtml(parsed.thinking)}</div>
+            </div>
+        `;
+    }
+    
+    // Render answer with markdown
+    if (parsed.answer) {
+        html += renderMarkdown(parsed.answer);
+    }
+    
+    contentDiv.innerHTML = html;
 }
 
 function showThinkingIndicator(el, thinking) {
@@ -516,9 +548,22 @@ function showThinkingIndicator(el, thinking) {
     
     let thinkEl = contentDiv.querySelector('.thinking-block');
     if (!thinkEl) {
+        const thinkingId = 'thinking-' + el.dataset.exchangeId;
         thinkEl = document.createElement('div');
-        thinkEl.className = 'thinking-block';
-        thinkEl.innerHTML = '<div class="thinking-header">Thinking...</div><div class="thinking-content"></div>';
+        thinkEl.id = thinkingId;
+        thinkEl.className = 'thinking-block streaming';
+        thinkEl.innerHTML = `
+            <div class="thinking-header" onclick="toggleThinking('${thinkingId}')">
+                <span class="thinking-icon">🧠</span>
+                <span class="thinking-title">Thinking...</span>
+                <span class="thinking-toggle">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </span>
+            </div>
+            <div class="thinking-content"></div>
+        `;
         contentDiv.insertBefore(thinkEl, contentDiv.firstChild);
     }
     
@@ -573,11 +618,26 @@ function finalizeAssistantElement(el, exchangeId) {
     const indicator = el.querySelector('.streaming-indicator');
     if (indicator) indicator.style.display = 'none';
     
-    // Show actions
+    // Show actions only if we have multiple versions or after regeneration
+    const info = conversation.getVersionInfo(exchangeId);
     const actions = el.querySelector('.message-actions');
-    if (actions) {
+    if (actions && info?.hasMultiple) {
         actions.style.display = 'flex';
         updateVersionControls(el, exchangeId);
+    } else if (actions) {
+        // Only show regenerate button initially
+        actions.style.display = 'flex';
+        actions.querySelector('.regenerate').style.display = 'inline-block';
+        actions.querySelector('.prev-version').style.display = 'none';
+        actions.querySelector('.next-version').style.display = 'none';
+        actions.querySelector('.version-info').style.display = 'none';
+    }
+    
+    // Remove streaming class from thinking block
+    const thinking = el.querySelector('.thinking-block.streaming');
+    if (thinking) {
+        thinking.classList.remove('streaming');
+        thinking.querySelector('.thinking-title').textContent = 'Thinking';
     }
 }
 
@@ -588,10 +648,24 @@ function updateVersionControls(el, exchangeId) {
     const infoEl = el.querySelector('.version-info');
     const prevBtn = el.querySelector('.prev-version');
     const nextBtn = el.querySelector('.next-version');
+    const regenerateBtn = el.querySelector('.regenerate');
     
-    if (infoEl) infoEl.textContent = `${info.current}/${info.total}`;
-    if (prevBtn) prevBtn.style.display = info.hasMultiple ? 'inline-block' : 'none';
-    if (nextBtn) nextBtn.style.display = info.hasMultiple ? 'inline-block' : 'none';
+    // Show version info only when multiple versions exist
+    if (info.hasMultiple) {
+        if (infoEl) {
+            infoEl.textContent = `${info.current}/${info.total}`;
+            infoEl.style.display = 'inline-block';
+        }
+        if (prevBtn) prevBtn.style.display = 'inline-block';
+        if (nextBtn) nextBtn.style.display = 'inline-block';
+    } else {
+        if (infoEl) infoEl.style.display = 'none';
+        if (prevBtn) prevBtn.style.display = 'none';
+        if (nextBtn) nextBtn.style.display = 'none';
+    }
+    
+    // Always show regenerate
+    if (regenerateBtn) regenerateBtn.style.display = 'inline-block';
 }
 
 // ============================================
