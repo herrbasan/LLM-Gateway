@@ -86,7 +86,7 @@ function populateModelSelect() {
     const chatModels = models.filter(m => m.type === 'chat' || !m.type);
     
     if (chatModels.length === 0) {
-        elements.modelSelect.innerHTML = '<option value="">No chat models available</option>';
+        elements.modelSelect.innerHTML = '<select><option value="">No chat models available</option></select>';
         return;
     }
     
@@ -98,17 +98,28 @@ function populateModelSelect() {
         byAdapter.get(adapter).push(model);
     }
     
-    let html = '<option value="">Select model...</option>';
+    let html = '<select id="model"><option value="">Select model...</option>';
     
     for (const [adapter, adapterModels] of byAdapter) {
-        html += `<optgroup label="${adapter}">`;
+        const adapterLabel = adapter.charAt(0).toUpperCase() + adapter.slice(1);
+        html += `<optgroup label="${adapterLabel}">`;
         for (const model of adapterModels) {
             html += `<option value="${model.id}">${model.id}</option>`;
         }
         html += '</optgroup>';
     }
     
+    html += '</select>';
     elements.modelSelect.innerHTML = html;
+    
+    // Re-bind the change event
+    const select = elements.modelSelect.querySelector('select');
+    if (select) {
+        select.addEventListener('change', (e) => {
+            currentModel = e.target.value;
+            console.log('[Chat] Selected model:', currentModel);
+        });
+    }
 }
 
 // ============================================
@@ -649,15 +660,32 @@ async function checkGatewayStatus() {
 // ============================================
 
 function toggleTheme() {
-    const current = document.documentElement.style.colorScheme || 'light';
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
     const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.style.colorScheme = next;
-    localStorage.setItem('chat-theme', next);
+    setTheme(next);
 }
 
+function setTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('chat-theme', theme);
+    
+    // Also sync with NUI if available
+    if (window.nui?.setTheme) {
+        window.nui.setTheme(theme);
+    }
+    
+    // Update color-scheme for native form elements
+    document.documentElement.style.colorScheme = theme;
+}
+
+// Restore theme on load
 const savedTheme = localStorage.getItem('chat-theme');
 if (savedTheme) {
-    document.documentElement.style.colorScheme = savedTheme;
+    setTheme(savedTheme);
+} else {
+    // Default to system preference
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    setTheme(prefersDark ? 'dark' : 'light');
 }
 
 // ============================================
