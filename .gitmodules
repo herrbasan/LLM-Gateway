@@ -4,3 +4,6 @@
 [submodule "MediaService"]
 	path = MediaService
 	url = https://github.com/herrbasan/MediaService.git
+[submodule "Reference/LMChat"]
+	path = Reference/LMChat
+	url = https://github.com/herrbasan/LMChat.git
