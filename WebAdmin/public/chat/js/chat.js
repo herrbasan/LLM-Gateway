@@ -48,19 +48,41 @@ const elements = {
 async function init() {
     console.log('[Chat] Initializing...');
     
-    // Load models
+    // Setup event listeners first
+    setupEventListeners();
+    
+    // Wait for NUI to be ready, then load models
+    await waitForNUI();
     await loadModels();
     
     // Restore conversation
     renderConversation();
     
-    // Setup event listeners
-    setupEventListeners();
-    
     // Check gateway status
     checkGatewayStatus();
     
     console.log('[Chat] Ready');
+}
+
+function waitForNUI() {
+    return new Promise((resolve) => {
+        // Check if NUI is already ready
+        if (window.nui?.ready) {
+            resolve();
+            return;
+        }
+        
+        // Wait for custom elements to be defined
+        const check = () => {
+            if (customElements.get('nui-select')) {
+                // Give a small delay for components to upgrade
+                setTimeout(resolve, 100);
+            } else {
+                setTimeout(check, 50);
+            }
+        };
+        check();
+    });
 }
 
 // ============================================
@@ -86,9 +108,15 @@ function populateModelSelect() {
     const chatModels = models.filter(m => m.type === 'chat' || !m.type);
     
     if (chatModels.length === 0) {
-        elements.modelSelect.innerHTML = '<select><option value="">No chat models available</option></select>';
+        // Use NUI API to set empty state
+        if (elements.modelSelect.setItems) {
+            elements.modelSelect.setItems([{ value: '', label: 'No chat models available', disabled: true }]);
+        }
         return;
     }
+    
+    // Build items array for NUI setItems API
+    const items = [{ value: '', label: 'Select model...' }];
     
     // Group by adapter/provider
     const byAdapter = new Map();
@@ -98,28 +126,68 @@ function populateModelSelect() {
         byAdapter.get(adapter).push(model);
     }
     
-    let html = '<select id="model"><option value="">Select model...</option>';
+    for (const [adapter, adapterModels] of byAdapter) {
+        const adapterLabel = adapter.charAt(0).toUpperCase() + adapter.slice(1);
+        const groupItems = adapterModels.map(model => ({
+            value: model.id,
+            label: model.id
+        }));
+        
+        items.push({
+            group: adapterLabel,
+            options: groupItems
+        });
+    }
+    
+    // Use NUI API to update options
+    if (elements.modelSelect.setItems) {
+        elements.modelSelect.setItems(items);
+        
+        // Bind change event via NUI
+        elements.modelSelect.addEventListener('nui-change', (e) => {
+            currentModel = e.detail.values[0] || '';
+            console.log('[Chat] Selected model:', currentModel);
+        });
+    } else {
+        // Fallback if NUI not loaded yet
+        console.warn('[Chat] NUI select not ready, using fallback');
+        populateModelSelectFallback(chatModels);
+    }
+}
+
+// Fallback for when NUI is not ready
+function populateModelSelectFallback(chatModels) {
+    const select = elements.modelSelect.querySelector('select');
+    if (!select) return;
+    
+    select.innerHTML = '<option value="">Select model...</option>';
+    
+    const byAdapter = new Map();
+    for (const model of chatModels) {
+        const adapter = model.owned_by || 'unknown';
+        if (!byAdapter.has(adapter)) byAdapter.set(adapter, []);
+        byAdapter.get(adapter).push(model);
+    }
     
     for (const [adapter, adapterModels] of byAdapter) {
         const adapterLabel = adapter.charAt(0).toUpperCase() + adapter.slice(1);
-        html += `<optgroup label="${adapterLabel}">`;
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = adapterLabel;
+        
         for (const model of adapterModels) {
-            html += `<option value="${model.id}">${model.id}</option>`;
+            const option = document.createElement('option');
+            option.value = model.id;
+            option.textContent = model.id;
+            optgroup.appendChild(option);
         }
-        html += '</optgroup>';
+        
+        select.appendChild(optgroup);
     }
     
-    html += '</select>';
-    elements.modelSelect.innerHTML = html;
-    
-    // Re-bind the change event
-    const select = elements.modelSelect.querySelector('select');
-    if (select) {
-        select.addEventListener('change', (e) => {
-            currentModel = e.target.value;
-            console.log('[Chat] Selected model:', currentModel);
-        });
-    }
+    select.addEventListener('change', (e) => {
+        currentModel = e.target.value;
+        console.log('[Chat] Selected model:', currentModel);
+    });
 }
 
 // ============================================
