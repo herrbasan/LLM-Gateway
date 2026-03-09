@@ -391,31 +391,6 @@ async function streamResponse(exchangeId) {
 }
 
 // ============================================
-// Thinking Block Parsing
-// ============================================
-
-function parseThinking(content) {
-    const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
-    if (thinkMatch) {
-        return {
-            thinking: thinkMatch[1].trim(),
-            answer: content.replace(/<think>[\s\S]*?<\/think>/, '').trim()
-        };
-    }
-    // Check if we're inside a thinking block
-    if (content.includes('<think>') && !content.includes('</think>')) {
-        const partial = content.match(/<think>([\s\S]*)$/);
-        if (partial) {
-            return {
-                thinking: partial[1].trim(),
-                answer: null
-            };
-        }
-    }
-    return { thinking: null, answer: content };
-}
-
-// ============================================
 // DOM Creation & Updates
 // ============================================
 
