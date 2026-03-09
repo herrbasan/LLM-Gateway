@@ -2,13 +2,20 @@
 // LLM Gateway Chat - Main Controller
 // ============================================
 
+import { Conversation } from './conversation.js';
+import { StreamingHandler } from './streaming.js';
+
 // Gateway URL (WebAdmin runs on :3401, Gateway on :3400)
 const GATEWAY_URL = window.location.origin.replace(':3401', ':3400');
 
 // State
+let conversation = new Conversation();
+let streamer = new StreamingHandler(GATEWAY_URL);
 let models = [];
 let currentModel = '';
 let isStreaming = false;
+let currentExchangeId = null;
+let attachedImages = []; // Array of {dataUrl, name, type}
 
 // DOM Elements
 const elements = {
@@ -43,6 +50,9 @@ async function init() {
     
     // Load models
     await loadModels();
+    
+    // Restore conversation
+    renderConversation();
     
     // Setup event listeners
     setupEventListeners();
@@ -136,14 +146,7 @@ function setupEventListeners() {
     elements.fileInput?.addEventListener('change', handleFileSelect);
     
     // New chat
-    elements.newChatBtn?.addEventListener('click', () => {
-        elements.messages.innerHTML = `
-            <div class="welcome-message">
-                <h2>New Conversation</h2>
-                <p>Select a model and start chatting</p>
-            </div>
-        `;
-    });
+    elements.newChatBtn?.addEventListener('click', startNewChat);
     
     // Theme toggle
     elements.themeToggle?.addEventListener('click', toggleTheme);
@@ -174,14 +177,14 @@ function autoResizeTextarea() {
 }
 
 // ============================================
-// Message Sending (Placeholder)
+// Message Sending
 // ============================================
 
 async function sendMessage() {
     const textarea = elements.messageInput?.querySelector('textarea');
     const content = textarea?.value.trim();
     
-    if (!content || isStreaming) return;
+    if ((!content && attachedImages.length === 0) || isStreaming) return;
     if (!currentModel) {
         alert('Please select a model first');
         return;
@@ -191,42 +194,385 @@ async function sendMessage() {
     const welcome = elements.messages?.querySelector('.welcome-message');
     if (welcome) welcome.remove();
     
-    // Add user message
-    addMessage('user', content);
+    // Add user message to conversation
+    currentExchangeId = conversation.addExchange(content, [...attachedImages]);
     
-    // Clear input
+    // Clear input and attachments
     textarea.value = '';
     textarea.style.height = 'auto';
+    clearAttachments();
     
-    // TODO: Implement actual streaming chat
-    // For now, show a placeholder response
-    addMessage('assistant', 'Chat functionality coming soon... This is a placeholder. The full implementation will include streaming responses, markdown rendering, and conversation history.');
+    // Render user message
+    renderExchange(conversation.getExchange(currentExchangeId));
+    
+    // Start streaming response
+    await streamResponse(currentExchangeId);
 }
 
-function addMessage(role, content) {
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `chat-message ${role}`;
+async function streamResponse(exchangeId) {
+    isStreaming = true;
+    updateSendButton();
     
-    const header = document.createElement('div');
-    header.className = 'message-header';
-    header.textContent = role === 'user' ? 'You' : 'Assistant';
+    const exchange = conversation.getExchange(exchangeId);
+    const systemPrompt = elements.systemPrompt?.querySelector('textarea')?.value || '';
+    const temperature = parseFloat(elements.temperature?.value) || 0.7;
+    const maxTokens = parseInt(elements.maxTokens?.value) || 2048;
     
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'message-content';
-    contentDiv.textContent = content;
+    // Create assistant message element
+    const assistantEl = createAssistantElement(exchangeId);
+    elements.messages?.appendChild(assistantEl);
+    scrollToBottom();
     
-    messageDiv.appendChild(header);
-    messageDiv.appendChild(contentDiv);
-    elements.messages?.appendChild(messageDiv);
+    try {
+        const messages = conversation.getMessagesForApi(systemPrompt);
+        
+        const requestBody = {
+            model: currentModel,
+            messages,
+            temperature,
+            max_tokens: maxTokens,
+            stream: true
+        };
+        
+        // Add image processing if images attached
+        if (exchange.user.attachments?.length > 0) {
+            requestBody.image_processing = {
+                resize: 'auto',
+                transcode: 'webp',
+                quality: 85
+            };
+        }
+        
+        let contentBuffer = '';
+        let thinkingBuffer = '';
+        let inThinking = false;
+        
+        for await (const event of streamer.streamChat(requestBody)) {
+            switch (event.type) {
+                case 'delta':
+                    contentBuffer += event.content;
+                    
+                    // Parse thinking blocks
+                    const parsed = parseThinking(contentBuffer);
+                    
+                    if (parsed.thinking !== null && !inThinking) {
+                        inThinking = true;
+                        showThinkingIndicator(assistantEl, parsed.thinking);
+                    } else if (parsed.thinking !== null) {
+                        updateThinking(assistantEl, parsed.thinking);
+                    }
+                    
+                    if (parsed.answer) {
+                        updateAssistantContent(assistantEl, parsed.answer);
+                    }
+                    
+                    conversation.updateAssistantResponse(exchangeId, event.content);
+                    break;
+                    
+                case 'compaction-start':
+                    showCompactionIndicator(assistantEl, event.data);
+                    break;
+                    
+                case 'compaction':
+                    updateCompactionProgress(assistantEl, event.data);
+                    break;
+                    
+                case 'compaction-complete':
+                    hideCompactionIndicator(assistantEl);
+                    break;
+                    
+                case 'error':
+                    showError(assistantEl, event.error);
+                    conversation.setAssistantError(exchangeId, event.error);
+                    break;
+                    
+                case 'aborted':
+                    showError(assistantEl, 'Stopped');
+                    break;
+                    
+                case 'done':
+                    conversation.setAssistantComplete(exchangeId);
+                    finalizeAssistantElement(assistantEl, exchangeId);
+                    break;
+            }
+            
+            scrollToBottom();
+        }
+        
+    } catch (error) {
+        console.error('[Chat] Stream error:', error);
+        showError(assistantEl, error.message);
+        conversation.setAssistantError(exchangeId, error.message);
+    } finally {
+        isStreaming = false;
+        updateSendButton();
+        currentExchangeId = null;
+    }
+}
+
+// ============================================
+// Thinking Block Parsing
+// ============================================
+
+function parseThinking(content) {
+    const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
+    if (thinkMatch) {
+        return {
+            thinking: thinkMatch[1].trim(),
+            answer: content.replace(/<think>[\s\S]*?<\/think>/, '').trim()
+        };
+    }
+    // Check if we're inside a thinking block
+    if (content.includes('<think>') && !content.includes('</think>')) {
+        const partial = content.match(/<think>([\s\S]*)$/);
+        if (partial) {
+            return {
+                thinking: partial[1].trim(),
+                answer: null
+            };
+        }
+    }
+    return { thinking: null, answer: content };
+}
+
+// ============================================
+// DOM Creation & Updates
+// ============================================
+
+function renderConversation() {
+    elements.messages.innerHTML = '';
     
-    // Scroll to bottom
+    if (conversation.length === 0) {
+        elements.messages.innerHTML = `
+            <div class="welcome-message">
+                <h2>Welcome to LLM Gateway Chat</h2>
+                <p>Select a model and start chatting</p>
+            </div>
+        `;
+        return;
+    }
+    
+    for (const exchange of conversation.getAll()) {
+        renderExchange(exchange);
+    }
+    
     scrollToBottom();
 }
 
-function scrollToBottom() {
-    if (elements.messages) {
-        elements.messages.scrollTop = elements.messages.scrollHeight;
+function renderExchange(exchange) {
+    // User message
+    const userEl = document.createElement('div');
+    userEl.className = 'chat-message user';
+    userEl.dataset.exchangeId = exchange.id;
+    
+    let userContent = escapeHtml(exchange.user.content);
+    
+    // Add attachment previews
+    if (exchange.user.attachments?.length > 0) {
+        userContent += '<div class="message-attachments">';
+        for (const att of exchange.user.attachments) {
+            userContent += `<img src="${att.dataUrl}" alt="${att.name}" onclick="openLightbox('${att.dataUrl}')">`;
+        }
+        userContent += '</div>';
     }
+    
+    userEl.innerHTML = `
+        <div class="message-header">You</div>
+        <div class="message-content">${userContent}</div>
+    `;
+    
+    elements.messages?.appendChild(userEl);
+    
+    // Assistant message (if exists)
+    if (exchange.assistant.content || exchange.assistant.isStreaming) {
+        const assistantEl = createAssistantElement(exchange.id);
+        updateAssistantContent(assistantEl, exchange.assistant.content);
+        elements.messages?.appendChild(assistantEl);
+        
+        if (exchange.assistant.isComplete) {
+            finalizeAssistantElement(assistantEl, exchange.id);
+        }
+    }
+}
+
+function createAssistantElement(exchangeId) {
+    const el = document.createElement('div');
+    el.className = 'chat-message assistant';
+    el.dataset.exchangeId = exchangeId;
+    el.innerHTML = `
+        <div class="message-header">
+            Assistant
+            <span class="streaming-indicator" style="display: inline-block; margin-left: 8px;">
+                <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+            </span>
+        </div>
+        <div class="message-content"></div>
+        <div class="message-actions" style="display: none;">
+            <button class="action-btn regenerate" title="Regenerate">↻</button>
+            <button class="action-btn prev-version" title="Previous version">←</button>
+            <span class="version-info"></span>
+            <button class="action-btn next-version" title="Next version">→</button>
+        </div>
+    `;
+    
+    // Bind action buttons
+    el.querySelector('.regenerate')?.addEventListener('click', () => regenerate(exchangeId));
+    el.querySelector('.prev-version')?.addEventListener('click', () => switchVersion(exchangeId, 'prev'));
+    el.querySelector('.next-version')?.addEventListener('click', () => switchVersion(exchangeId, 'next'));
+    
+    return el;
+}
+
+function updateAssistantContent(el, content) {
+    const contentDiv = el.querySelector('.message-content');
+    if (!contentDiv) return;
+    
+    // Simple text rendering for now (markdown to be added)
+    contentDiv.textContent = content;
+}
+
+function showThinkingIndicator(el, thinking) {
+    const contentDiv = el.querySelector('.message-content');
+    if (!contentDiv) return;
+    
+    let thinkEl = contentDiv.querySelector('.thinking-block');
+    if (!thinkEl) {
+        thinkEl = document.createElement('div');
+        thinkEl.className = 'thinking-block';
+        thinkEl.innerHTML = '<div class="thinking-header">Thinking...</div><div class="thinking-content"></div>';
+        contentDiv.insertBefore(thinkEl, contentDiv.firstChild);
+    }
+    
+    thinkEl.querySelector('.thinking-content').textContent = thinking;
+}
+
+function updateThinking(el, thinking) {
+    const thinkEl = el.querySelector('.thinking-block .thinking-content');
+    if (thinkEl) {
+        thinkEl.textContent = thinking;
+    }
+}
+
+function showCompactionIndicator(el, data) {
+    const contentDiv = el.querySelector('.message-content');
+    if (!contentDiv) return;
+    
+    let compactEl = contentDiv.querySelector('.compaction-indicator');
+    if (!compactEl) {
+        compactEl = document.createElement('div');
+        compactEl.className = 'compaction-indicator';
+        compactEl.innerHTML = '<span class="icon">📝</span> Compacting context...';
+        contentDiv.insertBefore(compactEl, contentDiv.firstChild);
+    }
+}
+
+function updateCompactionProgress(el, data) {
+    // Could show progress bar here
+    console.log('[Chat] Compaction progress:', data);
+}
+
+function hideCompactionIndicator(el) {
+    const compactEl = el.querySelector('.compaction-indicator');
+    if (compactEl) {
+        compactEl.remove();
+    }
+}
+
+function showError(el, message) {
+    const contentDiv = el.querySelector('.message-content');
+    if (contentDiv) {
+        contentDiv.innerHTML += `<div class="error-message">Error: ${escapeHtml(message)}</div>`;
+    }
+    
+    // Hide streaming indicator
+    const indicator = el.querySelector('.streaming-indicator');
+    if (indicator) indicator.style.display = 'none';
+}
+
+function finalizeAssistantElement(el, exchangeId) {
+    // Hide streaming indicator
+    const indicator = el.querySelector('.streaming-indicator');
+    if (indicator) indicator.style.display = 'none';
+    
+    // Show actions
+    const actions = el.querySelector('.message-actions');
+    if (actions) {
+        actions.style.display = 'flex';
+        updateVersionControls(el, exchangeId);
+    }
+}
+
+function updateVersionControls(el, exchangeId) {
+    const info = conversation.getVersionInfo(exchangeId);
+    if (!info) return;
+    
+    const infoEl = el.querySelector('.version-info');
+    const prevBtn = el.querySelector('.prev-version');
+    const nextBtn = el.querySelector('.next-version');
+    
+    if (infoEl) infoEl.textContent = `${info.current}/${info.total}`;
+    if (prevBtn) prevBtn.style.display = info.hasMultiple ? 'inline-block' : 'none';
+    if (nextBtn) nextBtn.style.display = info.hasMultiple ? 'inline-block' : 'none';
+}
+
+// ============================================
+// Actions
+// ============================================
+
+async function regenerate(exchangeId) {
+    if (isStreaming) return;
+    
+    conversation.regenerateResponse(exchangeId);
+    
+    // Remove old assistant element
+    const oldEl = document.querySelector(`.chat-message.assistant[data-exchange-id="${exchangeId}"]`);
+    if (oldEl) {
+        oldEl.querySelector('.message-content').innerHTML = '';
+        oldEl.querySelector('.streaming-indicator').style.display = 'inline-block';
+        oldEl.querySelector('.message-actions').style.display = 'none';
+    }
+    
+    // Stream new response
+    currentExchangeId = exchangeId;
+    await streamResponse(exchangeId);
+}
+
+function switchVersion(exchangeId, direction) {
+    const directionKey = direction === 'prev' ? 'prev' : 'next';
+    if (conversation.switchVersion(exchangeId, directionKey)) {
+        const exchange = conversation.getExchange(exchangeId);
+        const el = document.querySelector(`.chat-message.assistant[data-exchange-id="${exchangeId}"]`);
+        if (el) {
+            updateAssistantContent(el, exchange.assistant.content);
+            updateVersionControls(el, exchangeId);
+        }
+    }
+}
+
+function startNewChat() {
+    if (isStreaming) {
+        streamer.abort();
+    }
+    
+    conversation.clear();
+    renderConversation();
+}
+
+function updateSendButton() {
+    const btn = elements.sendBtn?.querySelector('button');
+    if (btn) {
+        btn.innerHTML = isStreaming 
+            ? '<nui-icon name="stop"></nui-icon>' 
+            : '<nui-icon name="send"></nui-icon>';
+    }
+    
+    if (isStreaming) {
+        elements.sendBtn?.addEventListener('click', abortStream, { once: true });
+    }
+}
+
+function abortStream() {
+    streamer.abort();
 }
 
 // ============================================
@@ -241,10 +587,18 @@ function handleFileSelect(e) {
         
         const reader = new FileReader();
         reader.onload = (event) => {
+            attachedImages.push({
+                dataUrl: event.target.result,
+                name: file.name,
+                type: file.type
+            });
             addAttachmentPreview(event.target.result, file.name);
         };
         reader.readAsDataURL(file);
     }
+    
+    // Clear input so same file can be selected again
+    e.target.value = '';
 }
 
 function addAttachmentPreview(dataUrl, name) {
@@ -256,10 +610,19 @@ function addAttachmentPreview(dataUrl, name) {
     `;
     
     item.querySelector('.remove').addEventListener('click', () => {
+        const idx = attachedImages.findIndex(img => img.dataUrl === dataUrl);
+        if (idx > -1) attachedImages.splice(idx, 1);
         item.remove();
     });
     
     elements.attachmentPreview?.appendChild(item);
+}
+
+function clearAttachments() {
+    attachedImages = [];
+    if (elements.attachmentPreview) {
+        elements.attachmentPreview.innerHTML = '';
+    }
 }
 
 // ============================================
@@ -277,7 +640,6 @@ async function checkGatewayStatus() {
             elements.gatewayStatus?.classList.add('offline');
         }
     } catch (error) {
-        console.error('[Chat] Gateway check failed:', error);
         elements.gatewayStatus?.classList.add('offline');
     }
 }
@@ -293,7 +655,6 @@ function toggleTheme() {
     localStorage.setItem('chat-theme', next);
 }
 
-// Restore theme
 const savedTheme = localStorage.getItem('chat-theme');
 if (savedTheme) {
     document.documentElement.style.colorScheme = savedTheme;
@@ -315,8 +676,23 @@ function closeLightbox() {
     document.body.style.overflow = '';
 }
 
-// Make openLightbox available globally for message content
 window.openLightbox = openLightbox;
+
+// ============================================
+// Utilities
+// ============================================
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function scrollToBottom() {
+    if (elements.messages) {
+        elements.messages.scrollTop = elements.messages.scrollHeight;
+    }
+}
 
 // ============================================
 // Start

@@ -237,6 +237,129 @@
     overflow-y: auto;
 }
 
+/* Message Attachments */
+.message-attachments {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.message-attachments img {
+    width: 120px;
+    height: 120px;
+    object-fit: cover;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.message-attachments img:hover {
+    opacity: 0.9;
+}
+
+/* Thinking Block */
+.thinking-block {
+    background: var(--nui-shade4, #e0e0e0);
+    border-left: 3px solid var(--nui-accent, #186ac3);
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+    border-radius: 0 4px 4px 0;
+}
+
+.thinking-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--nui-shade2, #666);
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.thinking-content {
+    font-size: 0.875rem;
+    color: var(--nui-shade2, #666);
+    font-style: italic;
+    white-space: pre-wrap;
+}
+
+/* Compaction Indicator */
+.compaction-indicator {
+    background: var(--nui-accent-soft, rgba(24, 106, 195, 0.1));
+    border: 1px dashed var(--nui-accent, #186ac3);
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    color: var(--nui-shade2, #666);
+}
+
+.compaction-indicator .icon {
+    margin-right: 0.5rem;
+}
+
+/* Streaming Indicator */
+.streaming-indicator .dot {
+    animation: blink 1.4s infinite both;
+    font-weight: bold;
+}
+
+.streaming-indicator .dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.streaming-indicator .dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes blink {
+    0%, 80%, 100% { opacity: 0; }
+    40% { opacity: 1; }
+}
+
+/* Message Actions */
+.message-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding: 0 0.5rem;
+}
+
+.action-btn {
+    background: none;
+    border: none;
+    color: var(--nui-shade2, #666);
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    transition: all 0.2s;
+}
+
+.action-btn:hover {
+    background: var(--nui-shade5, #f0f0f0);
+    color: var(--nui-shade1, #333);
+}
+
+.version-info {
+    font-size: 0.75rem;
+    color: var(--nui-shade2, #666);
+    min-width: 3rem;
+    text-align: center;
+}
+
+/* Error Message */
+.error-message {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #ef4444;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+}
+
 /* Lightbox */
 .lightbox {
     position: fixed;
