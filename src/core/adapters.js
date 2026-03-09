@@ -8,6 +8,7 @@ import { createOpenAIAdapter } from '../adapters/openai.js';
 import { createOllamaAdapter } from '../adapters/ollama.js';
 import { createLmStudioAdapter } from '../adapters/lmstudio.js';
 import { createKimiCliAdapter } from '../adapters/kimi-cli.js';
+import { createKimiAdapter } from '../adapters/kimi.js';
 import { createAnthropicAdapter } from '../adapters/anthropic.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 
@@ -17,6 +18,7 @@ const ADAPTER_FACTORIES = {
     ollama: createOllamaAdapter,
     lmstudio: createLmStudioAdapter,
     'kimi-cli': createKimiCliAdapter,
+    kimi: createKimiAdapter,
     anthropic: createAnthropicAdapter
 };
 

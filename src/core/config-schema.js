@@ -7,7 +7,7 @@ const MODEL_TYPES = ['chat', 'embedding', 'image', 'audio', 'video'];
 
 const REQUIRED_MODEL_FIELDS = ['type', 'adapter', 'capabilities'];
 
-const ADAPTER_TYPES = ['gemini', 'openai', 'ollama', 'lmstudio', 'anthropic', 'kimi-cli'];
+const ADAPTER_TYPES = ['gemini', 'openai', 'ollama', 'lmstudio', 'anthropic', 'kimi-cli', 'kimi'];
 
 /**
  * Validates a model configuration object.
@@ -30,7 +30,8 @@ export function validateModelConfig(modelId, config) {
     }
 
     // Endpoint is required for all adapters except kimi-cli
-    if (config.adapter !== 'kimi-cli' && !config.endpoint) {
+    const ADAPTERS_WITHOUT_ENDPOINT = ['kimi-cli'];
+    if (!ADAPTERS_WITHOUT_ENDPOINT.includes(config.adapter) && !config.endpoint) {
         throw new Error(`[Config] Model "${modelId}": endpoint is required for adapter "${config.adapter}"`);
     }
 
@@ -45,7 +46,7 @@ export function validateModelConfig(modelId, config) {
     }
 
     // Endpoint validation (not required for kimi-cli which uses CLI commands)
-    if (config.adapter !== 'kimi-cli') {
+    if (!ADAPTERS_WITHOUT_ENDPOINT.includes(config.adapter)) {
         if (typeof config.endpoint !== 'string' || !config.endpoint.startsWith('http')) {
             throw new Error(`[Config] Model "${modelId}": endpoint must be a valid HTTP URL`);
         }

@@ -13,7 +13,7 @@ export function createOpenAIAdapter() {
          * Chat completion.
          */
         async chatComplete(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
+            const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
             const model = adapterModel || 'gpt-4';
 
             const payload = {
@@ -31,7 +31,7 @@ export function createOpenAIAdapter() {
                 };
             }
 
-            const headers = buildHeaders(apiKey);
+            const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
                 method: 'POST',
                 headers,
@@ -55,7 +55,7 @@ export function createOpenAIAdapter() {
          * Streaming chat completion.
          */
         async *streamComplete(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
+            const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
             const model = adapterModel || 'gpt-4';
 
             const payload = {
@@ -67,7 +67,7 @@ export function createOpenAIAdapter() {
             if (request.maxTokens) payload.max_tokens = request.maxTokens;
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
 
-            const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' });
+            const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
                 method: 'POST',
                 headers,
@@ -112,7 +112,7 @@ export function createOpenAIAdapter() {
          * Create embeddings.
          */
         async createEmbedding(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const { endpoint, apiKey, adapterModel, headers: customHeaders } = modelConfig;
             const model = adapterModel || 'text-embedding-3-small';
 
             const payload = {
@@ -120,7 +120,7 @@ export function createOpenAIAdapter() {
                 model
             };
 
-            const headers = buildHeaders(apiKey);
+            const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/embeddings`, {
                 method: 'POST',
                 headers,
@@ -139,7 +139,7 @@ export function createOpenAIAdapter() {
          * Generate image.
          */
         async generateImage(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
+            const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
 
             const payload = {
                 model: adapterModel || 'dall-e-3',
@@ -154,7 +154,7 @@ export function createOpenAIAdapter() {
                 payload.size = request.size || '1024x1024';
             }
 
-            const headers = buildHeaders(apiKey);
+            const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/images/generations`, {
                 method: 'POST',
                 headers,
@@ -180,7 +180,7 @@ export function createOpenAIAdapter() {
          * Synthesize speech.
          */
         async synthesizeSpeech(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
+            const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
 
             // Validate voice if supportedVoices is defined
             const supportedVoices = capabilities?.supportedVoices;
@@ -201,7 +201,7 @@ export function createOpenAIAdapter() {
 
             if (request.speed) payload.speed = request.speed;
 
-            const headers = buildHeaders(apiKey);
+            const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/audio/speech`, {
                 method: 'POST',
                 headers,
@@ -224,7 +224,7 @@ export function createOpenAIAdapter() {
          * This is a placeholder for future compatibility.
          */
         async generateVideo(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const { endpoint, apiKey, adapterModel, headers: customHeaders } = modelConfig;
 
             const payload = {
                 model: adapterModel || 'sora-1',
@@ -235,7 +235,7 @@ export function createOpenAIAdapter() {
 
             if (request.quality) payload.quality = request.quality;
 
-            const headers = buildHeaders(apiKey);
+            const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/videos/generations`, {
                 method: 'POST',
                 headers,
@@ -257,8 +257,8 @@ export function createOpenAIAdapter() {
          * List available models.
          */
         async listModels(modelConfig) {
-            const { endpoint, apiKey } = modelConfig;
-            const headers = buildHeaders(apiKey);
+            const { endpoint, apiKey, headers: customHeaders } = modelConfig;
+            const headers = buildHeaders(apiKey, {}, customHeaders);
 
             const res = await httpRequest(`${endpoint}/models`, { headers });
             const data = await res.json();
@@ -304,8 +304,8 @@ export function createOpenAIAdapter() {
     };
 }
 
-function buildHeaders(apiKey, extra = {}) {
-    const headers = { ...extra };
+function buildHeaders(apiKey, extra = {}, custom = {}) {
+    const headers = { ...extra, ...custom };
     if (apiKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
     }

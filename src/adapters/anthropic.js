@@ -116,9 +116,6 @@ export function createAnthropicAdapter() {
                 body.tool_choice = { type: 'tool', name: 'generate_response' };
             }
 
-            console.log('[AnthropicAdapter] Sending request to:', `${endpoint}/v1/messages`);
-            console.log('[AnthropicAdapter] Model:', model);
-
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
                 headers: buildHeaders(apiKey),
@@ -153,8 +150,6 @@ export function createAnthropicAdapter() {
 
             if (systemPrompt) body.system = systemPrompt;
             if (typeof request.temperature === 'number') body.temperature = request.temperature;
-
-            console.log('[AnthropicAdapter] Streaming request to:', `${endpoint}/v1/messages`);
 
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',

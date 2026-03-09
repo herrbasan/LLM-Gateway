@@ -45,18 +45,120 @@ export function createKimiCliAdapter() {
          * Streaming chat completion.
          */
         async *streamComplete(modelConfig, request) {
-            const result = await this.chatComplete(modelConfig, request);
+            const { adapterModel, timeout } = modelConfig;
+            const model = adapterModel || 'kimi-k2.5';
+            const cliTimeout = timeout || 120000;
 
+            const messages = buildMessages(request.systemPrompt, request.messages, request.prompt, request.schema);
+
+            // We use the same runKimiCli stream approach, but intercept the stdout
+            const inputLines = messages.map(m => JSON.stringify(m)).join('\n') + '\n\n';
+
+            const args = [
+                '--print',
+                '--input-format', 'stream-json',
+                '--output-format', 'stream-json'
+                // Removed --final-message-only so it might stream progressively
+            ];
+
+            const child = spawn('kimi', args, {
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+                timeout: cliTimeout,
+                shell: false
+            });
+
+            console.log('[kimi-cli] Spawned process with args:', args.join(' '));
+
+            child.stdin.write(inputLines);
+            child.stdin.end();
+
+            const streamId = `kimi-cli-${Date.now()}`;
+            let lastContent = '';
+            
+            // Read stream chunk by chunk manually
+            try {
+                let buffer = '';
+                
+                // Wrap stream in iterator to properly yield chunks
+                for await (const chunk of child.stdout) {
+                    buffer += chunk.toString('utf-8');
+                    
+                    if (process.env.DEBUG_KIMI_CLI === '1') {
+                         console.log('[kimi-cli][stdout]', chunk.toString('utf-8'));
+                    }
+
+                    // Process all complete lines in the buffer
+                    let newlineIndex;
+                    while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+                        const line = buffer.substring(0, newlineIndex).trim();
+                        buffer = buffer.substring(newlineIndex + 1);
+                        
+                        if (!line) continue;
+
+                        try {
+                            const msg = JSON.parse(line);
+                            
+                            // If Kimi emits tool operations inside the stream, we can log them but we shouldn't fail
+                            if (msg.role === 'tool' || msg.role === 'user') {
+                                continue; 
+                            }
+                            
+                            if (msg.role === 'assistant' && msg.content) {
+                                let newContent = '';
+                                
+                                // Handling when 'content' is an array of objects
+                                if (Array.isArray(msg.content)) {
+                                    for (const block of msg.content) {
+                                        if (block.type === 'think' && block.think) {
+                                            newContent += `<think>\n${block.think}\n</think>\n`;
+                                        } else if (block.type === 'text' && block.text) {
+                                            newContent += block.text;
+                                        }
+                                    }
+                                } else {
+                                    newContent = msg.content;
+                                }
+
+                                if (newContent.startsWith(lastContent)) {
+                                    const diff = newContent.slice(lastContent.length);
+                                    if (diff) {
+                                        yield {
+                                            id: streamId,
+                                            object: 'chat.completion.chunk',
+                                            created: Math.floor(Date.now() / 1000),
+                                            model,
+                                            choices: [{ index: 0, delta: { content: diff } }]
+                                        };
+                                    }
+                                } else {
+                                    yield {
+                                        id: streamId,
+                                        object: 'chat.completion.chunk',
+                                        created: Math.floor(Date.now() / 1000),
+                                        model,
+                                        choices: [{ index: 0, delta: { content: newContent } }]
+                                    };
+                                }
+                                lastContent = newContent;
+                            }
+                        } catch (e) {
+                            // incomplete or invalid JSON on this line
+                        }
+                    }
+                }
+            } finally {
+                if (!child.killed) {
+                    child.kill();
+                }
+            }
+
+            // Yield stop
             yield {
-                id: result.id,
+                id: streamId,
                 object: 'chat.completion.chunk',
-                created: result.created,
-                model: result.model,
-                choices: [{
-                    index: 0,
-                    delta: { content: result.choices[0].message.content },
-                    finish_reason: 'stop'
-                }]
+                created: Math.floor(Date.now() / 1000),
+                model,
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
             };
         },
 
@@ -114,7 +216,8 @@ export function createKimiCliAdapter() {
 }
 
 async function runKimiCli(messages, isJsonMode, timeout) {
-    const inputLines = messages.map(m => JSON.stringify(m)).join('\n');
+    // Add two newlines to ensure stream-json parser hits an empty line and/or EOF properly
+    const inputLines = messages.map(m => JSON.stringify(m)).join('\n') + '\n\n';
 
     if (process.env.DEBUG_KIMI_CLI === '1') {
         console.error(`[kimi-cli] Messages count: ${messages.length}`);
@@ -148,11 +251,6 @@ async function runKimiCli(messages, isJsonMode, timeout) {
             const output = Buffer.concat(stdout).toString('utf-8').trim();
             const errors = Buffer.concat(stderr).toString('utf-8').trim();
 
-            if (code !== 0) {
-                reject(new Error(`Kimi CLI exited ${code}: ${errors || output}`));
-                return;
-            }
-
             const lines = output.split('\n').filter(l => l.trim());
             let lastAssistantContent = '';
 
@@ -160,11 +258,60 @@ async function runKimiCli(messages, isJsonMode, timeout) {
                 try {
                     const msg = JSON.parse(line);
                     if (msg.role === 'assistant' && msg.content) {
-                        lastAssistantContent = msg.content;
+                        if (Array.isArray(msg.content)) {
+                            let text = '';
+                            for (const block of msg.content) {
+                                if (block.type === 'think' && block.think) {
+                                    text += `<think>\n${block.think}\n</think>\n`;
+                                } else if (block.type === 'text' && block.text) {
+                                    text += block.text;
+                                }
+                            }
+                            lastAssistantContent = text;
+                        } else {
+                            lastAssistantContent = msg.content;
+                        }
                     }
                 } catch {
                     // Skip invalid JSON lines
                 }
+            }
+
+            // Fallback: if JSON parse failed (e.g. multi-line output or crash truncation)
+            if (!lastAssistantContent && output) {
+                try {
+                    const parsedAll = JSON.parse(output);
+                    if (parsedAll.role === 'assistant' && parsedAll.content) {
+                        lastAssistantContent = parsedAll.content;
+                    }
+                } catch {
+                    // Try to regex extract content
+                    const contentMatch = output.match(/"content"\s*:\s*"([\s\S]*?)"\s*\}/);
+                    if (contentMatch) {
+                        try {
+                            lastAssistantContent = JSON.parse(`{"c": "${contentMatch[1]}"}`).c;
+                        } catch {
+                            // Leave it empty
+                        }
+                    } else {
+                        // Last resort for brutally truncated JSON string
+                        const partialMatch = output.match(/"content"\s*:\s*"([\s\S]*)/);
+                        if (partialMatch) {
+                            // It's truncated, so unescape as much as we can safely
+                            lastAssistantContent = partialMatch[1]
+                                .replace(/\\n/g, '\n')
+                                .replace(/\\"/g, '"')
+                                .replace(/\\\\/g, '\\')
+                                .replace(/\}$/, '')
+                                .replace(/"$/, '');
+                        }
+                    }
+                }
+            }
+
+            if (code !== 0 && !lastAssistantContent) {
+                reject(new Error(`Kimi CLI exited ${code}: ${errors || output.slice(-200)}`));
+                return;
             }
 
             resolve(lastAssistantContent || output);
@@ -183,22 +330,32 @@ function buildMessages(systemPrompt, messages, prompt, schema) {
         msgs.push({ role: 'system', content: systemPrompt });
     }
 
+    // Squash chat history into a single user prompt because the Kimi CLI
+    // treats every incoming stdin {"role":"user"} message as an execution trigger!
+    let squashedContent = '';
+
     if (messages && Array.isArray(messages)) {
-        for (const msg of messages) {
-            if (msg.role === 'system' && systemPrompt) continue;
-            msgs.push({ role: msg.role, content: msg.content });
+        const historyMessages = messages.filter(m => m.role !== 'system' && m.content !== prompt);
+        
+        if (historyMessages.length > 0) {
+            squashedContent += '=== PREVIOUS CONVERSATION HISTORY ===\n';
+            for (const msg of historyMessages) {
+                const roleCapitalized = msg.role.charAt(0).toUpperCase() + msg.role.slice(1);
+                squashedContent += `${roleCapitalized}: ${msg.content}\n\n`;
+            }
+            squashedContent += '=== CURRENT PROMPT ===\n';
         }
     }
 
-    if (prompt && !messages?.some(m => m.content === prompt)) {
-        msgs.push({ role: 'user', content: prompt });
+    if (prompt) {
+        squashedContent += prompt;
     }
 
-    if (schema) {
-        const lastMsg = msgs[msgs.length - 1];
-        if (lastMsg) {
-            lastMsg.content += '\n\nRespond with valid JSON only.';
+    if (squashedContent) {
+        if (schema) {
+            squashedContent += '\n\nRespond with valid JSON only.';
         }
+        msgs.push({ role: 'user', content: squashedContent.trim() });
     }
 
     return msgs;

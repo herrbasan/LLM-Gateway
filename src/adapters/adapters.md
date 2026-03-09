@@ -100,27 +100,65 @@ When targeting `https://api.z.ai/api/paas/v4/chat/completions`:
 - **Thinking Chains:** Native deep reasoning flag architectures are triggered globally in GLM 4.5+ through custom payload markers that function identically.
 - **Token Constraints:** Capable of immense single-call output lengths up to 131,072.
 
-### D. Moonshot Kimi Specifics
-**Official Docs:** [https://www.kimi.com/code/docs/en/](https://www.kimi.com/code/docs/en/)
+### D. Moonshot Kimi / Kimi Code Specifics
 
-The Gateway supports Kimi via the **Kimi CLI** adapter (`type: "kimi-cli"`), which spawns the local `kimi` command-line tool. This bypasses the API restrictions that limit the HTTP API to specific coding agents.
+There are **two separate services** for accessing Kimi models:
 
-**Prerequisites:** Install the Kimi CLI: `pip install kimi-cli` and authenticate with `kimi auth`
+#### 1. Kimi Code (Coding Subscription)
+**Website:** [kimi.com/code](https://kimi.com/code)  
+**Endpoint:** `https://api.kimi.com/coding/v1`
+
+Coding-agent focused subscription with OpenAI-compatible HTTP API. Uses a dedicated `kimi` adapter that handles Kimi-specific requirements.
 
 **Configuration:**
 ```json
 {
-  "type": "kimi-cli",
-  "command": "kimi",
-  "model": "kimi-k2.5"
+  "type": "chat",
+  "adapter": "kimi",
+  "endpoint": "https://api.kimi.com/coding/v1",
+  "apiKey": "${KIMI_API_KEY}",
+  "adapterModel": "kimi-k2.5",
+  "capabilities": {
+    "contextWindow": 256000,
+    "structuredOutput": true,
+    "streaming": true
+  }
 }
 ```
 
-- **Local Execution:** The CLI runs locally with your authenticated credentials
-- **Model Support:** `kimi-k2.5` (default), `kimi-k2-thinking-turbo`
-- **Context Window:** 256K tokens
-- **No Streaming:** The CLI adapter returns complete responses (simulated streaming for compatibility)
-- **Structured Output:** JSON extraction from markdown code blocks is supported
+- **Full conversation history** via native `messages` array
+- Native streaming and structured output support
+- **Automatic handling** of Kimi-specific requirements:
+  - Sets required `User-Agent: Kilo-Code/1.0` header
+  - Wraps `reasoning_content` in `<think>` tags for consistent handling with other reasoning models
+  - Works with gateway's thinking stripper to filter out reasoning when configured
+
+**Model Support:** `kimi-k2.5`, `kimi-k2-thinking-turbo`
+
+#### 2. Moonshot Open Platform (General API)
+**Website:** [platform.moonshot.cn](https://platform.moonshot.cn/)  
+**Docs:** [https://platform.moonshot.cn/docs](https://platform.moonshot.cn/docs)
+
+General-purpose API access to Kimi models. Separate from Kimi Code - different account, different API keys.
+
+**Configuration:**
+```json
+{
+  "type": "chat",
+  "adapter": "openai",
+  "endpoint": "https://api.moonshot.cn/v1",
+  "apiKey": "${MOONSHOT_API_KEY}",
+  "adapterModel": "kimi-k2.5",
+  "capabilities": {
+    "contextWindow": 256000,
+    "structuredOutput": true,
+    "streaming": true
+  }
+}
+```
+
+#### 3. Kimi CLI (Legacy)
+**Note:** The `kimi-cli` adapter exists for legacy CLI-based access but is **not recommended** for new setups. The HTTP API provides better conversation history handling and native streaming.
 
 ### E. Alibaba Cloud Qwen (DashScope) Specifics
 **Official Docs:** [https://www.alibabacloud.com/help/en/model-studio/getting-started/what-is-model-studio](https://www.alibabacloud.com/help/en/model-studio/getting-started/what-is-model-studio)
@@ -159,5 +197,6 @@ Obtain API keys from the [Alibaba Cloud Model Studio Console](https://modelstudi
 | Grok | `openai` | `api.x.ai/v1` | ❌ | ✅ | ✅ |
 | MiniMax | `minimax` | `api.minimax.io/anthropic` | ❌ | ❌ | ✅ |
 | GLM | `openai` | `api.z.ai/api/paas/v4` | ❌ | ✅ | ✅ |
-| Kimi | `kimi-cli` | Local CLI | ❌ | Simulated | ❌ |
+| Kimi Code | `kimi` | `api.kimi.com/coding/v1` | ❌ | ✅ | ✅ |
+| Kimi Platform | `openai` | `api.moonshot.cn/v1` | ❌ | ✅ | ✅ |
 | Qwen | `openai` | `dashscope-intl.aliyuncs.com/compatible-mode/v1` | ❌ | ✅ | ✅ |
