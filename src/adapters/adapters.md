@@ -128,6 +128,7 @@ Coding-agent focused subscription with OpenAI-compatible HTTP API. Uses a dedica
 
 - **Full conversation history** via native `messages` array
 - Native streaming and structured output support
+- **Vision support** - Base64-encoded images only (URLs must be fetched/converted by client)
 - **Automatic handling** of Kimi-specific requirements:
   - Sets required `User-Agent: Kilo-Code/1.0` header
   - Wraps `reasoning_content` in `<think>` tags for consistent handling with other reasoning models
@@ -197,6 +198,8 @@ Obtain API keys from the [Alibaba Cloud Model Studio Console](https://modelstudi
 | Grok | `openai` | `api.x.ai/v1` | ❌ | ✅ | ✅ |
 | MiniMax | `minimax` | `api.minimax.io/anthropic` | ❌ | ❌ | ✅ |
 | GLM | `openai` | `api.z.ai/api/paas/v4` | ❌ | ✅ | ✅ |
-| Kimi Code | `kimi` | `api.kimi.com/coding/v1` | ❌ | ✅ | ✅ |
+| Kimi Code | `kimi` | `api.kimi.com/coding/v1` | ❌ | ✅ | ✅* |
 | Kimi Platform | `openai` | `api.moonshot.cn/v1` | ❌ | ✅ | ✅ |
 | Qwen | `openai` | `dashscope-intl.aliyuncs.com/compatible-mode/v1` | ❌ | ✅ | ✅ |
+
+\* *Kimi Code vision requires base64-encoded images; image URLs are not supported directly*

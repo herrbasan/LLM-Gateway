@@ -10,6 +10,35 @@ export function createKimiAdapter() {
         name: 'kimi',
 
         /**
+         * Format messages for Kimi API - handles vision content.
+         */
+        function formatMessages(messages) {
+            if (!messages) return [];
+            return messages.map(m => {
+                // Handle array content (vision messages)
+                if (Array.isArray(m.content)) {
+                    return {
+                        role: m.role,
+                        content: m.content.map(part => {
+                            if (part.type === 'image_url') {
+                                // Kimi requires base64 images, not URLs
+                                const url = part.image_url?.url || part.image_url;
+                                if (url?.startsWith('data:')) {
+                                    // Already base64
+                                    return { type: 'image_url', image_url: { url } };
+                                }
+                                // URL not supported - would need fetching/converting
+                                return { type: 'text', text: `[Image: ${url}]` };
+                            }
+                            return part;
+                        })
+                    };
+                }
+                return m;
+            });
+        }
+
+        /**
          * Chat completion.
          */
         async chatComplete(modelConfig, request) {
@@ -18,7 +47,7 @@ export function createKimiAdapter() {
 
             const payload = {
                 model,
-                messages: request.messages || [],
+                messages: formatMessages(request.messages || []),
                 stream: false
             };
 
@@ -74,7 +103,7 @@ export function createKimiAdapter() {
 
             const payload = {
                 model,
-                messages: request.messages || [],
+                messages: formatMessages(request.messages || []),
                 stream: true
             };
 
