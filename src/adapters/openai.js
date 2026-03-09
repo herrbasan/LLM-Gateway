@@ -139,15 +139,20 @@ export function createOpenAIAdapter() {
          * Generate image.
          */
         async generateImage(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
 
             const payload = {
                 model: adapterModel || 'dall-e-3',
                 prompt: request.prompt,
                 n: request.n || 1,
-                size: request.size || '1024x1024',
                 response_format: 'b64_json'
             };
+
+            // Only include size if the model supports it (xAI doesn't support this parameter)
+            const supportsSize = capabilities?.supportsSizeParameter !== false;
+            if (supportsSize) {
+                payload.size = request.size || '1024x1024';
+            }
 
             const headers = buildHeaders(apiKey);
             const res = await httpRequest(`${endpoint}/images/generations`, {
@@ -175,12 +180,22 @@ export function createOpenAIAdapter() {
          * Synthesize speech.
          */
         async synthesizeSpeech(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
+
+            // Validate voice if supportedVoices is defined
+            const supportedVoices = capabilities?.supportedVoices;
+            let voice = request.voice || 'alloy';
+            
+            if (supportedVoices && supportedVoices.length > 0) {
+                if (!supportedVoices.includes(voice)) {
+                    throw new Error(`[OpenAIAdapter] Voice '${voice}' is not supported. Use one of: ${supportedVoices.join(', ')}`);
+                }
+            }
 
             const payload = {
                 model: adapterModel || 'tts-1',
                 input: request.input,
-                voice: request.voice || 'alloy',
+                voice,
                 response_format: request.response_format || 'mp3'
             };
 

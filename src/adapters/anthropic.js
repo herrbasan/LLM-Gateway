@@ -126,7 +126,6 @@ export function createAnthropicAdapter() {
             });
 
             const data = await res.json();
-            console.log('[AnthropicAdapter] Response:', data);
 
             if (data.error) {
                 throw new Error(`Anthropic API Error: ${data.error.message}`);

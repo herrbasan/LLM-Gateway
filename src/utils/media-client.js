@@ -1,4 +1,7 @@
 import { request } from './http.js';
+import { createSafeLogger } from './safe-logger.js';
+
+const logger = createSafeLogger('[MediaProcessor]');
 
 /**
  * Provider-specific vision limits
@@ -171,7 +174,7 @@ export class MediaProcessorClient {
 
         const { maxDimension, format, quality = 85 } = options;
 
-        console.log(`[MediaProcessor] Processing: maxDimension=${maxDimension}, format=${format}, quality=${quality}`);
+        logger.info(`Processing: maxDimension=${maxDimension}, format=${format}, quality=${quality}`);
 
         const endpoint = `${this.config.endpoint}/v1/optimize/image`;
         try {
@@ -198,7 +201,7 @@ export class MediaProcessorClient {
             });
             
             if (!res.ok) {
-                console.warn(`[MediaProcessor] Failed to process image. Status: ${res.status}`);
+                logger.warn(`Failed to process image. Status: ${res.status}`);
                 return base64Data; // fallback to original
             }
 
@@ -209,7 +212,7 @@ export class MediaProcessorClient {
             return base64Data;
             
         } catch (error) {
-            console.error(`[MediaProcessor] Error communicating with media-processor node:`, error.message);
+            logger.error(`Error communicating with media-processor node:`, { message: error.message, code: error.code });
             return base64Data; // Fail gracefully by returning original
         }
     }

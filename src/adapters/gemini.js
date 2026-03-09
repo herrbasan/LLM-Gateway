@@ -176,10 +176,57 @@ export function createGeminiAdapter() {
         },
 
         /**
-         * Generate image (Gemini doesn't support this natively, but for interface consistency).
+         * Generate image using Imagen models.
          */
         async generateImage(modelConfig, request) {
-            throw new Error('[GeminiAdapter] Image generation not supported');
+            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const model = adapterModel || 'imagen-4.0-generate-001';
+
+            if (!apiKey) {
+                throw new Error('[GeminiAdapter] apiKey is required for image generation');
+            }
+
+            const payload = {
+                instances: [{ prompt: request.prompt }],
+                parameters: {
+                    sampleCount: request.n || 1,
+                    aspectRatio: request.size ? mapSizeToAspectRatio(request.size) : '1:1'
+                }
+            };
+
+            const res = await httpRequest(`${endpoint}/models/${model}:predict?key=${apiKey}`, {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+            
+            if (data.error) {
+                throw new Error(`Gemini Imagen Error: ${data.error.message}`);
+            }
+
+            // Extract base64 encoded images from response
+            // Imagen returns predictions array with bytesBase64Encoded field
+            const predictions = data.predictions || [];
+            const images = predictions.map((pred, index) => {
+                const b64 = pred.bytesBase64Encoded || pred.base64Encoded || pred.base64;
+                if (!b64) {
+                    console.warn('[GeminiAdapter] No base64 data in prediction:', Object.keys(pred));
+                }
+                return {
+                    b64_json: b64,
+                    index: index
+                };
+            }).filter(img => img.b64_json);
+
+            if (images.length === 0) {
+                throw new Error('[GeminiAdapter] No image data returned from Imagen');
+            }
+
+            return {
+                created: Math.floor(Date.now() / 1000),
+                data: images
+            };
         },
 
         /**
@@ -229,10 +276,55 @@ export function createGeminiAdapter() {
         },
 
         /**
-         * Generate video (Gemini doesn't support this natively).
+         * Generate video using Veo models.
          */
         async generateVideo(modelConfig, request) {
-            throw new Error('[GeminiAdapter] Video generation not supported');
+            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const model = adapterModel || 'veo-3.1-generate-preview';
+
+            if (!apiKey) {
+                throw new Error('[GeminiAdapter] apiKey is required for video generation');
+            }
+
+            const payload = {
+                instances: [{
+                    prompt: request.prompt
+                }],
+                parameters: {
+                    aspectRatio: request.size ? mapSizeToAspectRatio(request.size) : '16:9',
+                    durationSeconds: request.duration || 8
+                }
+            };
+
+            // Add image if provided (for image-to-video)
+            if (request.image) {
+                payload.instances[0].image = {
+                    bytesBase64Encoded: request.image.b64_json || request.image
+                };
+            }
+
+            const res = await httpRequest(`${endpoint}/models/${model}:predict?key=${apiKey}`, {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+
+            if (data.error) {
+                throw new Error(`Gemini Veo Error: ${data.error.message}`);
+            }
+
+            // Veo returns an operation that needs polling
+            const operation = data.name;
+            if (!operation) {
+                throw new Error('[GeminiAdapter] No operation returned from Veo');
+            }
+
+            return {
+                operation: operation,
+                status: 'pending',
+                created: Math.floor(Date.now() / 1000)
+            };
         },
 
         /**
@@ -280,6 +372,27 @@ export function createGeminiAdapter() {
                 });
         }
     };
+}
+
+/**
+ * Map OpenAI-style size strings to Imagen aspect ratios.
+ * @param {string} size - Size string like "1024x1024", "1024x1536", etc.
+ * @returns {string} Imagen aspect ratio like "1:1", "2:3", etc.
+ */
+function mapSizeToAspectRatio(size) {
+    const [width, height] = size.split('x').map(Number);
+    if (!width || !height) return '1:1';
+    
+    const ratio = width / height;
+    if (Math.abs(ratio - 1) < 0.1) return '1:1';
+    if (Math.abs(ratio - 0.75) < 0.1) return '3:4';
+    if (Math.abs(ratio - 1.33) < 0.1) return '4:3';
+    if (Math.abs(ratio - 0.67) < 0.1) return '2:3';
+    if (Math.abs(ratio - 1.5) < 0.1) return '3:2';
+    if (Math.abs(ratio - 0.56) < 0.1) return '9:16';
+    if (Math.abs(ratio - 1.78) < 0.1) return '16:9';
+    
+    return '1:1'; // Default
 }
 
 // Helper functions

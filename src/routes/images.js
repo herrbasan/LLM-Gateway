@@ -14,7 +14,17 @@ export function createImagesHandler(router) {
             }
 
             const result = await router.routeImageGeneration(req.body);
-            return res.status(200).json(result);
+            
+            // Defensive: Ensure we're sending a clean copy, not a reference that could be mutated
+            // This prevents any accidental mutation from logging or other side effects
+            const responseData = JSON.parse(JSON.stringify(result));
+            
+            // Debug: Verify the response contains actual base64 data, not sanitized placeholders
+            if (responseData?.data?.[0]?.b64_json?.includes('[BINARY_DATA]')) {
+                logger.error('[ImagesHandler] CRITICAL: Response contains sanitized placeholder instead of actual data');
+            }
+            
+            return res.status(200).json(responseData);
         } catch (err) {
             next(err);
         }
