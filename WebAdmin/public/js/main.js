@@ -31,7 +31,6 @@ const navigationData = [
         items: [
             { label: 'Chat', href: '#page=models-chat' },
             { label: 'Image', href: '#page=models-image' },
-            { label: 'Video', href: '#page=models-video' },
             { label: 'Audio', href: '#page=models-audio' }
         ]
     },
@@ -44,8 +43,7 @@ const navigationData = [
             { label: 'Embeddings', href: '#page=test-embeddings' },
             { label: 'Compaction', href: '#page=test-compaction' },
             { label: 'Image Generation', href: '#page=test-images' },
-            { label: 'Audio Speech', href: '#page=test-audio' },
-            { label: 'Video Generation', href: '#page=test-video' }
+            { label: 'Audio Speech', href: '#page=test-audio' }
         ]
     },
     {
