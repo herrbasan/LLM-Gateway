@@ -15,6 +15,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/NUI', express.static(path.join(__dirname, 'lib/nui_wc2/NUI')));
 
+
 // API routes
 app.use('/api', require('./routes/api'));
 

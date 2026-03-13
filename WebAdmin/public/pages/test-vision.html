@@ -41,7 +41,7 @@
         <div class="form-group hidden" id="url-section">
             <label for="image-url">Image URL</label>
             <nui-input>
-                <input type="url" id="image-url" name="image-url" placeholder="https://example.com/image.jpg">
+                <input type="text" id="image-url" name="image-url" placeholder="https://example.com/image.jpg" value="/images/audi_plaza.jpg">
             </nui-input>
             <small class="text-dim">The gateway will fetch and process the image</small>
         </div>
@@ -64,13 +64,13 @@
             
             <div class="form-group" style="margin-top: var(--nui-space);">
                 <nui-checkbox>
-                    <input type="checkbox" id="enable-processing" name="enable-processing">
+                    <input type="checkbox" id="enable-processing" name="enable-processing" checked>
                     <label for="enable-processing">Enable image processing</label>
                 </nui-checkbox>
-                <small class="text-dim">Resize and/or transcode images via MediaService</small>
+                <small class="text-dim">Resize and transcode images to optimize for model limits</small>
             </div>
             
-            <div id="processing-options" class="processing-options hidden">
+            <div id="processing-options" class="processing-options">
                 <div class="form-group">
                     <label for="processing-resize">Resize</label>
                     <nui-select>
@@ -89,8 +89,8 @@
                     <label for="processing-transcode">Transcode Format</label>
                     <nui-select>
                         <select id="processing-transcode" name="processing-transcode">
+                            <option value="jpg" selected>JPEG (smaller, lossy)</option>
                             <option value="">Keep original</option>
-                            <option value="jpg">JPEG (smaller, lossy)</option>
                             <option value="png">PNG (lossless, larger)</option>
                             <option value="webp">WebP (modern, efficient)</option>
                         </select>
@@ -154,7 +154,8 @@ function init(element, params) {
     const qualityValue = element.querySelector('#quality-value');
 
     function isVisionCapable(model) {
-        return !!model?.capabilities?.vision;
+        // Only show chat models with vision capability
+        return model?.type === 'chat' && !!model?.capabilities?.vision;
     }
     
     let currentImageData = null;
@@ -231,6 +232,18 @@ function init(element, params) {
         fileName.textContent = 'No file selected';
     });
     
+    // Trigger preview if URL is pre-filled (default test image)
+    if (imageUrl.value.trim()) {
+        // Switch to URL tab and show preview
+        useUrlMode = true;
+        tabUrl.classList.add('tab-active');
+        tabUpload.classList.remove('tab-active');
+        urlSection.classList.remove('hidden');
+        uploadSection.classList.add('hidden');
+        imagePreview.src = imageUrl.value;
+        previewPanel.hidden = false;
+    }
+    
     // Image processing options toggle
     enableProcessing.addEventListener('change', () => {
         if (enableProcessing.checked) {
@@ -244,6 +257,9 @@ function init(element, params) {
     qualitySlider.addEventListener('input', () => {
         qualityValue.textContent = qualitySlider.value;
     });
+    
+    // Initialize processing options visibility (enabled by default)
+    processingOptions.classList.remove('hidden');
     
     // Populate models when loaded
     function updateModels() {
@@ -346,12 +362,37 @@ function init(element, params) {
             let imageContent;
             
             if (useUrlMode) {
-                const url = imageUrl.value.trim();
+                let url = imageUrl.value.trim();
                 if (!url) {
                     alert('Please enter an image URL');
                     return;
                 }
-                imageContent = { type: 'image_url', image_url: { url, detail } };
+                
+                // For local/relative URLs, fetch and convert to base64
+                // (gateway blocks private IPs for security)
+                if (url.startsWith('/')) {
+                    url = window.location.origin + url;
+                }
+                
+                const isLocalUrl = url.startsWith(window.location.origin);
+                if (isLocalUrl) {
+                    responseContent.textContent = 'Loading image...';
+                    try {
+                        const response = await fetch(url);
+                        const blob = await response.blob();
+                        const base64 = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                        imageContent = { type: 'image_url', image_url: { url: base64, detail } };
+                    } catch (err) {
+                        throw new Error(`Failed to load local image: ${err.message}`);
+                    }
+                } else {
+                    imageContent = { type: 'image_url', image_url: { url, detail } };
+                }
             } else {
                 if (!currentImageData) {
                     alert('Please select an image file');
