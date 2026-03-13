@@ -49,7 +49,8 @@ function init(element, params) {
     const modelSelect = element.querySelector('#model');
 
     function isChatCapable(model) {
-        return model?.capabilities?.chat !== false;
+        // Only show models with explicit type='chat'
+        return model?.type === 'chat';
     }
     
     // Populate models when loaded

@@ -172,7 +172,7 @@ Main chat completion endpoint. Supports both streaming and non-streaming respons
 }
 ```
 
-> **Image Processing:** The `image_processing` field is optional. When provided, images in messages are fetched (remote URLs) and optionally resized/transcoded via MediaService. Options: `resize: 'auto'|'low'|'high'|number`, `transcode: 'jpg'|'png'|'webp'`, `quality: 1-100`.
+> **Image Processing:** The `image_processing` field is optional. When provided, images in messages are fetched (remote URLs) and optionally resized/transcoded via MediaService. See [Vision (Image Input)](#vision-image-input) for complete examples.
 
 **Response 200 (Small Prompt or Transparent Compaction):**
 
@@ -619,6 +619,79 @@ data: {"ticket":"tkt_abc123","status":"complete"}
 | Structured output | `response_format: { type: "json_schema" }` — routed only to models with `structuredOutput` capability |
 | Token constraints | `max_tokens` respected by all adapters |
 | Image processing | `image_processing: { resize, transcode, quality }` for automatic optimization |
+
+### Vision (Image Input)
+
+Send images to vision-capable models using OpenAI-compatible format.
+
+**Basic Vision Request:**
+
+```json
+POST /v1/chat/completions
+{
+  "model": "gemini-flash",
+  "messages": [{
+    "role": "user",
+    "content": [
+      { "type": "text", "text": "What's in this image?" },
+      {
+        "type": "image_url",
+        "image_url": {
+          "url": "https://example.com/image.jpg",
+          "detail": "auto"
+        }
+      }
+    ]
+  }]
+}
+```
+
+**With Base64 Image:**
+
+```json
+{
+  "model": "gemini-flash",
+  "messages": [{
+    "role": "user",
+    "content": [
+      { "type": "text", "text": "Describe this image" },
+      {
+        "type": "image_url",
+        "image_url": {
+          "url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
+        }
+      }
+    ]
+  }]
+}
+```
+
+**With Image Processing:**
+
+```json
+{
+  "model": "gemini-flash",
+  "messages": [...],
+  "image_processing": {
+    "resize": "auto",
+    "transcode": "jpg",
+    "quality": 85
+  }
+}
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `detail` | `"auto"` (default), `"low"` (512px), `"high"` (max resolution) |
+| `resize` | `"auto"` (model limit), `"low"` (512px), `"high"` (max), or number (max pixels) |
+| `transcode` | `"jpg"`, `"png"`, `"webp"` - converts image format |
+| `quality` | 1-100, for lossy formats (default: 85) |
+
+**Notes:**
+- The gateway fetches remote URLs automatically
+- Private IP addresses are blocked for security - use base64 for local images
+- MediaService resizes while preserving aspect ratio
+- Only models with `capabilities.vision: true` support image inputs
 
 ### Media Generation
 
