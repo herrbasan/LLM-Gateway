@@ -43,7 +43,7 @@
         <div class="form-group">
             <label for="input">Speech Input</label>
             <nui-textarea>
-                <textarea id="input" name="input" rows="4" placeholder="Welcome to LLM Gateway WebAdmin live audio test."></textarea>
+                <textarea id="input" name="input" rows="4" placeholder="Enter text to convert to speech...">Welcome to LLM Gateway. This is a test of the text to speech capabilities. The quick brown fox jumps over the lazy dog.</textarea>
             </nui-textarea>
         </div>
 
@@ -86,7 +86,8 @@ function init(element) {
     }
 
     function isTtsCapable(model) {
-        return model?.type === 'audio';
+        // Only show audio models with explicit TTS capability
+        return model?.type === 'audio' && !!model?.capabilities?.tts;
     }
 
     function cleanupAudioUrl() {

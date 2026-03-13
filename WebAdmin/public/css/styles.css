@@ -453,6 +453,13 @@ nui-link-list[mode="fold"] li.list-item a {
     border-radius: var(--nui-radius);
 }
 
+.image-preview {
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--nui-border);
+    border-radius: var(--nui-radius);
+}
+
 .audio-player {
     width: 100%;
     margin-bottom: var(--nui-space-half);
