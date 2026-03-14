@@ -31,7 +31,8 @@ const navigationData = [
         items: [
             { label: 'Chat', href: '#page=models-chat' },
             { label: 'Image', href: '#page=models-image' },
-            { label: 'Audio', href: '#page=models-audio' }
+            { label: 'Audio', href: '#page=models-audio' },
+            { label: 'Embedding', href: '#page=models-embedding' }
         ]
     },
     {

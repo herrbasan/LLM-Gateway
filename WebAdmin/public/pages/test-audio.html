@@ -19,12 +19,7 @@
                 <label for="voice">Voice</label>
                 <nui-select>
                     <select id="voice" name="voice">
-                        <option value="alloy">alloy (Default)</option>
-                        <option value="echo">echo</option>
-                        <option value="fable">fable</option>
-                        <option value="onyx">onyx</option>
-                        <option value="nova">nova</option>
-                        <option value="shimmer">shimmer</option>
+                        <option value="">Select a model first...</option>
                     </select>
                 </nui-select>
             </div>
@@ -88,6 +83,36 @@ function init(element) {
     function isTtsCapable(model) {
         // Only show audio models with explicit TTS capability
         return model?.type === 'audio' && !!model?.capabilities?.tts;
+    }
+
+    function updateVoiceOptions(modelId) {
+        const voiceSelect = element.querySelector('#voice');
+        const audioModels = window.modelsService?.getModelsByType?.('audio') || {};
+        const model = audioModels[modelId];
+        const supportedVoices = model?.capabilities?.supportedVoices;
+        
+        voiceSelect.innerHTML = '';
+        
+        if (supportedVoices && supportedVoices.length > 0) {
+            // Use model-specific voices
+            for (const voice of supportedVoices) {
+                const option = document.createElement('option');
+                option.value = voice;
+                option.textContent = voice;
+                voiceSelect.appendChild(option);
+            }
+        } else {
+            // Default OpenAI voices
+            const defaultVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
+            for (const voice of defaultVoices) {
+                const option = document.createElement('option');
+                option.value = voice;
+                option.textContent = voice === 'alloy' ? `${voice} (Default)` : voice;
+                voiceSelect.appendChild(option);
+            }
+        }
+        
+        voiceSelect.closest('nui-select')?.refresh?.();
     }
 
     function cleanupAudioUrl() {
@@ -157,6 +182,18 @@ function init(element) {
         }
 
         modelSelect.closest('nui-select')?.refresh?.();
+        
+        // Update voice options when model changes
+        modelSelect.addEventListener('change', () => {
+            if (modelSelect.value) {
+                updateVoiceOptions(modelSelect.value);
+            }
+        });
+        
+        // Initialize voice options for current selection
+        if (modelSelect.value) {
+            updateVoiceOptions(modelSelect.value);
+        }
     }
 
     form.addEventListener('submit', async (e) => {
