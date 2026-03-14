@@ -96,6 +96,14 @@
                     </nui-input-group>
                 </nui-layout>
                 
+                <div class="checkbox-vertical-align" style="margin-top: var(--nui-space);">
+                    <nui-checkbox>
+                        <input type="checkbox" id="model-disabled" name="disabled">
+                        <label>Model Disabled</label>
+                    </nui-checkbox>
+                    <span class="description">Disabled models are not available for use but remain in config</span>
+                </div>
+                
                 <fieldset class="nui-fieldset model-capabilities">
                     <legend>Capabilities</legend>
                     
@@ -227,14 +235,21 @@ function init(element, params) {
             if (caps.structuredOutput) badges.push({ icon: 'data_object', label: 'JSON' });
             
             const contextWindow = caps.contextWindow ? formatNumber(caps.contextWindow) : '-';
+            const isDisabled = config.disabled === true;
             
             return `
-                <div class="nui-card model-card" data-model-id="${escapeHtml(modelId)}">
+                <div class="nui-card model-card ${isDisabled ? 'disabled' : ''}" data-model-id="${escapeHtml(modelId)}">
                     <header class="model-card-header">
-                        <h4 class="model-card-title">${escapeHtml(modelId)}</h4>
-                        <div class="model-card-badges">
-                            ${badges.map(b => `<nui-icon name="${b.icon}" title="${b.label}"></nui-icon>`).join('')}
+                        <div class="model-card-title-section">
+                            <h4 class="model-card-title">${escapeHtml(modelId)}</h4>
+                            <div class="model-card-badges">
+                                ${badges.map(b => `<span class="model-badge">${escapeHtml(b.label)}</span>`).join('')}
+                            </div>
                         </div>
+                        <nui-checkbox title="${isDisabled ? 'Enable' : 'Disable'} model">
+                            <input type="checkbox" data-action="toggle-model" data-model-id="${escapeHtml(modelId)}" ${isDisabled ? '' : 'checked'}>
+                            <label></label>
+                        </nui-checkbox>
                     </header>
                     <div class="model-card-body">
                         <div class="model-info-row">
@@ -299,6 +314,7 @@ function init(element, params) {
             element.querySelector('#model-adapter-model').value = config.adapterModel || '';
             element.querySelector('#model-api-key').value = config.apiKey || '';
             element.querySelector('#model-timeout').value = config.timeout || '';
+            element.querySelector('#model-disabled').checked = !!config.disabled;
             
             const caps = config.capabilities || {};
             // Context window: display as kilotokens (4096 → 4)
@@ -379,6 +395,10 @@ function init(element, params) {
         const timeout = element.querySelector('#model-timeout').value;
         if (timeout) config.timeout = parseInt(timeout);
         
+        // Disabled status
+        const disabled = element.querySelector('#model-disabled').checked;
+        if (disabled) config.disabled = true;
+        
         // Image input limits
         const imgMaxDimension = element.querySelector('#img-max-dimension').value;
         const imgMaxFileSizeMB = element.querySelector('#img-max-filesize').value;
@@ -413,6 +433,29 @@ function init(element, params) {
             showBanner(`Model '${modelId}' saved successfully`, 'success');
         } catch (error) {
             showBanner(error.message || 'Failed to save model', 'error');
+        }
+    }
+    
+    async function toggleModel(modelId) {
+        const config = models[modelId];
+        if (!config) return;
+        
+        // Get checkbox state
+        const checkbox = element.querySelector(`[data-model-id="${modelId}"][data-action="toggle-model"]`);
+        const newDisabled = checkbox ? !checkbox.checked : !config.disabled;
+        const action = newDisabled ? 'disable' : 'enable';
+        
+        try {
+            await window.modelsService?.updateModel?.(modelId, {
+                ...config,
+                disabled: newDisabled
+            });
+            await loadModels();
+            showBanner(`Model '${modelId}' ${action}d`, 'success');
+        } catch (error) {
+            showBanner(error.message || `Failed to ${action} model`, 'error');
+            // Revert checkbox on error
+            if (checkbox) checkbox.checked = !newDisabled;
         }
     }
     
@@ -479,6 +522,14 @@ function init(element, params) {
             case 'dialog-close@#model-dialog':
                 closeDialog();
                 break;
+        }
+    });
+    
+    // Handle toggle checkbox changes
+    element.addEventListener('change', (e) => {
+        if (e.target.matches('[data-action="toggle-model"]')) {
+            const modelId = e.target.dataset.modelId;
+            if (modelId) toggleModel(modelId);
         }
     });
     

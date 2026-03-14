@@ -1,8 +1,8 @@
 <section>
     <header class="page-header">
         <div>
-            <h2>Image Models</h2>
-            <p class="text-dim">Configure image generation models (DALL-E, Imagen, etc.)</p>
+            <h2>Embedding Models</h2>
+            <p class="text-dim">Configure and manage text embedding models</p>
         </div>
         <nui-button variant="primary" data-action="create-model">
             <button type="button">
@@ -39,7 +39,7 @@
                 <nui-input-group>
                     <label for="model-id">Model ID</label>
                     <nui-input>
-                        <input type="text" id="model-id" name="modelId" required placeholder="e.g., my-image-model">
+                        <input type="text" id="model-id" name="modelId" required placeholder="e.g., my-embedding-model">
                     </nui-input>
                     <span class="description">Unique identifier for this model configuration</span>
                 </nui-input-group>
@@ -52,6 +52,8 @@
                                 <option value="">Select adapter...</option>
                                 <option value="openai">OpenAI Compatible</option>
                                 <option value="gemini">Google Gemini</option>
+                                <option value="ollama">Ollama</option>
+                                <option value="lmstudio">LM Studio</option>
                             </select>
                         </nui-select>
                         <span class="description">Protocol handler</span>
@@ -60,7 +62,7 @@
                     <nui-input-group>
                         <label for="model-adapter-model">Adapter Model Name</label>
                         <nui-input>
-                            <input type="text" id="model-adapter-model" name="adapterModel" placeholder="e.g., dall-e-3">
+                            <input type="text" id="model-adapter-model" name="adapterModel" placeholder="e.g., text-embedding-3-small">
                         </nui-input>
                         <span class="description">Provider's model name</span>
                     </nui-input-group>
@@ -74,42 +76,44 @@
                     <span class="description">Custom API endpoint (optional for some adapters)</span>
                 </nui-input-group>
                 
-                <nui-input-group>
-                    <label for="model-api-key">API Key</label>
-                    <nui-input>
-                        <input type="password" id="model-api-key" name="apiKey" placeholder="Enter API key" autocomplete="current-password">
-                    </nui-input>
-                    <span class="description">API key stored directly in config (config.json is gitignored)</span>
-                </nui-input-group>
+                <nui-layout columns="2" gap="var(--nui-space)">
+                    <nui-input-group>
+                        <label for="model-api-key">API Key</label>
+                        <nui-input>
+                            <input type="password" id="model-api-key" name="apiKey" placeholder="Enter API key" autocomplete="current-password">
+                        </nui-input>
+                        <span class="description">API key stored directly in config (config.json is gitignored)</span>
+                    </nui-input-group>
+                    
+                    <nui-input-group>
+                        <label for="model-timeout">Timeout (ms)</label>
+                        <nui-input>
+                            <input type="number" id="model-timeout" name="timeout" min="1000" step="1000" placeholder="60000">
+                        </nui-input>
+                        <span class="description">Request max duration</span>
+                    </nui-input-group>
+                </nui-layout>
                 
                 <fieldset class="nui-fieldset model-capabilities">
-                    <legend>Image Capabilities</legend>
+                    <legend>Capabilities</legend>
                     
                     <nui-layout columns="2" gap="var(--nui-space)">
                         <nui-input-group>
-                            <label for="cap-max-resolution">Max Resolution</label>
+                            <label for="cap-context">Context Window (tokens)</label>
                             <nui-input>
-                                <input type="text" id="cap-max-resolution" name="maxResolution" placeholder="e.g., 1024x1024">
+                                <input type="number" id="cap-context" name="contextWindow" min="1" placeholder="8192">
                             </nui-input>
-                            <span class="description">Maximum image resolution</span>
+                            <span class="description">Maximum input tokens</span>
                         </nui-input-group>
                         
                         <nui-input-group>
-                            <label for="cap-supported-formats">Supported Formats</label>
+                            <label for="cap-dimensions">Output Dimensions</label>
                             <nui-input>
-                                <input type="text" id="cap-supported-formats" name="supportedFormats" placeholder="png, jpeg, webp">
+                                <input type="number" id="cap-dimensions" name="dimensions" min="1" placeholder="1536">
                             </nui-input>
-                            <span class="description">Comma-separated list</span>
+                            <span class="description">Embedding vector size</span>
                         </nui-input-group>
                     </nui-layout>
-                    
-                    <nui-input-group>
-                        <label for="cap-max-prompt-length">Max Prompt Length</label>
-                        <nui-input>
-                            <input type="number" id="cap-max-prompt-length" name="maxPromptLength" min="1" placeholder="e.g., 4000">
-                        </nui-input>
-                        <span class="description">Maximum prompt length in characters</span>
-                    </nui-input-group>
                 </fieldset>
                 
                 <div class="checkbox-vertical-align" style="margin-top: var(--nui-space);">
@@ -147,10 +151,11 @@ function init(element, params) {
     let models = {};
     let isEditing = false;
     
+    // Fetch and render models
     async function loadModels() {
         try {
             await window.modelsService?.fetchConfigModels?.();
-            models = window.modelsService?.getModelsByType?.('image') || {};
+            models = window.modelsService?.getModelsByType?.('embedding') || {};
             renderModels();
         } catch (error) {
             console.error('Failed to load models:', error);
@@ -171,8 +176,8 @@ function init(element, params) {
             container.innerHTML = `
                 <div class="empty-state">
                     <nui-icon name="info"></nui-icon>
-                    <p>No image models configured</p>
-                    <small>Click "Add Model" to create your first image generation model</small>
+                    <p>No embedding models configured</p>
+                    <small>Click "Add Model" to create your first embedding model</small>
                 </div>
             `;
             return;
@@ -181,11 +186,10 @@ function init(element, params) {
         const modelsHtml = modelEntries.map(([modelId, config]) => {
             const caps = config.capabilities || {};
             const badges = [];
+            
+            const contextWindow = caps.contextWindow ? formatNumber(caps.contextWindow) : '-';
+            const dimensions = caps.dimensions ? formatNumber(caps.dimensions) : '-';
             const isDisabled = config.disabled === true;
-            
-            if (caps.maxResolution) badges.push({ icon: 'image', label: caps.maxResolution });
-            
-            const formats = caps.supportedFormats?.join(', ') || '-';
             
             return `
                 <div class="nui-card model-card ${isDisabled ? 'disabled' : ''}" data-model-id="${escapeHtml(modelId)}">
@@ -211,8 +215,12 @@ function init(element, params) {
                             <span class="model-info-value" title="${escapeHtml(config.adapterModel || '-')}">${escapeHtml(config.adapterModel || '-')}</span>
                         </div>
                         <div class="model-info-row">
-                            <span class="model-info-label">Formats</span>
-                            <span class="model-info-value" title="${escapeHtml(formats)}">${escapeHtml(formats)}</span>
+                            <span class="model-info-label">Context</span>
+                            <span class="model-info-value">${contextWindow}</span>
+                        </div>
+                        <div class="model-info-row">
+                            <span class="model-info-label">Dimensions</span>
+                            <span class="model-info-value">${dimensions}</span>
                         </div>
                     </div>
                     <nui-button-container align="end" class="model-card-actions">
@@ -233,17 +241,14 @@ function init(element, params) {
             `;
         }).join('');
         
-        container.innerHTML = `
-            <nui-layout columns="2" gap="var(--nui-space)">
-                ${modelsHtml}
-            </nui-layout>
-        `;
+        container.innerHTML = `<div class="models-grid">${modelsHtml}</div>`;
     }
     
+    // Dialog functions
     function openDialog(mode, modelId = null) {
         isEditing = mode === 'edit';
         const title = element.querySelector('#dialog-title');
-        title.textContent = isEditing ? 'Edit Model' : 'Create Model';
+        title.textContent = isEditing ? 'Edit Model' : 'Add Model';
         
         if (isEditing && modelId && models[modelId]) {
             const config = models[modelId];
@@ -262,12 +267,12 @@ function init(element, params) {
             element.querySelector('#model-endpoint').value = config.endpoint || '';
             element.querySelector('#model-adapter-model').value = config.adapterModel || '';
             element.querySelector('#model-api-key').value = config.apiKey || '';
+            element.querySelector('#model-timeout').value = config.timeout || '';
+            element.querySelector('#model-disabled').checked = !!config.disabled;
             
             const caps = config.capabilities || {};
-            element.querySelector('#cap-max-resolution').value = caps.maxResolution || '';
-            element.querySelector('#cap-max-prompt-length').value = caps.maxPromptLength || '';
-            element.querySelector('#cap-supported-formats').value = caps.supportedFormats?.join(', ') || '';
-            element.querySelector('#model-disabled').checked = !!config.disabled;
+            element.querySelector('#cap-context').value = caps.contextWindow || '';
+            element.querySelector('#cap-dimensions').value = caps.dimensions || '';
         } else {
             form.reset();
             element.querySelector('#model-original-id').value = '';
@@ -287,7 +292,6 @@ function init(element, params) {
     
     function closeDialog() {
         dialog.close();
-        form.reset();
     }
     
     async function saveModel() {
@@ -306,21 +310,13 @@ function init(element, params) {
         }
         
         const config = {
-            type: 'image',
+            type: 'embedding',
             adapter: adapter,
-            capabilities: {}
+            capabilities: {
+                contextWindow: parseInt(element.querySelector('#cap-context').value) || 8192,
+                dimensions: parseInt(element.querySelector('#cap-dimensions').value) || 1536
+            }
         };
-        
-        const maxResolution = element.querySelector('#cap-max-resolution').value.trim();
-        if (maxResolution) config.capabilities.maxResolution = maxResolution;
-        
-        const maxPromptLength = element.querySelector('#cap-max-prompt-length').value;
-        if (maxPromptLength) config.capabilities.maxPromptLength = parseInt(maxPromptLength);
-        
-        const supportedFormats = element.querySelector('#cap-supported-formats').value.trim();
-        if (supportedFormats) {
-            config.capabilities.supportedFormats = supportedFormats.split(',').map(f => f.trim()).filter(f => f);
-        }
         
         const endpoint = element.querySelector('#model-endpoint').value.trim();
         if (endpoint) config.endpoint = endpoint;
@@ -330,6 +326,9 @@ function init(element, params) {
         
         const apiKey = element.querySelector('#model-api-key').value.trim();
         if (apiKey) config.apiKey = apiKey;
+        
+        const timeout = element.querySelector('#model-timeout').value;
+        if (timeout) config.timeout = parseInt(timeout);
         
         const disabled = element.querySelector('#model-disabled').checked;
         if (disabled) config.disabled = true;
@@ -348,26 +347,9 @@ function init(element, params) {
             
             closeDialog();
             await loadModels();
-            showBanner(`Model '${modelId}' saved successfully`, 'success');
+            showBanner(`Model '${modelId}' ${isEditing ? 'updated' : 'created'}`, 'success');
         } catch (error) {
             showBanner(error.message || 'Failed to save model', 'error');
-        }
-    }
-    
-    async function deleteModel(modelId) {
-        const confirmed = await nui.components.dialog.confirm(
-            'Delete Model?',
-            `Are you sure you want to delete '${modelId}'? This cannot be undone.`
-        );
-        
-        if (!confirmed) return;
-        
-        try {
-            await window.modelsService?.deleteModel?.(modelId);
-            await loadModels();
-            showBanner(`Model '${modelId}' deleted`, 'success');
-        } catch (error) {
-            showBanner(error.message || 'Failed to delete model', 'error');
         }
     }
     
@@ -392,6 +374,24 @@ function init(element, params) {
         }
     }
     
+    async function deleteModel(modelId) {
+        const confirmed = await nui.components.dialog.confirm(
+            'Delete Model?',
+            `Are you sure you want to delete '${modelId}'? This cannot be undone.`
+        );
+        
+        if (!confirmed) return;
+        
+        try {
+            await window.modelsService?.deleteModel?.(modelId);
+            await loadModels();
+            showBanner(`Model '${modelId}' deleted`, 'success');
+        } catch (error) {
+            showBanner(error.message || 'Failed to delete model', 'error');
+        }
+    }
+    
+    // Utility functions
     function escapeHtml(text) {
         if (text == null) return '';
         const div = document.createElement('div');
@@ -399,14 +399,21 @@ function init(element, params) {
         return div.innerHTML;
     }
     
-    function showBanner(message, priority = 'info') {
-        nui.components.banner.show({
-            content: message,
-            priority,
-            autoClose: priority === 'error' ? 5000 : 3000
-        });
+    function formatNumber(num) {
+        if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+        if (num >= 1000) return (num / 1000).toFixed(0) + 'k';
+        return num.toString();
     }
     
+    function showBanner(message, type = 'info') {
+        if (window.nui?.components?.banner) {
+            window.nui.components.banner.show(message, { type, duration: 5000 });
+        } else {
+            console.log(`[${type}] ${message}`);
+        }
+    }
+    
+    // Event listeners
     element.addEventListener('click', (e) => {
         const action = e.target.closest('[data-action]');
         if (!action) return;
@@ -441,6 +448,7 @@ function init(element, params) {
         }
     });
     
+    // Handle enter key in form
     form?.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
             e.preventDefault();
@@ -448,13 +456,16 @@ function init(element, params) {
         }
     });
     
+    // Subscribe to config updates
     const unsubscribe = window.modelsService?.subscribeConfig?.((state) => {
-        models = window.modelsService?.getModelsByType?.('image') || {};
+        models = window.modelsService?.getModelsByType?.('embedding') || {};
         renderModels();
     });
     
+    // Initial load
     loadModels();
     
+    // Cleanup
     element.hide = () => {
         if (unsubscribe) unsubscribe();
     };

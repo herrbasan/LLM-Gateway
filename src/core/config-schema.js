@@ -7,7 +7,7 @@ const MODEL_TYPES = ['chat', 'embedding', 'image', 'audio', 'video'];
 
 const REQUIRED_MODEL_FIELDS = ['type', 'adapter', 'capabilities'];
 
-const ADAPTER_TYPES = ['gemini', 'openai', 'ollama', 'lmstudio', 'anthropic', 'kimi-cli', 'kimi'];
+const ADAPTER_TYPES = ['gemini', 'openai', 'ollama', 'lmstudio', 'anthropic', 'kimi-cli', 'kimi', 'dashscope'];
 
 /**
  * Validates a model configuration object.

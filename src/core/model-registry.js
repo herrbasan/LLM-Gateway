@@ -120,10 +120,15 @@ export class ModelRegistry {
     /**
      * Get OpenAI-compatible model list.
      * @param {string} [type] - Optional filter by model type (chat, embedding, image, audio, video)
+     * @param {boolean} [includeDisabled=false] - If true, include disabled models
      */
-    listModels(type) {
+    listModels(type, includeDisabled = false) {
         const data = [];
         for (const [id, config] of this.models.entries()) {
+            // Skip disabled models unless explicitly included
+            if (!includeDisabled && config.disabled) {
+                continue;
+            }
             if (type && config.type !== type) {
                 continue;
             }
@@ -141,8 +146,9 @@ export class ModelRegistry {
     /**
      * Get models grouped by type.
      * Returns an object with keys for each model type.
+     * @param {boolean} [includeDisabled=false] - If true, include disabled models
      */
-    listModelsByType() {
+    listModelsByType(includeDisabled = false) {
         const result = {
             chat: [],
             embedding: [],
@@ -152,6 +158,10 @@ export class ModelRegistry {
         };
 
         for (const [id, config] of this.models.entries()) {
+            // Skip disabled models unless explicitly included
+            if (!includeDisabled && config.disabled) {
+                continue;
+            }
             const modelInfo = {
                 id,
                 object: 'model',
@@ -164,6 +174,18 @@ export class ModelRegistry {
             }
         }
 
+        return result;
+    }
+
+    /**
+     * Get all model configs including disabled status.
+     * Used by admin interfaces to show/edit all models.
+     */
+    getAllModelConfigs() {
+        const result = {};
+        for (const [id, config] of this.models.entries()) {
+            result[id] = { ...config };
+        }
         return result;
     }
 

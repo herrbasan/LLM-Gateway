@@ -10,6 +10,7 @@ import { createLmStudioAdapter } from '../adapters/lmstudio.js';
 import { createKimiCliAdapter } from '../adapters/kimi-cli.js';
 import { createKimiAdapter } from '../adapters/kimi.js';
 import { createAnthropicAdapter } from '../adapters/anthropic.js';
+import { createDashScopeAdapter } from '../adapters/dashscope.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 
 const ADAPTER_FACTORIES = {
@@ -19,7 +20,8 @@ const ADAPTER_FACTORIES = {
     lmstudio: createLmStudioAdapter,
     'kimi-cli': createKimiCliAdapter,
     kimi: createKimiAdapter,
-    anthropic: createAnthropicAdapter
+    anthropic: createAnthropicAdapter,
+    dashscope: createDashScopeAdapter
 };
 
 /**
