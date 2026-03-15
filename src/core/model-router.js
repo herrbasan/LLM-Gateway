@@ -373,6 +373,17 @@ export class ModelRouter {
                         processOptions
                     );
 
+                    // Log image size for debugging 413 errors
+                    const base64SizeMB = (processedBase64.length * 3 / 4) / 1024 / 1024;
+                    if (base64SizeMB > 5) {
+                        logger.warn('[ModelRouter] Large image processed', {
+                            sizeMB: base64SizeMB.toFixed(2),
+                            maxDimension: processOptions.maxDimension,
+                            quality: processOptions.quality,
+                            format: processOptions.format
+                        });
+                    }
+
                     // Determine output mime type based on transcode option
                     let outputMimeType = mimeType;
                     if (processOptions.format) {

@@ -1,232 +1,143 @@
-# Chat Implementation - Handover Document
+# Chat Development Handover
 
-> Current state of the LLM Gateway Chat interface for transfer to another developer.
-
----
-
-## ✅ What's Working
-
-### Core Functionality
-- **Streaming chat** with Gateway API via SSE
-- **Conversation history** persisted to localStorage
-- **Model selection** with NUI searchable dropdown
-- **Image attachments** for vision models
-- **Temperature/max tokens/system prompt** configuration
-- **New chat / clear conversation**
-- **Regenerate responses** with version control (prev/next)
-- **Abort streaming** mid-generation
-- **Thinking block detection** and display
-
-### Components
-| File | Purpose |
-|------|---------|
-| `chat.js` | Main controller, event handling, streaming logic |
-| `conversation.js` | State management with localStorage persistence |
-| `streaming.js` | SSE handler for Gateway API |
-| `markdown.js` | Markdown rendering (markdown-it + DOMPurify) |
-| `chat.css` | Styling (needs dark mode fixes) |
-| `index.html` | Page shell with sidebar layout |
+> **Status:** In Progress - Layout broken after nui_wc2 update  
+> **Date:** 2026-03-14  
+> **Context:** Nearly full, needs fresh session
 
 ---
 
-## 🐛 Known Issues (Need Fixing)
+## What Was Completed
 
-### 1. Dark Mode Theming (CRITICAL)
-Multiple elements don't respect dark mode:
-- **Thinking blocks** - Light background in dark mode
-- **Code blocks** - Light background (should match dark theme)
-- **Table headers** - Light background with white text (illegible)
-- **Message bubbles** - May need adjustment for contrast
-- **Input fields** - Check border/background colors
+### ✅ Chat History Feature (Working)
+- **File:** `public/chat/js/chat-history.js` - New multi-conversation management
+- Can create, save, recall, delete multiple chats
+- Auto-saves after each response
+- Stores in localStorage with metadata + conversation data
 
-The theme toggle sets `data-theme="dark"` on `<html>` element. CSS uses `[data-theme="dark"]` selectors.
-
-### 2. UTF-8 Emoji
-- Remove `🧠` emoji from thinking blocks
-- Use NUI icons or SVG instead
-
-### 3. Version Counter UX
-- Currently shows "1/2" confusingly on first response
-- Should only show version numbers after regeneration
-- Regenerate button (↻) should always be visible
-
-### 4. Auto-scroll
-- Chat doesn't auto-scroll to bottom during streaming
-- User has to manually scroll to see new content
-
-### 5. Code Block Styling
-- Copy button works but styling is basic
-- Syntax highlighting works via Prism
-- Need better dark mode colors for code
+### ✅ nui_wc2 Submodule Updated
+- Updated from old commit to `ebad984` (14 new commits)
+- Breaking changes in component names and layout system
 
 ---
 
-## 📁 File Structure
+## What Broke
 
-```
-WebAdmin/
-├── routes/
-│   └── chat.js              # Express route (serves index.html)
-├── public/
-│   ├── chat/
-│   │   ├── index.html       # Page shell
-│   │   ├── css/
-│   │   │   └── chat.css     # Styles (NEEDS WORK)
-│   │   └── js/
-│   │       ├── chat.js      # Main controller (~750 lines)
-│   │       ├── conversation.js   # State management
-│   │       ├── streaming.js      # SSE handler
-│   │       └── markdown.js       # Markdown rendering
-│   └── shared/
-│       └── vendor/          # Copied from LMChat
-│           ├── markdown-it.js
-│           ├── markdown-it-prism.js
-│           ├── purify.js
-│           ├── prism.js
-│           └── prism.css
-└── server.js                # Updated with chat routes
+### Breaking Changes in nui_wc2
+| Old Name | New Name | Notes |
+|----------|----------|-------|
+| `nui-top-nav` | `nui-app-header` | New semantic structure |
+| `nui-side-nav` | `nui-sidebar` | `position="left"`/`"right"` attributes |
+| `nui-main` | `<main>` | No custom element wrapper |
+| `layout`/`item` | `nui-layout`/`nui-layout-item` | Layout system changed |
+
+### Layout System Changes
+- **Old:** Manual positioning with `--side-nav-width` offsets
+- **New:** CSS Grid system with automatic content offset
+- When `nui-sidebar` is present, `nui-content` automatically adjusts
+- Classes like `sidenav-forced`, `sidenav-open` control visibility
+
+### Current Broken State
+- Chat page loads but layout is wrong
+- "New Chat" button not visible (likely pushed out of viewport)
+- Sidebar structure needs complete rebuild
+
+---
+
+## What Needs to Be Done
+
+### 1. Fix Chat Layout (Priority 1)
+**Reference:** `lib/nui_wc2/Playground/pages/components/app-layout.html`
+
+New structure should be:
+```html
+<nui-app>
+  <nui-app-header>
+    <header>...</header>
+  </nui-app-header>
+  
+  <nui-sidebar position="left">
+    <nav>Chat History + New Chat Button</nav>
+  </nui-sidebar>
+  
+  <nui-content>
+    <main>Messages Area</main>
+  </nui-content>
+  
+  <nui-sidebar position="right">
+    <nav>Model Settings</nav>
+  </nui-sidebar>
+  
+  <nui-app-footer>
+    <footer>Input Area</footer>
+  </nui-app-footer>
+</nui-app>
 ```
 
----
+**Key:** Footer inside `<nui-app-footer><footer>...</footer></nui-app-footer>`
 
-## 🔌 API Integration
-
-### Gateway Endpoints Used
+### 2. Fix Sidebar Toggle Actions
 ```javascript
-GET  /v1/models              # Populate model selector
-POST /v1/chat/completions    # Streaming chat (SSE)
-GET  /health                 # Gateway status indicator
+// Use nui-app's toggleSideNav method
+const app = document.querySelector('nui-app');
+app.toggleSideNav('left');  // or 'right'
 ```
 
-### Request Format
-```javascript
-{
-  model: "gemini-flash",
-  messages: [...],
-  temperature: 0.7,
-  max_tokens: 2048,
-  stream: true,
-  image_processing: {      // If images attached
-    resize: "auto",
-    transcode: "webp", 
-    quality: 85
-  }
-}
+### 3. Fix WebAdmin Main App
+WebAdmin also uses old component names - needs same updates.
+
+---
+
+## Working Files to Keep
+
+| File | Status | Notes |
+|------|--------|-------|
+| `chat-history.js` | ✅ Keep | Multi-chat management working |
+| `conversation.js` | ✅ Keep | No changes needed |
+| `streaming.js` | ✅ Keep | No changes needed |
+| `markdown.js` | ✅ Keep | No changes needed |
+| `chat.js` | ⚠️ Partial | Keep logic, fix layout integration |
+| `chat.css` | ❌ Scrap | Start fresh with NUI variables |
+| `index.html` | ❌ Scrap | Complete rewrite needed |
+
+---
+
+## Key Technical Details
+
+### NUI Layout CSS Variables
+```css
+--nui-sidebar-width: 15rem;        /* Default sidebar width */
+--app-header-height: 3.5rem;       /* Top nav height */
+--footer-height: auto;             /* Footer height */
 ```
 
-### Response Handling
-- SSE events: `data: {...}`, `event: compaction.*`
-- Thinking blocks: `<think>...</think>` normalized by Gateway
-- Stream ends with: `data: [DONE]`
+### Auto-Layout Behavior
+When `nui-sidebar[position="left"]` is inside `nui-app`:
+- Sidebar is positioned automatically
+- Content gets left offset automatically
+- No manual CSS needed for positioning
+
+### Content Structure
+- `nui-content > main` - Scrollable content area
+- Use `<main>` element, not `nui-main`
 
 ---
 
-## 🎨 Styling Notes
+## Next Steps
 
-### NUI Integration
-- Uses NUI components: `nui-select`, `nui-slider`, `nui-input`, `nui-textarea`, `nui-button`
-- Theme variables: `--nui-bg`, `--nui-fg`, `--nui-shade1-7`, `--nui-accent`
-- NUI theme file: `/NUI/css/nui-theme.css`
-
-### Current CSS Issues
-1. Dark mode uses hardcoded colors (`#2a2a2a`, `#e0e0e0`) instead of NUI variables
-2. Missing dark mode rules for:
-   - `.thinking-block`
-   - `.code-block` / `.code-header`
-   - `.message-content table th`
-   - Various text colors
-
-### Layout
-- Sidebar: 300px fixed width on left
-- Main area: Flexible, contains messages + input
-- Mobile: Sidebar slides in from left (transform translate)
+1. **Start fresh session** - Clear context
+2. **Read nui_wc2 docs** - Check `lib/nui_wc2/Playground/pages/components/app-layout.html`
+3. **Rewrite chat/index.html** - Minimal working layout first
+4. **Test incrementally** - One component at a time
+5. **Then fix WebAdmin** - Same pattern
 
 ---
 
-## 🧠 Key Logic
+## Reference URLs
 
-### Thinking Blocks
-```javascript
-// Parsed from streaming content
-<think>reasoning here...</think>
-
-// Displayed as collapsible section above answer
-// Click header to toggle open/closed
-```
-
-### Version Control
-- First response: Show only regenerate button
-- After regenerate: Show ← 2/3 → controls
-- Versions stored in conversation.assistant.versions[]
-
-### Markdown Rendering
-```javascript
-// markdown.js exports:
-renderMarkdown(content)     // Returns sanitized HTML
-parseThinking(content)      // Returns {thinking, answer}
-renderThinking(thinking)    // Returns thinking block HTML
-```
+- Local Playground: `http://localhost:3401` (when WebAdmin running)
+- App Layout Docs: `lib/nui_wc2/Playground/pages/components/app-layout.html`
+- NUI Agents Guide: `lib/nui_wc2/Agents.md`
 
 ---
 
-## 🚧 TODO List
-
-### High Priority
-- [ ] Fix all dark mode styling issues
-- [ ] Remove UTF-8 emoji (🧠) from thinking blocks
-- [ ] Fix auto-scroll during streaming
-- [ ] Improve code block styling in dark mode
-- [ ] Fix table header contrast in dark mode
-
-### Medium Priority
-- [ ] Add keyboard shortcuts (Ctrl+Enter to send, Escape to cancel)
-- [ ] Add loading state for model selector
-- [ ] Add error retry functionality
-- [ ] Improve mobile experience
-
-### Low Priority
-- [ ] Export conversation to file
-- [ ] Multiple concurrent chats (tabs)
-- [ ] Message search
-- [ ] Image preview in lightbox (currently just opens image)
-
----
-
-## 🚀 Testing
-
-```bash
-# Start Gateway
-cd "d:\DEV\LLM Gateway"
-npm start
-
-# Start WebAdmin (different terminal)
-cd "d:\DEV\LLM Gateway\WebAdmin"
-npm start
-
-# Open chat
-http://localhost:3401/chat
-```
-
----
-
-## 💡 Tips for Next Developer
-
-1. **NUI Components**: Check `/NUI/nui.js` for component APIs
-2. **Theme Toggle**: Look at `toggleTheme()` and `setTheme()` in chat.js
-3. **Dark Mode CSS**: Search for `[data-theme="dark"]` in chat.css
-4. **SSE Handling**: See `StreamingHandler.streamChat()` in streaming.js
-5. **State Management**: `Conversation` class handles localStorage
-
----
-
-## 📚 References
-
-- **LMChat Reference**: `Reference/LMChat/` (git submodule)
-- **NUI Docs**: https://herrbasan.github.io/nui_wc2/
-- **API Docs**: `docs/api_documentation.md`
-- **Dev Plan**: `WebAdmin/docs/CHAT_DEVELOPMENT_PLAN.md`
-
----
-
-*Last Updated: 2026-03-09*
-*Status: Core functionality complete, needs visual polish*
+**End this session. Start fresh with clean context.**

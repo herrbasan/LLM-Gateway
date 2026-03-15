@@ -204,7 +204,11 @@ export class MediaProcessorClient {
             });
             
             if (!res.ok) {
-                logger.warn(`Failed to process image. Status: ${res.status}`);
+                const errorText = await res.text().catch(() => 'Unknown error');
+                logger.warn(`MediaService error: ${res.status} ${res.statusText}`, { error: errorText, sizeMB: (base64Data.length * 3 / 4 / 1024 / 1024).toFixed(2) });
+                if (res.status === 413) {
+                    logger.error('Image too large for MediaService. Consider reducing image size or increasing MAX_FILE_SIZE_MB.');
+                }
                 return base64Data; // fallback to original
             }
 

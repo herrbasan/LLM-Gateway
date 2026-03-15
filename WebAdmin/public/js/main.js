@@ -91,18 +91,20 @@ function registerFeatures() {
 // ============================================
 
 function setupEventHandlers() {
-    // Direct toggle for sidebar button
-    document.querySelector('[data-action="toggle-sidebar"]')?.addEventListener('click', (e) => {
-        e.preventDefault();
-        document.querySelector('nui-app')?.toggleSideNav();
-    });
-    
-    // Declarative actions
-    document.addEventListener('nui-action', (e) => {
-        const { name, param, originalEvent } = e.detail;
+    // Handle data-action clicks directly (same pattern as playground)
+    document.addEventListener('click', (e) => {
+        const actionEl = e.target.closest('[data-action]');
+        if (!actionEl) return;
         
-        switch (name) {
+        const action = actionEl.dataset.action;
+        
+        switch (action) {
+            case 'toggle-sidebar':
+                e.preventDefault();
+                document.querySelector('nui-app')?.toggleSideNav();
+                break;
             case 'toggle-theme':
+                e.preventDefault();
                 toggleTheme();
                 break;
         }
@@ -151,8 +153,8 @@ function init() {
     // - Features handled by JS (dashboard, settings)
     // - Pages loaded as HTML fragments (test-chat, logs, etc.)
     const router = nui.enableContentLoading({
-        container: 'nui-main',
-        navigation: 'nui-side-nav',
+        container: '#main-content',
+        navigation: 'nui-sidebar',
         basePath: '/pages',
         defaultPage: null  // Use feature=dashboard as default instead
     });

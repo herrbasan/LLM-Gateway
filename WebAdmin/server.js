@@ -19,12 +19,7 @@ app.use('/NUI', express.static(path.join(__dirname, 'lib/nui_wc2/NUI')));
 // API routes
 app.use('/api', require('./routes/api'));
 
-// Chat routes (standalone page, not part of SPA)
-app.use('/chat', require('./routes/chat'));
-app.use('/chat', express.static(path.join(__dirname, 'public/chat')));
-app.use('/shared/vendor', express.static(path.join(__dirname, 'public/shared/vendor')));
-
-// SPA fallback - serve index.html for all non-API, non-chat routes
+// SPA fallback - serve index.html for all non-API routes
 app.get(/.*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
