@@ -1,6 +1,6 @@
 # WebSocket Real-Time Mode: Development Plan
 
-> **Status**: Planning  
+> **Status**: Near Completion  
 > **Target**: v2.1 release  
 > **Approach**: Phased implementation with incremental delivery
 
@@ -14,7 +14,7 @@ This document defines the phased implementation approach for the WebSocket Real-
 
 ---
 
-## Phase 1: Foundation
+## Phase 1: Foundation [COMPLETED]
 
 **Goal**: Establish core WebSocket infrastructure with basic connectivity
 
@@ -70,7 +70,7 @@ curl -i -N \
 
 ---
 
-## Phase 2: Chat over WebSocket
+## Phase 2: Chat over WebSocket [COMPLETED]
 
 **Goal**: Achieve feature parity with HTTP `/v1/chat/completions`
 
@@ -140,7 +140,7 @@ const ws = new WebSocket('ws://localhost:3400/v1/realtime');
 
 ---
 
-## Phase 3: Advanced Features
+## Phase 3: Advanced Features [COMPLETED]
 
 **Goal**: Add interactivity features (cancellation, incremental updates, progress)
 
@@ -204,7 +204,7 @@ await client.chatAppend({ message: "new msg" });
 
 ---
 
-## Phase 4: Binary Protocol & Audio
+## Phase 4: Binary Protocol & Audio [COMPLETED]
 
 **Goal**: Support efficient binary transmission for audio/video use cases
 
@@ -262,7 +262,7 @@ const streamId = result.stream_id;
 
 ---
 
-## Phase 5: Production Readiness
+## Phase 5: Production Readiness [PENDING]
 
 **Goal**: Metrics, monitoring, graceful degradation, testing
 
@@ -318,7 +318,7 @@ const streamId = result.stream_id;
 
 ---
 
-## Phase 6: Connection-Scoped Media Buffer (Images/Files)
+## Phase 6: Connection-Scoped Media Buffer (Images/Files) [COMPLETED]
 
 **Goal**: Support efficient binary transmission of large media assets (images, documents) without Base64 overhead.
 

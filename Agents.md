@@ -1,5 +1,8 @@
 # LLM Gateway
 
+> **🚨 CRITICAL AI AGENT RULE: DO NOT KILL NODE PROCESSES 🚨**
+> **NEVER use `taskkill`, `Stop-Process`, `kill`, or any other commands to stop or manage Node processes. This machine runs multiple unrelated background node services. Let the user handle ALL server restarts and process management. NEVER start or stop node processes yourself.**
+
 > **✅ v2.0 Model-Centric Architecture - COMPLETE**
 > 
 > The refactor from provider-centric to model-centric architecture is complete.

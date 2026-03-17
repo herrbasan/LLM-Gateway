@@ -23,9 +23,9 @@ async function main() {
     });
     
     const app = createServer(config);
-    
+
     const server = app.listen(config.port, config.host, () => {
-      logger.info('Gateway started', { 
+      logger.info('Gateway started', {
         url: `http://${config.host}:${config.port}`,
         logFile: logger.getSessionInfo().logFile
       });
@@ -33,8 +33,18 @@ async function main() {
       console.log(`Log file: ${logger.getSessionInfo().logFile}`);
     });
 
+    // Initialize WebSocket Server
+    const { setupWebSocketServer } = await import('./websocket/server.js');
+    const wsServer = setupWebSocketServer(server, app, config, {
+      router: app.locals.router,
+      ticketRegistry: app.locals.ticketRegistry
+    });
+
     const shutdown = (signal) => {
       logger.info(`Received ${signal}, shutting down...`);
+      if (wsServer && wsServer.shutdown) {
+        try { wsServer.shutdown(); } catch(e) {}
+      }
       server.close(() => {
         logger.close();
         process.exit(0);

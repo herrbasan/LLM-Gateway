@@ -4,6 +4,8 @@ import { getLogger } from '../../utils/logger.js';
 import { AuthHandler } from './auth.js';
 import { ChatHandler } from './chat.js';
 import { AudioHandler } from './audio.js';
+import { MediaHandler } from './media.js';
+import { parseBinaryFrame } from '../binary-protocol.js';
 
 const logger = getLogger();
 
@@ -15,12 +17,23 @@ export class MessageRouter {
     this.authHandler = new AuthHandler(config);
     this.chatHandler = new ChatHandler(router, config, ticketRegistry);
     this.audioHandler = new AudioHandler(router, config, ticketRegistry);
+    this.mediaHandler = new MediaHandler(router, config, ticketRegistry);
   }
 
   handleMessage(connection, messageBody, isBinary = false) {
     try {
       if (isBinary) {
-        this.audioHandler.handleBinaryFrame(connection, messageBody);
+        const parsed = parseBinaryFrame(messageBody);
+        if (!parsed) return;
+        
+        const streamId = parsed.header.s;
+        if (connection.audioStreams?.has(streamId)) {
+          this.audioHandler.handleBinaryFrame(connection, messageBody);
+        } else if (connection.mediaStreams?.has(streamId)) {
+          this.mediaHandler.handleBinaryFrame(connection, messageBody);
+        } else {
+          logger.warn(`Binary frame for unknown stream ID dropped: ${streamId}`);
+        }
         return;
       }
 
@@ -97,6 +110,19 @@ export class MessageRouter {
       case 'audio.vad':
         if (!connection.auth?.authenticated) return;
         this.audioHandler.handleVad(connection, message);
+        break;
+
+      case 'media.start':
+        if (!connection.auth?.authenticated) {
+          connection.ws.send(formatError(id, ErrorCodes.AUTH_REQUIRED || -32001, 'Authentication required'));
+          return;
+        }
+        this.mediaHandler.handleStart(connection, message);
+        break;
+
+      case 'media.stop':
+        if (!connection.auth?.authenticated) return;
+        this.mediaHandler.handleStop(connection, message);
         break;
 
       default:

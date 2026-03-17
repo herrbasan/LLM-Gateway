@@ -39,6 +39,7 @@ const navigationData = [
         label: 'Test Tools',
         icon: 'extension',
         items: [
+            { label: 'WebSockets V2', href: '#page=test-websockets' },
             { label: 'Chat', href: '#page=test-chat' },
             { label: 'Vision', href: '#page=test-vision' },
             { label: 'Embeddings', href: '#page=test-embeddings' },

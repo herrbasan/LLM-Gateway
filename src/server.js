@@ -26,6 +26,9 @@ export function createServer(config) {
   // Create new ModelRouter - stateless, no session store needed
   const router = new ModelRouter(config);
 
+  app.locals.router = router;
+  app.locals.ticketRegistry = ticketRegistry;
+
   // CORS middleware
   const corsOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : true;
   app.use(cors({
