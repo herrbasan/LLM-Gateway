@@ -1,0 +1,138 @@
+import { formatResponse, formatError, formatNotification, ErrorCodes } from '../protocol.js';
+import { RequestContext, RequestState } from '../request-state.js';
+import { getLogger } from '../../utils/logger.js';
+
+const logger = getLogger();
+
+export class ChatHandler {
+  constructor(router, config, ticketRegistry) {
+    this.modelRouter = router;
+    this.config = config;
+    this.ticketRegistry = ticketRegistry;
+  }
+
+  async handleCreate(connection, message) {
+    const { id, params } = message;
+
+    if (!params) {
+      connection.ws.send(formatError(id, ErrorCodes.INVALID_PARAMS, 'Missing parameters'));
+      return;
+    }
+
+    const { messages, model } = params;
+
+    if (!messages || !Array.isArray(messages)) {
+      connection.ws.send(formatError(id, ErrorCodes.INVALID_PARAMS, '"messages" must be an array'));
+      return;
+    }
+
+    // Set up request context for state machine and multiplexing
+    const requestContext = new RequestContext(id, params);
+    connection.activeRequests.set(id, requestContext);
+
+    // Initial Processing State
+    try {
+      requestContext.transition(RequestState.PROCESSING);
+      // Let the client know the request was accepted (optional, but standard responses can map to the first token or immediate ack)
+      // Standard JSON-RPC expects a success response. We can send a null response to acknowledge receipt.
+      connection.ws.send(formatResponse(id, { accepted: true }));
+    } catch (err) {
+      connection.ws.send(formatError(id, ErrorCodes.INTERNAL_ERROR, 'State transition failed'));
+      return;
+    }
+
+    try {
+      // Fake a stream request to the router
+      const requestObject = {
+        model,
+        messages,
+        stream: true,
+        // any other params
+        ...params
+      };
+
+      // Ensure model is resolved properly by the router
+      const resolvedModel = this.modelRouter.registry.resolveModel(model, 'chat');
+      if (!resolvedModel || resolvedModel.config?.type !== 'chat') {
+        throw new Error('Invalid or unknown chat model');
+      }
+
+      const clientIp = connection.ip || '127.0.0.1';
+
+      // We need to implement a streaming callback or use the generator from ModelRouter
+      // Assuming ModelRouter.routeChatCompletion returns a stream or something similar.
+      // Wait, let's see how ModelRouter.routeChatCompletion works in HTTP mode.
+      // Execute routeChatCompletion which expects exactly the request config object
+      // as used in /v1/chat/completions body.
+      const result = await this.modelRouter.routeChatCompletion(requestObject);
+
+      // Depending on the adapter, result is either a string (non-streaming, although we asked for stream) 
+      // or a generator/stream.
+      
+      if (result && typeof result.generator !== 'undefined') {
+        // It's a stream (standard v2 behavior)
+        for await (const chunk of result.generator) {
+          if (requestContext.state === RequestState.CANCELLED) {
+            break;
+          }
+          
+          connection.ws.send(formatNotification('chat.delta', {
+            request_id: id,
+            choices: [{
+              index: 0,
+              delta: { content: chunk }
+            }]
+          }));
+          requestContext.chunksSent++;
+        }
+      } else {
+        // It was somehow evaluated as a whole? (Not standard if stream: true works)
+        connection.ws.send(formatNotification('chat.delta', {
+          request_id: id,
+          choices: [{
+            index: 0,
+            delta: { content: result }
+          }]
+        }));
+      }
+
+      if (requestContext.state !== RequestState.CANCELLED) {
+        requestContext.transition(RequestState.COMPLETED);
+        connection.ws.send(formatNotification('chat.done', {
+          request_id: id,
+          cancelled: false
+        }));
+      } else {
+        connection.ws.send(formatNotification('chat.done', {
+          request_id: id,
+          cancelled: true
+        }));
+      }
+
+    } catch (err) {
+      if (requestContext.state !== RequestState.CANCELLED && requestContext.state !== RequestState.FAILED) {
+        requestContext.transition(RequestState.FAILED);
+      }
+      logger.error(`Error in chat.create [${id}]:`, err);
+      // Wait, we already sent a response to 'id' acknowledging the request.
+      // So we should send an error notification. 
+      connection.ws.send(formatNotification('chat.error', {
+        request_id: id,
+        error: { code: ErrorCodes.INTERNAL_ERROR, message: err.message || 'Internal error' }
+      }));
+    } finally {
+      connection.activeRequests.delete(id);
+    }
+  }
+
+  handleCancel(connection, message) {
+    const { params } = message;
+    if (!params || !params.request_id) return;
+    
+    const requestContext = connection.activeRequests.get(params.request_id);
+    if (requestContext) {
+      requestContext.cancel();
+      // It will trigger chat.done in the loop via state check
+    }
+  }
+}
