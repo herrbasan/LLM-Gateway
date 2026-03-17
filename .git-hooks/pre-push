@@ -1,0 +1,18 @@
+#!/bin/sh
+# Pre-push hook - last chance to catch sensitive data before it goes to remote
+
+echo "Scanning for potential secrets in commits being pushed..."
+
+# Check commits being pushed for backup files
+BLOCKED=$(git log --oneline --all --full-history -- '*.backup-*' '*.env' '*.pem' '*.key' | head -5)
+
+if [ -n "$BLOCKED" ]; then
+    echo "WARNING: Found sensitive files in git history:"
+    echo "$BLOCKED"
+    echo ""
+    echo "This should not happen. Please investigate before pushing."
+    exit 1
+fi
+
+echo "No secrets detected in push."
+exit 0
