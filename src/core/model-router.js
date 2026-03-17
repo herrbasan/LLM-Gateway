@@ -222,14 +222,14 @@ export class ModelRouter {
      * Handle context compaction if enabled and needed.
      */
     async _handleContextCompaction(messages, modelConfig, adapter) {
-        const compactionConfig = this.registry.getCompactionConfig();
+        const compactionConfig = this.registry.getCompactionConfig() || {};
 
-        if (!compactionConfig.enabled || messages.length === 0) {
+        if (messages.length === 0) {
             return { messages, context: null };
         }
 
         const estimatedTokens = await this._estimateMessagesTokens(messages, adapter, modelConfig);
-        const contextWindow = modelConfig.capabilities.contextWindow;
+        const contextWindow = modelConfig.capabilities?.contextWindow || 8192;
         const outputBuffer = 1024; // Safe default
         const safetyMargin = Math.floor(contextWindow * 0.20);
         const availableTokens = contextWindow - outputBuffer - safetyMargin;
@@ -241,12 +241,17 @@ export class ModelRouter {
         });
 
         const minTokens = compactionConfig.minTokensToCompact || 2000;
-        const shouldCompact = estimatedTokens >= minTokens && estimatedTokens > availableTokens;
+        const shouldCompact = compactionConfig.enabled !== false && estimatedTokens >= minTokens && estimatedTokens > availableTokens;
 
         if (!shouldCompact) {
             return {
                 messages,
-                context: this._buildContextPayload(contextWindow, estimatedTokens, false)
+                context: {
+                    window_size: contextWindow,
+                    used_tokens: estimatedTokens,
+                    available_tokens: Math.max(0, contextWindow - estimatedTokens),
+                    strategy_applied: false
+                }
             };
         }
 
@@ -287,8 +292,9 @@ export class ModelRouter {
      * Estimate tokens for messages.
      */
     async _estimateMessagesTokens(messages, adapter, modelConfig) {
-        let total = 0;
+        let total = 3; // Base overhead for the request formatting
         for (const m of messages) {
+            total += 4; // Base overhead for each message (role, formatting)
             if (Array.isArray(m.content)) {
                 total += await this.tokenEstimator.estimate(m.content, adapter, modelConfig.adapterModel);
             } else {

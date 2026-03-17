@@ -1,0 +1,408 @@
+﻿<style>
+.ws-container { display: flex; flex-direction: column; gap: 20px; }
+.ws-panel { width: 100%; min-width: 0; }
+.event-log { font-family: monospace; font-size: 12px; background: var(--bg-dark); color: var(--text-light); padding: 10px; height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; margin-top: 10px; border-radius: 4px; border: 1px solid var(--border-color); }
+.chat-output { background: var(--bg-light); color: var(--text-main); padding: 10px; min-height: 150px; border-radius: 4px; border: 1px solid var(--border-color); white-space: pre-wrap; font-family: system-ui; margin-top: 10px; }
+.ws-state { display: inline-flex; align-items: center; gap: 8px; font-weight: bold; }
+.indicator { width: 12px; height: 12px; border-radius: 50%; background: red; }
+.indicator.connected { background: #4caf50; }
+.progress-bar { font-size: 0.9em; color: var(--text-dim); margin-top: 5px; font-style: italic; }
+</style>
+
+<div class="ws-container">
+    <section class="test-form ws-panel">
+        <header>
+            <h2>WebSocket Real-Time Tester</h2>
+            <p class="text-dim">Test chat and binary media uploads over v2.0 WebSockets</p>
+        </header>
+
+        <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 15px;">
+            <div class="ws-state">
+                <div id="ws-indicator" class="indicator"></div>
+                <span id="ws-status">Disconnected</span>
+            </div>
+            <nui-button type="primary"><button id="btn-connect">Connect</button></nui-button>
+            <nui-button type="secondary"><button id="btn-disconnect">Disconnect</button></nui-button>
+        </div>
+
+        <form id="ws-form">
+            <div class="form-group">
+                <label for="ws-model">Model</label>
+                <nui-select>
+                    <select id="ws-model" name="model"></select>
+                </nui-select>
+            </div>
+
+            <div class="form-group">
+                <label for="ws-prompt">Message</label>
+                <nui-textarea>
+                    <textarea id="ws-prompt" rows="3" placeholder="Explain this image..."></textarea>
+                </nui-textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="ws-file">Image (Optional - Phase 6 Test)</label>
+                <input type="file" id="ws-file" accept="image/*" />
+            </div>
+
+            <div class="actions" style="margin-top: 20px; display: flex; gap: 10px;">
+                <nui-button type="primary"><button type="submit" id="btn-send">Send Request</button></nui-button>
+                <nui-button type="error"><button type="button" id="btn-cancel">Cancel Request</button></nui-button>
+            </div>
+
+            <div id="ws-progress-container" style="display: none; margin-top: 20px;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.9em; margin-bottom: 5px;">
+                    <span id="ws-progress-text" style="color: var(--text-main); font-weight: bold;">Ready</span>
+                    <span id="ws-progress-pct" style="color: var(--text-dim);">0%</span>
+                </div>
+                <div style="width: 100%; background: var(--bg-dark); border-radius: 4px; height: 8px; overflow: hidden; border: 1px solid var(--border-color);">
+                    <div id="ws-progress-bar" style="width: 0%; height: 100%; background: #4caf50; transition: width 0.1s ease-out;"></div>
+                </div>
+            </div>
+        </form>
+    </section>
+
+    <section class="test-form ws-panel">
+        <header>
+            <h2>Event Log</h2>
+        </header>
+        <div class="event-log" id="ws-event-log"></div>
+    </section>
+
+    <section class="test-form ws-panel">
+        <header>
+            <h2>Response Output</h2>
+        </header>
+        <div id="ws-telemetry" style="display: none; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 4px; padding: 10px; margin-bottom: 10px; font-size: 0.85em; font-family: monospace; color: #4db8ff; display: flex; gap: 20px; flex-wrap: wrap;">
+            <div>TTFT: <span id="ws-ttft" style="color: var(--text-main);">--</span></div>
+            <div>Total Time: <span id="ws-total-time" style="color: var(--text-main);">--</span></div>
+            <div>TPS: <span id="ws-tps" style="color: var(--text-main);">--</span></div>
+            <div>Context: <span id="ws-context" style="color: var(--text-main);">--</span></div>
+            <div style="flex-basis: 100%;">Compaction: <span id="ws-compaction" style="color: #ff9800;">--</span></div>
+            <div style="flex-basis: 100%;">Usage: <span id="ws-usage" style="color: var(--text-dim);">--</span></div>
+        </div>
+        <div class="chat-output" id="ws-chat-output"></div>
+    </section>
+</div>
+
+<script type="nui/page">
+function init(element, params) {
+    const modelsService = window.modelsService;
+    const btnConnect = element.querySelector('#btn-connect');
+    const btnDisconnect = element.querySelector('#btn-disconnect');
+    const indicator = element.querySelector('#ws-indicator');
+    const statusText = element.querySelector('#ws-status');
+    const modelSelect = element.querySelector('#ws-model');
+    const wsForm = element.querySelector('#ws-form');
+    const btnCancel = element.querySelector('#btn-cancel');
+    const progressContainer = element.querySelector('#ws-progress-container');
+    const progressText = element.querySelector('#ws-progress-text');
+    const progressPct = element.querySelector('#ws-progress-pct');
+    const progressBar = element.querySelector('#ws-progress-bar');
+    const chatOutput = element.querySelector('#ws-chat-output');
+    const eventLog = element.querySelector('#ws-event-log');
+    
+    // Telemetry Elements
+    const telemetryPanel = element.querySelector('#ws-telemetry');
+    const ttftEl = element.querySelector('#ws-ttft');
+    const totalTimeEl = element.querySelector('#ws-total-time');
+    const tpsEl = element.querySelector('#ws-tps');
+    const usageEl = element.querySelector('#ws-usage');
+    const contextEl = element.querySelector('#ws-context');
+    const compactionEl = element.querySelector('#ws-compaction');
+    
+    let ws = null;
+    let requestCounter = 0;
+    let streamIdCounter = 0;
+    let currentRequestId = null;
+
+    // Metrics tracking
+    let requestStartTime = 0;
+    let chunkCount = 0;
+    let approximateTokens = 0;
+
+    function setProgress(text, pct, show = true) {
+        if (!progressContainer) return;
+        progressContainer.style.display = show ? 'block' : 'none';
+        progressText.textContent = text;
+        
+        if (pct !== null && pct !== undefined) {
+            progressPct.textContent = `${Math.round(pct)}%`;
+            progressBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+            progressPct.style.display = 'inline';
+            progressBar.style.transition = 'width 0.1s ease-out';
+        } else {
+            progressPct.style.display = 'none';
+            progressBar.style.width = '100%';
+            progressBar.style.transition = 'none'; 
+        }
+    }
+
+    // Output logging helper
+    function logEvent(msg, isOut = false) {
+        const line = document.createElement('div');
+        line.textContent = `[${new Date().toLocaleTimeString()}] ${isOut ? '->' : '<-'} ${msg}`;
+        line.style.color = isOut ? '#4db8ff' : '#a9b7c6';
+        eventLog.appendChild(line);
+        eventLog.scrollTop = eventLog.scrollHeight;
+    }
+
+    // Load models
+    const loadModels = () => {
+        const state = modelsService.getState();
+        const models = state.models || [];
+        console.log('[TestWebSockets] Loaded models:', models.length);
+        const chatModels = models.filter(m => m.type === 'chat');
+        
+        if (chatModels.length === 0) {
+             modelSelect.innerHTML = `<option value="">Loading models...</option>`;
+        } else {
+             modelSelect.innerHTML = chatModels.map(m => `<option value="${m.id}">${m.id}</option>`).join('');
+        }
+        
+        // Refresh NUI component
+        const nuiSelect = modelSelect.closest('nui-select');
+        if (nuiSelect && typeof nuiSelect.refresh === 'function') {
+            nuiSelect.refresh();
+        }
+    };
+    const unsubscribeModels = modelsService.subscribe(loadModels);
+    
+    // Explicit initial call just in case (though subscribe should do it)
+    loadModels();
+
+    // WebSocket Logic
+    function disconnect() {
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+        indicator.classList.remove('connected');
+        statusText.textContent = 'Disconnected';
+    }
+
+    function connect() {
+        if (ws) disconnect();
+        const wsUrl = `ws://localhost:3400/v1/realtime`;
+        
+        ws = new WebSocket(wsUrl);
+        ws.binaryType = 'arraybuffer';
+        
+        ws.onopen = () => {
+            indicator.classList.add('connected');
+            statusText.textContent = 'Connected';
+            logEvent('WebSocket Connected', false);
+            
+            // Send auth/init immediately
+            const initPayload = { jsonrpc: "2.0", id: `req-${++requestCounter}`, method: "session.initialize", params: {} };
+            logEvent(`SEND: ${JSON.stringify(initPayload)}`, true);
+            ws.send(JSON.stringify(initPayload));
+        };
+        
+        ws.onclose = () => { disconnect(); logEvent('WebSocket Closed', false); };
+        ws.onerror = (e) => { logEvent(`WebSocket Error`, false); };
+        
+        ws.onmessage = (event) => {
+            if (typeof event.data === 'string') {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    // Filter out chat.delta from the log panel
+                    if (data.method !== 'chat.delta') {
+                        logEvent(event.data);
+                    }
+                    
+                    if (data.method === 'chat.progress') {
+                        console.log("chat.progress received:", data);
+                        if (data.params.phase === 'context_stats' && data.params.context) {
+                            const ctx = data.params.context;
+                            if (contextEl) contextEl.textContent = `${ctx.used_tokens} / ${ctx.window_size}`;
+                            if (compactionEl) {
+                                if (ctx.strategy_applied) {
+                                    compactionEl.textContent = `Applied`;
+                                    compactionEl.style.color = '#f44336';
+                                } else {
+                                    compactionEl.textContent = `None (Available: ${ctx.available_tokens})`;
+                                    compactionEl.style.color = '#4caf50';
+                                }
+                            }
+                        } else {
+                            setProgress(`Processing: ${data.params.phase || data.params.status}`, null, true);
+                        }
+                    }
+                    
+                    if (data.method === 'chat.delta') {
+                        const delta = data.params?.delta || data.params?.choices?.[0]?.delta || {};
+                        const content = delta.content || '';
+                        
+                        if (content) {
+                            if (chunkCount === 0) {
+                                // First chunk received dynamically if TTFT not from server!
+                                const ttft = Date.now() - requestStartTime;
+                                ttftEl.textContent = `${ttft}ms`;
+                            }
+                            chunkCount++;
+                            approximateTokens += Math.ceil(content.length / 4); // rough approximation if no usage
+                            chatOutput.textContent += content;
+                        }
+                        setProgress('Receiving Response...', null, true);
+                    }
+                    
+                    if (data.method === 'chat.done') {
+                        setProgress(`Done${data.params.cancelled ? ' (Cancelled)' : ''}`, 100, true);
+                        
+                        const t = data.params.telemetry || {};
+                        const totalTime = t.total_duration_ms || (Date.now() - requestStartTime);
+                        const ttft = t.time_to_first_token_ms || (Date.now() - requestStartTime);
+                        
+                        if (ttftEl.textContent === '--') ttftEl.textContent = `${Math.round(ttft)}ms`;
+                        totalTimeEl.textContent = `${Math.round(totalTime)}ms`;
+                        
+                        const durationSec = totalTime / 1000;
+                        const outTokens = t.usage?.completion_tokens || approximateTokens;
+                        if (durationSec > 0 && outTokens > 0) {
+                            tpsEl.textContent = `${(outTokens / durationSec).toFixed(1)} t/s`;
+                        }
+                        
+                        if (t.usage) {
+                            usageEl.textContent = `Prompt: ${t.usage.prompt_tokens || 0} | Completion: ${t.usage.completion_tokens || 0} | Total: ${t.usage.total_tokens || 0}`;
+                        } else {
+                            usageEl.textContent = `Est. Completion Tokens: ~${approximateTokens}`;
+                        }
+                    }
+                } catch (e) {
+                    // Fallback log for non-JSON or parsing errors
+                    logEvent(event.data);
+                }
+            }
+        };
+    }
+
+    // Binary upload
+    async function uploadMedia(file) {
+        const streamId = `ui-media-${++streamIdCounter}`;
+        const startPayload = { jsonrpc: "2.0", id: `req-${++requestCounter}`, method: 'media.start', params: { stream_id: streamId, mime_type: file.type } };
+        logEvent(JSON.stringify(startPayload), true);
+        ws.send(JSON.stringify(startPayload));
+        
+        await new Promise(r => setTimeout(r, 100)); // wait for ack
+        
+        const arrayBuffer = await file.arrayBuffer();
+        const chunkSize = 64 * 1024; // 64KB
+        const totalBytes = arrayBuffer.byteLength;
+        let sentBytes = 0;
+        let seq = 0;
+        
+        setProgress(`Starting upload...`, 0, true);
+        
+        for (let offset = 0; offset < arrayBuffer.byteLength; offset += chunkSize) {
+            const chunk = arrayBuffer.slice(offset, offset + chunkSize);
+            const headerStr = JSON.stringify({ s: streamId, t: 'b', seq: seq++ });
+            const headerBuf = new TextEncoder().encode(headerStr);
+            const nullByte = new Uint8Array([0x00]);
+            const payloadBuf = new Uint8Array(chunk);
+            
+            const combined = new Uint8Array(headerBuf.length + nullByte.length + payloadBuf.length);
+            combined.set(headerBuf, 0);
+            combined.set(nullByte, headerBuf.length);
+            combined.set(payloadBuf, headerBuf.length + nullByte.length);
+            
+            ws.send(combined);
+            sentBytes += chunk.byteLength;
+            
+            // Only update progress bar, don't spam the log for every binary chunk!
+            setProgress(`Uploading Media`, (sentBytes / totalBytes) * 100, true);
+            
+            await new Promise(r => setTimeout(r, 10)); // simulate network and avoid buffer overflow
+        }
+        
+        const stopPayload = { jsonrpc: "2.0", id: `req-${++requestCounter}`, method: 'media.stop', params: { stream_id: streamId } };
+        logEvent(JSON.stringify(stopPayload), true);
+        ws.send(JSON.stringify(stopPayload));
+        setProgress(`Media sequence sent, wrapping up...`, 100, true);
+        await new Promise(r => setTimeout(r, 200)); // wait for processing
+        
+        return `gateway-media://${streamId}`;
+    }
+
+    // Submit Action
+    wsForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            alert('Please connect WebSocket first.');
+            return;
+        }
+
+        chatOutput.textContent = '';
+        telemetryPanel.style.display = 'flex';
+        ttftEl.textContent = '--';
+        totalTimeEl.textContent = '--';
+        tpsEl.textContent = '--';
+        usageEl.textContent = '--';
+        contextEl.textContent = '--';
+        compactionEl.textContent = '--';
+        compactionEl.style.color = '#ff9800';
+        requestStartTime = Date.now();
+        chunkCount = 0;
+        approximateTokens = 0;
+        
+        setProgress('Preparing request...', null, true);
+        
+        const fileInput = element.querySelector('#ws-file');
+        const textInput = element.querySelector('#ws-prompt');
+        const modelInput = modelSelect.value;
+        const file = fileInput.files[0];
+        
+        let content = [{ type: 'text', text: textInput.value || 'Hello' }];
+        
+        if (file) {
+            try {
+                const proxyUrl = await uploadMedia(file);
+                content.push({ type: 'image_url', image_url: { url: proxyUrl } });
+                setProgress('Media Uploaded. Requesting completion...', null, true);
+            } catch (err) {
+                console.error(err);
+                setProgress('Media Upload Failed.', 0, true);
+                return;
+            }
+        }
+        
+        currentRequestId = `req-chat-${++requestCounter}`;
+        const chatPayload = {
+            jsonrpc: "2.0",
+            id: currentRequestId,
+            method: 'chat.create',
+            params: {
+                model: modelInput,
+                messages: [{ role: 'user', content }]
+            }
+        };
+        
+        logEvent(JSON.stringify(chatPayload), true);
+        ws.send(JSON.stringify(chatPayload));
+    });
+    
+    // Cancel Action
+    btnCancel.addEventListener('click', () => {
+        if (!ws || !currentRequestId) return;
+        const cancelPayload = {
+            jsonrpc: "2.0",
+            id: `req-${++requestCounter}`,
+            method: 'chat.cancel',
+            params: { request_id: currentRequestId }
+        };
+        logEvent(JSON.stringify(cancelPayload), true);
+        ws.send(JSON.stringify(cancelPayload));
+        setProgress('Cancellation sent.', null, true);
+    });
+
+    btnConnect.addEventListener('click', connect);
+    btnDisconnect.addEventListener('click', disconnect);
+
+    // Cleanup when leaving page
+    element.hide = () => {
+        disconnect();
+        if (unsubscribeModels) unsubscribeModels();
+    };
+}
+</script>

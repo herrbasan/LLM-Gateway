@@ -66,7 +66,63 @@ export class ChatHandler {
      connection.ws.send(formatResponse(id, { updated: true }));
   }
 
+  _injectMediaStreams(connection, messages) {
+    const usedStreams = new Set();
+    const processedMessages = JSON.parse(JSON.stringify(messages || [])); // deep copy
+
+    const replaceMediaUrl = (url) => {
+      const match = url.match(/^gateway-media:\/\/([a-zA-Z0-9_-]+)$/);
+      if (match) {
+        const streamId = match[1];
+        if (connection.mediaStreams && connection.mediaStreams.has(streamId)) { 
+          const stream = connection.mediaStreams.get(streamId);
+          usedStreams.add(streamId);
+          const buffer = Buffer.concat(stream.chunks || []);
+          return `data:${stream.mimeType || 'application/octet-stream'};base64,${buffer.toString('base64')}`;
+        }
+      }
+      return url;
+    };
+
+    for (const msg of processedMessages) {
+      if (typeof msg.content === 'string') {
+        msg.content = msg.content.replace(/gateway-media:\/\/([a-zA-Z0-9_-]+)/g, (match, streamId) => {
+          if (connection.mediaStreams && connection.mediaStreams.has(streamId)) {
+            const stream = connection.mediaStreams.get(streamId);
+            usedStreams.add(streamId);
+            const buffer = Buffer.concat(stream.chunks);
+            return `data:${stream.mimeType || 'application/octet-stream'};base64,${buffer.toString('base64')}`;
+          }
+          return match;
+        });
+      } else if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (part.type === 'image_url' && part.image_url?.url) {
+            part.image_url.url = replaceMediaUrl(part.image_url.url);
+          } else if (part.type === 'image' && part.url) {
+            part.url = replaceMediaUrl(part.url);
+          } else if (part.type === 'text' && typeof part.text === 'string') {
+            part.text = part.text.replace(/gateway-media:\/\/([a-zA-Z0-9_-]+)/g, (match, streamId) => {
+              if (connection.mediaStreams && connection.mediaStreams.has(streamId)) {
+                const stream = connection.mediaStreams.get(streamId);
+                usedStreams.add(streamId);
+                const buffer = Buffer.concat(stream.chunks);
+                return `data:${stream.mimeType || 'application/octet-stream'};base64,${buffer.toString('base64')}`;
+              }
+              return match;
+            });
+          }
+        }
+      }
+    }
+
+    return { processedMessages, usedStreams };
+  }
+
   async _handleChatCompletion(connection, id, params, messages, model) {
+    // Inject proxy media streams
+    const { processedMessages, usedStreams } = this._injectMediaStreams(connection, messages);
+
     // Set up request context for state machine and multiplexing
     const requestContext = new RequestContext(id, params);
     connection.activeRequests.set(id, requestContext);
@@ -91,10 +147,10 @@ export class ChatHandler {
       // Fake a stream request to the router
       const requestObject = {
         model,
-        messages,
         stream: true,
         signal: requestContext.abortController.signal,
-        ...params
+        ...params,
+        messages: processedMessages // Needs to be after params to prevent overwriting
       };
 
       const resolvedModel = this.modelRouter.registry.resolveModel(model, 'chat');
@@ -109,7 +165,24 @@ export class ChatHandler {
 
       const result = await this.modelRouter.routeChatCompletion(requestObject);
 
+      const initialContext = result?.context || {
+        window_size: 8192,
+        used_tokens: 0,
+        available_tokens: 8192,
+        strategy_applied: false
+      };
+
+      if (result && result.context) {
+        connection.ws.send(formatNotification('chat.progress', {
+          request_id: id,
+          phase: 'context_stats',
+          context: initialContext
+        }));
+      }
+
       let fullAssistantResponse = '';
+      let finalUsage = null;
+      let chunkCounter = 0;
 
       if (result && typeof result.generator !== 'undefined') {
         for await (const chunk of result.generator) {
@@ -123,9 +196,14 @@ export class ChatHandler {
           if (typeof chunk === 'string') {
             content = chunk;
             chunkChoices = [{ index: 0, delta: { content } }];
-          } else if (chunk && chunk.choices && chunk.choices.length > 0) {
-            content = chunk.choices[0].delta?.content || '';
-            chunkChoices = chunk.choices;
+          } else if (chunk) {
+            if (chunk.choices && chunk.choices.length > 0) {
+              content = chunk.choices[0].delta?.content || '';
+              chunkChoices = chunk.choices;
+            }
+            if (chunk.usage) {
+              finalUsage = chunk.usage;
+            }
           }
 
           if (content) {
@@ -137,9 +215,27 @@ export class ChatHandler {
             choices: chunkChoices
           }));
           requestContext.chunksSent++;
+          chunkCounter++;
+
+          // Periodically update context stats during streaming to reflect output tokens
+          if (chunkCounter % 15 === 0) {
+            const tempOutputTokens = Math.ceil(fullAssistantResponse.length * 0.25);
+            const currentTotal = initialContext.used_tokens + tempOutputTokens;
+            connection.ws.send(formatNotification('chat.progress', {
+              request_id: id,
+              phase: 'context_stats',
+              context: {
+                ...initialContext,
+                used_tokens: currentTotal,
+                available_tokens: Math.max(0, initialContext.window_size - currentTotal)
+              }
+            }));
+          }
         }
       } else {
         const content = (typeof result === 'string') ? result : (result?.choices?.[0]?.message?.content || '');
+        if (result?.usage) finalUsage = result.usage;
+        
         fullAssistantResponse = content;
         connection.ws.send(formatNotification('chat.delta', {
           request_id: id,
@@ -155,6 +251,27 @@ export class ChatHandler {
           connection.conversationBuffer.push({ role: 'assistant', content: fullAssistantResponse });
         }
 
+        // Final context stats update combining prompt and exact output tokens
+        let finalOutputTokens = 0;
+        if (finalUsage && finalUsage.completion_tokens) {
+          finalOutputTokens = finalUsage.completion_tokens;
+        } else if (this.modelRouter.tokenEstimator) {
+          finalOutputTokens = await this.modelRouter.tokenEstimator.estimate(fullAssistantResponse, null, model);
+        } else {
+          finalOutputTokens = Math.ceil(fullAssistantResponse.length * 0.25);
+        }
+
+        const finalTotalTokens = initialContext.used_tokens + finalOutputTokens;
+        connection.ws.send(formatNotification('chat.progress', {
+             request_id: id,
+             phase: 'context_stats',
+             context: {
+                 ...initialContext,
+                 used_tokens: finalTotalTokens,
+                 available_tokens: Math.max(0, initialContext.window_size - finalTotalTokens)
+             }
+        }));
+
         requestContext.transition(RequestState.COMPLETED);
         
         wsMetrics.recordFirstTokenLatency(requestContext.firstTokenLatencyMs / 1000);
@@ -162,13 +279,21 @@ export class ChatHandler {
 
         connection.ws.send(formatNotification('chat.done', {
           request_id: id,
-          cancelled: false
+          cancelled: false,
+          telemetry: {
+            time_to_first_token_ms: requestContext.firstTokenLatencyMs,
+            total_duration_ms: requestContext.totalLatencyMs,
+            usage: finalUsage
+          }
         }));
       } else {
         wsMetrics.increment('ws_request_cancelled_total');
         connection.ws.send(formatNotification('chat.done', {
           request_id: id,
-          cancelled: true
+          cancelled: true,
+          telemetry: {
+            total_duration_ms: requestContext.totalLatencyMs
+          }
         }));
       }
 
@@ -183,6 +308,13 @@ export class ChatHandler {
         error: { code: ErrorCodes.INTERNAL_ERROR, message: err.message || 'Internal error' }
       }));
     } finally {
+      if (connection.mediaStreams) {
+        for (const streamId of usedStreams) {
+          const stream = connection.mediaStreams.get(streamId);
+          if (stream && stream.timeout) clearTimeout(stream.timeout);
+          connection.mediaStreams.delete(streamId);
+        }
+      }
       connection.activeRequests.delete(id);
     }
   }
