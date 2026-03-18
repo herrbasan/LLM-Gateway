@@ -154,7 +154,14 @@ export class ChatHandler {
       };
 
       const resolvedModel = this.modelRouter.registry.resolveModel(model, 'chat');
-      if (!resolvedModel || resolvedModel.config?.type !== 'chat') {
+      if (resolvedModel) {
+        // Emit model routing status to the client
+        connection.ws.send(formatNotification('chat.progress', {
+          request_id: id,
+          phase: 'model_routed',
+          model: resolvedModel.id,
+          provider: resolvedModel.adapter ? resolvedModel.adapter.name : 'unknown'
+        }));
       }
 
       // Progress context
@@ -191,8 +198,17 @@ export class ChatHandler {
           }
 
           // Apply Backpressure: Yield if the websocket internal buffer is full (e.g. > 64KB)
+          let throttled = false;
           while (connection.ws.bufferedAmount && connection.ws.bufferedAmount > 65536) {
-             await new Promise(resolve => setTimeout(resolve, 50));
+            if (!throttled) {
+              connection.ws.send(formatNotification('chat.progress', {
+                request_id: id,
+                phase: 'network_throttled',
+                message: 'Buffering downstream...'
+              }));
+              throttled = true;
+            }
+            await new Promise(resolve => setTimeout(resolve, 50));
           }
 
           let content = '';
@@ -203,7 +219,19 @@ export class ChatHandler {
             chunkChoices = [{ index: 0, delta: { content } }];
           } else if (chunk) {
             if (chunk.choices && chunk.choices.length > 0) {
-              content = chunk.choices[0].delta?.content || '';
+              const delta = chunk.choices[0].delta || {};
+              content = delta.content || '';
+              
+              // Forward reasoning/thinking markers explicitly as progress events
+              if (delta.reasoning_content && !requestContext.hasEmittedReasoning) {
+                requestContext.hasEmittedReasoning = true;
+                connection.ws.send(formatNotification('chat.progress', {
+                  request_id: id,
+                  phase: 'reasoning_started',
+                  message: 'Model is thinking...'
+                }));
+              }
+              
               chunkChoices = chunk.choices;
             }
             if (chunk.usage) {

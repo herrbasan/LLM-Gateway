@@ -1,5 +1,5 @@
 // src/websocket/handlers/media.js
-import { formatResponse, formatError, ErrorCodes } from '../protocol.js';
+import { formatResponse, formatError, formatNotification, ErrorCodes } from '../protocol.js';
 import { getLogger } from '../../utils/logger.js';
 import { parseBinaryFrame } from '../binary-protocol.js';
 
@@ -149,6 +149,23 @@ export class MediaHandler {
     stream.lastSequence = seq;
     stream.chunks.push(payload);
     stream.totalSize += payload.length;
+
+    // Send a progress notification every ~1MB
+    const MB = 1024 * 1024;
+    const previousMegabytes = Math.floor((stream.totalSize - payload.length) / MB);
+    const currentMegabytes = Math.floor(stream.totalSize / MB);
+    
+    if (currentMegabytes > previousMegabytes) {
+      try {
+        connection.ws.send(formatNotification('media.progress', {
+          stream_id: streamId,
+          bytes_received: stream.totalSize,
+          megabytes_received: currentMegabytes
+        }));
+      } catch (e) {
+        // ignore
+      }
+    }
 
     logger.debug(`Received binary frame for media ${streamId}, seq: ${seq}, bytes: ${payload.length}`);
   }
