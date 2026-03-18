@@ -190,6 +190,11 @@ export class ChatHandler {
             break;
           }
 
+          // Apply Backpressure: Yield if the websocket internal buffer is full (e.g. > 64KB)
+          while (connection.ws.bufferedAmount && connection.ws.bufferedAmount > 65536) {
+             await new Promise(resolve => setTimeout(resolve, 50));
+          }
+
           let content = '';
           let chunkChoices = [];
 

@@ -74,6 +74,31 @@ export class ConnectionManager {
     const connection = this.connections.get(id);
     if (!connection) return;
 
+    // Cancel active requests to prevent zombie downstream processing
+    if (connection.activeRequests) {
+      for (const [reqId, req] of connection.activeRequests.entries()) {
+        try {
+          if (typeof req.cancel === 'function') {
+            req.cancel();
+          }
+        } catch (e) {
+          logger.warn(`Failed to cancel request ${reqId} on connection close`, { error: e.message });
+        }
+      }
+    }
+
+    // Cleanup lingering media/audio tracking timers or maps
+    if (connection.mediaStreams) {
+      for (const stream of connection.mediaStreams.values()) {
+        if (stream.timeout) clearTimeout(stream.timeout);
+      }
+      connection.mediaStreams.clear();
+    }
+
+    if (connection.audioStreams) {
+      connection.audioStreams.clear();
+    }
+
     // Cleanup resources
     logger.info(`WebSocket connection closed: ${id}`, { duration: Date.now() - connection.connectedAt });
     this.connections.delete(id);
