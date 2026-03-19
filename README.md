@@ -2,6 +2,13 @@
 
 A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface with support for multiple providers.
 
+Recent behavior of note:
+
+- Chat requests without `max_tokens` get an automatically derived output budget based on remaining context
+- Chat responses expose `context.resolved_max_tokens` and `context.max_tokens_source`
+- WebSocket `chat.cancel` aborts the upstream provider request
+- HTTP client disconnects abort in-flight upstream chat generation for supported adapters
+
 ## Quick Start
 
 ```bash
@@ -26,6 +33,7 @@ LLM Gateway provides a unified interface to multiple LLM providers:
 - **Stateless** - No server-side session management
 - **Model-centric config** - Each model configured independently
 - **Context compaction** - Automatic context window management
+- **Generation cancellation** - WebSocket cancellation and HTTP disconnect abort propagation
 
 ## Configuration
 
@@ -63,6 +71,22 @@ Define models in `config.json`:
   }
 }
 ```
+
+For SSE clients, closing the HTTP connection now aborts the upstream provider request instead of letting generation continue in the background.
+
+### WebSocket Cancellation
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "chat.cancel",
+  "params": {
+    "request_id": "req-123"
+  }
+}
+```
+
+The server completes the cancelled stream with `chat.done` and `cancelled: true`.
 
 ## Usage
 
@@ -133,6 +157,9 @@ Each model is independently configured with:
 ## API Documentation
 
 See [docs/api_documentation.md](docs/api_documentation.md) for complete API reference.
+
+- REST/OpenAI-compatible reference: [docs/api_rest.md](docs/api_rest.md)
+- WebSocket real-time reference: [docs/api_websocket.md](docs/api_websocket.md)
 
 ## Development
 

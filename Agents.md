@@ -12,6 +12,8 @@
 
 - **v2.0**: Model-centric architecture (✅ **COMPLETE**)
 - **v1.x**: Provider-centric architecture (archived docs in `docs/_Archive/`)
+- **Chat cancellation**: WebSocket `chat.cancel` and HTTP disconnect abort propagation are implemented for fetch-based chat adapters
+- **Implicit max token budget**: Omitted `max_tokens` values are resolved centrally from remaining context and surfaced in response context metadata
 
 ## Documentation
 
@@ -37,6 +39,13 @@ Each model is independently configured with:
 - Automatic context compaction when needed
 
 ## Development Notes
+
+### Active Chat Behavior
+
+- WebSocket clients cancel generation with `chat.cancel` and `params.request_id`
+- HTTP chat requests abort upstream generation when the client disconnects
+- Response context now exposes `resolved_max_tokens` and `max_tokens_source`
+- `kimi-cli` is no longer part of the active chat path; do not rely on it for current behavior documentation
 
 ### Logging
 
