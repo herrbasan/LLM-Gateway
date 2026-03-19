@@ -1,4 +1,5 @@
 import { createThinkingStripper } from '../utils/format.js';
+import { isAbortError } from '../utils/http.js';
 
 export class StreamHandler {
     constructor(res) {
@@ -96,7 +97,9 @@ export class StreamHandler {
                 this.res.write('data: [DONE]\n\n');
             }
         } catch (err) {
-            console.error('[StreamHandler] Streaming error:', err);
+            if (!isAbortError(err)) {
+                console.error('[StreamHandler] Streaming error:', err);
+            }
         } finally {
             this.cleanup();
             if (!this.res.writableEnded) {

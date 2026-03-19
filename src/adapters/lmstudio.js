@@ -33,6 +33,7 @@ export function createLmStudioAdapter() {
 
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
+                signal: request.signal,
                 body: JSON.stringify(payload)
             });
 
@@ -63,6 +64,7 @@ export function createLmStudioAdapter() {
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
                 headers: { 'Accept': 'text/event-stream' },
+                signal: request.signal,
                 body: JSON.stringify(payload)
             });
 

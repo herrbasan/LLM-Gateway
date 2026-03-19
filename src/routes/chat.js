@@ -1,13 +1,51 @@
 import { StreamHandler } from '../streaming/sse.js';
 import { getLogger } from '../utils/logger.js';
+import { isAbortError } from '../utils/http.js';
 
 const logger = getLogger();
+
+function bindRequestAbortController(req, res) {
+    const controller = new AbortController();
+
+    const cleanup = () => {
+        req.off('aborted', abort);
+        req.off('close', onClose);
+        res.off('close', onClose);
+        res.off('finish', cleanup);
+    };
+
+    const abort = () => {
+        if (!controller.signal.aborted) {
+            controller.abort();
+        }
+        cleanup();
+    };
+
+    const onClose = () => {
+        if (!res.writableEnded) {
+            abort();
+            return;
+        }
+        cleanup();
+    };
+
+    req.once('aborted', abort);
+    req.once('close', onClose);
+    res.once('close', onClose);
+    res.once('finish', cleanup);
+
+    return controller;
+}
 
 export function createChatHandler(router, ticketRegistry) {
     return async (req, res, next) => {
         try {
             const isAsync = String(req.headers['x-async'] || '').toLowerCase() === 'true';
             const isStream = req.body.stream === true;
+            const abortController = !isAsync ? bindRequestAbortController(req, res) : null;
+            const requestBody = abortController
+                ? { ...req.body, signal: abortController.signal }
+                : req.body;
 
             // Handle streaming
             if (isStream && !isAsync) {
@@ -15,7 +53,7 @@ export function createChatHandler(router, ticketRegistry) {
                 streamHandler.start();
 
                 try {
-                    const result = await router.routeChatCompletion(req.body);
+                    const result = await router.routeChatCompletion(requestBody);
                     
                     if (result.stream) {
                         const thinkingConfig = router.registry.getThinkingConfig();
@@ -30,6 +68,10 @@ export function createChatHandler(router, ticketRegistry) {
                         streamHandler.end(result);
                     }
                 } catch (err) {
+                    if (isAbortError(err)) {
+                        logger.info('[ChatRoute] Streaming request aborted by client');
+                        return;
+                    }
                     streamHandler.error(err);
                 }
                 return;
@@ -70,10 +112,14 @@ export function createChatHandler(router, ticketRegistry) {
             }
 
             // Regular non-streaming request
-            const result = await router.routeChatCompletion(req.body);
+            const result = await router.routeChatCompletion(requestBody);
             res.status(200).json(result);
 
         } catch (err) {
+            if (isAbortError(err)) {
+                logger.info('[ChatRoute] Request aborted by client');
+                return;
+            }
             next(err);
         }
     };

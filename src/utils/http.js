@@ -10,12 +10,29 @@ const DEFAULT_RETRY_OPTIONS = {
     statusCodesToRetry: [429, 500, 502, 503, 504]
 };
 
+function createAbortError() {
+    const error = new Error('Request aborted');
+    error.name = 'AbortError';
+    error.code = 'ABORT_ERR';
+    return error;
+}
+
+export function isAbortError(error) {
+    return error?.name === 'AbortError'
+        || error?.code === 'ABORT_ERR'
+        || error?.message === 'Request aborted';
+}
+
 export async function request(url, options = {}) {
     const retryOptions = { ...DEFAULT_RETRY_OPTIONS, ...(options.retry || {}) };
     let attempt = 0;
 
     const fetchOptions = { ...options };
     delete fetchOptions.retry;
+
+    if (fetchOptions.signal?.aborted) {
+        throw createAbortError();
+    }
 
     while (attempt <= retryOptions.maxRetries) {
         try {
@@ -44,6 +61,10 @@ export async function request(url, options = {}) {
 
             return response;
         } catch (error) {
+            if (isAbortError(error) || fetchOptions.signal?.aborted) {
+                throw createAbortError();
+            }
+
             const isNetworkError = !error.status || error.name === 'TypeError' || error.code === 'ECONNREFUSED' || error.message.includes('fetch');
             const shouldRetry = (error.isRetriable || isNetworkError) && attempt < retryOptions.maxRetries;
 

@@ -29,6 +29,7 @@ export function createOllamaAdapter() {
 
             const res = await httpRequest(`${endpoint}/api/chat`, {
                 method: 'POST',
+                signal: request.signal,
                 body: JSON.stringify(payload)
             });
 
@@ -72,6 +73,7 @@ export function createOllamaAdapter() {
 
             const res = await httpRequest(`${endpoint}/api/chat`, {
                 method: 'POST',
+                signal: request.signal,
                 body: JSON.stringify(payload)
             });
 

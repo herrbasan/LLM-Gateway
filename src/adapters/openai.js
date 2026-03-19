@@ -35,6 +35,7 @@ export function createOpenAIAdapter() {
             const res = await httpRequest(`${endpoint}/chat/completions`, {
                 method: 'POST',
                 headers,
+                signal: request.signal,
                 body: JSON.stringify(payload)
             });
 
@@ -71,6 +72,7 @@ export function createOpenAIAdapter() {
             const res = await httpRequest(`${endpoint}/chat/completions`, {
                 method: 'POST',
                 headers,
+                signal: request.signal,
                 body: JSON.stringify(payload)
             });
 

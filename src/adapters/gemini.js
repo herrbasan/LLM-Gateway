@@ -30,6 +30,7 @@ export function createGeminiAdapter() {
 
             const res = await httpRequest(`${endpoint}/models/${model}:generateContent?key=${apiKey}`, {
                 method: 'POST',
+                signal: request.signal,
                 body: JSON.stringify(payload)
             });
 
@@ -79,6 +80,7 @@ export function createGeminiAdapter() {
 
             const res = await httpRequest(`${endpoint}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`, {
                 method: 'POST',
+                signal: request.signal,
                 body: JSON.stringify(payload)
             });
 

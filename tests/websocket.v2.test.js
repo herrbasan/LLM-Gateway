@@ -217,14 +217,17 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
         });
 
         // Add a long-running response block
+        let observedSignal;
         app.locals.router.routeChatCompletion = async (request) => {
+            observedSignal = request.signal;
             return {
                 stream: true,
                 generator: (async function* () {
-                    for (let i = 0; i < 20; i++) {
-                        yield { choices: [{ delta: { content: 'ping' } }] };
-                        await new Promise(r => setTimeout(r, 10)); // slow it down
-                    }
+                    yield { choices: [{ delta: { content: 'ping' } }] };
+                    await new Promise((resolve, reject) => {
+                        request.signal.addEventListener('abort', resolve, { once: true });
+                        setTimeout(() => reject(new Error('Abort signal not propagated')), 1000);
+                    });
                 })()
             };
         };
@@ -265,6 +268,8 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
         const done = events.find(e => e.method === 'chat.done');
         expect(done).to.exist;
         expect(done.params.cancelled).to.be.true;
+        expect(observedSignal).to.exist;
+        expect(observedSignal.aborted).to.equal(true);
     });
 
     it('Incremental updates: handles chat.append and maintains buffer', async () => {

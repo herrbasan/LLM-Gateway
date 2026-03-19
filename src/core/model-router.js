@@ -54,7 +54,7 @@ export class ModelRouter {
         logger.info('[ModelRouter] Routing chat completion', { model: modelId, adapter: modelConfig.adapter });
 
         // Transform request to adapter format
-        const opts = this._buildChatOptions(request);
+        const opts = this._buildChatOptions(request, modelConfig);
 
         // Process images only if requested (fetch remote URLs and resize/transcode)
         const processedMessages = await this._processImagesInMessages(
@@ -70,7 +70,14 @@ export class ModelRouter {
             adapter
         );
 
-        const finalOpts = { ...opts, messages };
+        const resolvedMaxTokens = this._resolveChatMaxTokens(request, modelConfig, context);
+        const responseContext = this._annotateContext(context, resolvedMaxTokens, request);
+
+        const finalOpts = {
+            ...opts,
+            messages,
+            maxTokens: resolvedMaxTokens
+        };
 
         // Route to adapter
         let result;
@@ -78,11 +85,11 @@ export class ModelRouter {
             return {
                 stream: true,
                 generator: adapter.streamComplete(modelConfig, finalOpts),
-                context
+                context: responseContext
             };
         } else {
             result = await adapter.chatComplete(modelConfig, finalOpts);
-            result.context = context;
+            result.context = responseContext;
         }
 
         // Apply thinking strip if configured
@@ -208,13 +215,48 @@ export class ModelRouter {
     /**
      * Build chat options from request.
      */
-    _buildChatOptions(request) {
+    _buildChatOptions(request, modelConfig) {
         return {
             messages: request.messages || [],
             maxTokens: request.max_tokens,
+            signal: request.signal,
             temperature: request.temperature,
             systemPrompt: request.systemPrompt,
             schema: request.response_format?.json_schema?.schema
+        };
+    }
+
+    /**
+     * Resolve the max output token budget for a chat request.
+     */
+    _resolveChatMaxTokens(request, modelConfig, context) {
+        if (request.max_tokens != null) {
+            return request.max_tokens;
+        }
+
+        const contextWindow = modelConfig?.capabilities?.contextWindow || 8192;
+        const usedTokens = context?.used_tokens || 0;
+        const safetyMargin = Math.floor(contextWindow * 0.20);
+        const remainingBudget = contextWindow - usedTokens - safetyMargin;
+
+        return Math.max(1, remainingBudget);
+    }
+
+    /**
+     * Attach resolved token budget metadata to response context.
+     */
+    _annotateContext(context, resolvedMaxTokens, request) {
+        if (!context) {
+            return {
+                resolved_max_tokens: resolvedMaxTokens,
+                max_tokens_source: request.max_tokens != null ? 'explicit' : 'implicit'
+            };
+        }
+
+        return {
+            ...context,
+            resolved_max_tokens: resolvedMaxTokens,
+            max_tokens_source: request.max_tokens != null ? 'explicit' : 'implicit'
         };
     }
 

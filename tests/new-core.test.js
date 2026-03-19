@@ -288,4 +288,61 @@ describe('ModelRouter', () => {
         expect(list.object).to.equal('list');
         expect(list.data).to.have.length(4);
     });
+
+    it('should preserve explicit max_tokens when resolving chat options', () => {
+        const resolved = router._resolveChatMaxTokens(
+            { max_tokens: 2048 },
+            VALID_CONFIG.models['gemini-flash'],
+            { used_tokens: 1000 }
+        );
+
+        expect(resolved).to.equal(2048);
+    });
+
+    it('should derive implicit max_tokens from remaining context budget', () => {
+        const resolved = router._resolveChatMaxTokens(
+            {},
+            VALID_CONFIG.models['gemini-flash'],
+            { used_tokens: 400000 }
+        );
+
+        expect(resolved).to.equal(438861);
+    });
+
+    it('should clamp implicit max_tokens to at least one token', () => {
+        const resolved = router._resolveChatMaxTokens(
+            {},
+            VALID_CONFIG.models['gemini-flash'],
+            { used_tokens: 1048576 }
+        );
+
+        expect(resolved).to.equal(1);
+    });
+
+    it('should annotate context with resolved implicit max_tokens', () => {
+        const context = router._annotateContext(
+            {
+                window_size: 1048576,
+                used_tokens: 400000,
+                available_tokens: 648576,
+                strategy_applied: false
+            },
+            438861,
+            {}
+        );
+
+        expect(context).to.include({
+            resolved_max_tokens: 438861,
+            max_tokens_source: 'implicit'
+        });
+    });
+
+    it('should annotate context with explicit max_tokens source', () => {
+        const context = router._annotateContext(null, 2048, { max_tokens: 2048 });
+
+        expect(context).to.deep.equal({
+            resolved_max_tokens: 2048,
+            max_tokens_source: 'explicit'
+        });
+    });
 });

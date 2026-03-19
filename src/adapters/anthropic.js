@@ -119,6 +119,7 @@ export function createAnthropicAdapter() {
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
                 headers: buildHeaders(apiKey),
+                signal: request.signal,
                 body: JSON.stringify(body)
             });
 
@@ -154,6 +155,7 @@ export function createAnthropicAdapter() {
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
                 headers: buildHeaders(apiKey),
+                signal: request.signal,
                 body: JSON.stringify(body)
             });
 

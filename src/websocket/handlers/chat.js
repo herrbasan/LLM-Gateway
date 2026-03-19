@@ -2,6 +2,7 @@ import { formatResponse, formatError, formatNotification, ErrorCodes } from '../
 import { RequestContext, RequestState } from '../request-state.js';
 import { getLogger } from '../../utils/logger.js';
 import { wsMetrics } from '../metrics.js';
+import { isAbortError } from '../../utils/http.js';
 
 const logger = getLogger();
 
@@ -331,6 +332,21 @@ export class ChatHandler {
       }
 
     } catch (err) {
+      if (requestContext.state === RequestState.CANCELLED || isAbortError(err)) {
+        if (requestContext.state !== RequestState.CANCELLED) {
+          requestContext.cancel();
+        }
+        wsMetrics.increment('ws_request_cancelled_total');
+        connection.ws.send(formatNotification('chat.done', {
+          request_id: id,
+          cancelled: true,
+          telemetry: {
+            total_duration_ms: requestContext.totalLatencyMs
+          }
+        }));
+        return;
+      }
+
       if (requestContext.state !== RequestState.CANCELLED && requestContext.state !== RequestState.FAILED) {
         requestContext.transition(RequestState.FAILED);
       }
