@@ -4,6 +4,9 @@
  */
 
 import { request as httpRequest } from '../utils/http.js';
+import { getLogger } from '../utils/logger.js';
+
+const logger = getLogger();
 
 function formatMessages(messages) {
     if (!messages) return [];
@@ -48,7 +51,10 @@ export function createKimiAdapter() {
                 stream: false
             };
 
-            if (request.maxTokens) payload.max_tokens = request.maxTokens;
+            if (request.maxTokens) {
+                payload.max_tokens = request.maxTokens;
+                payload.max_completion_tokens = request.maxTokens;
+            }
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
             if (request.schema && capabilities?.structuredOutput) {
                 payload.response_format = {
@@ -56,6 +62,16 @@ export function createKimiAdapter() {
                     json_schema: { name: 'response', strict: true, schema: request.schema }
                 };
             }
+
+            logger.info('[KimiAdapter] Sending chat completion request', {
+                endpoint,
+                model,
+                stream: false,
+                max_tokens: payload.max_tokens ?? null,
+                max_completion_tokens: payload.max_completion_tokens ?? null,
+                temperature: payload.temperature ?? null,
+                messages: summarizeMessagesForLog(payload.messages)
+            });
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
@@ -86,6 +102,13 @@ export function createKimiAdapter() {
                 delete message.reasoning_content;
             }
 
+            logger.info('[KimiAdapter] Received chat completion response', {
+                model,
+                finish_reason: data?.choices?.[0]?.finish_reason ?? null,
+                usage: data?.usage ?? null,
+                content_chars: message?.content?.length ?? 0
+            });
+
             return {
                 ...data,
                 provider: 'kimi'
@@ -105,8 +128,21 @@ export function createKimiAdapter() {
                 stream: true
             };
 
-            if (request.maxTokens) payload.max_tokens = request.maxTokens;
+            if (request.maxTokens) {
+                payload.max_tokens = request.maxTokens;
+                payload.max_completion_tokens = request.maxTokens;
+            }
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
+
+            logger.info('[KimiAdapter] Sending streaming chat request', {
+                endpoint,
+                model,
+                stream: true,
+                max_tokens: payload.max_tokens ?? null,
+                max_completion_tokens: payload.max_completion_tokens ?? null,
+                temperature: payload.temperature ?? null,
+                messages: summarizeMessagesForLog(payload.messages)
+            });
 
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
@@ -119,6 +155,11 @@ export function createKimiAdapter() {
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
+            let chunkCount = 0;
+            let contentChars = 0;
+            let lastFinishReason = null;
+            let finalUsage = null;
+            let sawDoneMarker = false;
 
             try {
                 let reasoningBuffer = '';
@@ -126,7 +167,18 @@ export function createKimiAdapter() {
                 
                 while (true) {
                     const { done, value } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        logger.info('[KimiAdapter] Stream reader completed', {
+                            model,
+                            chunk_count: chunkCount,
+                            content_chars: contentChars,
+                            reasoning_chars: reasoningBuffer.length,
+                            last_finish_reason: lastFinishReason,
+                            saw_done_marker: sawDoneMarker,
+                            usage: finalUsage
+                        });
+                        break;
+                    }
 
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
@@ -139,6 +191,7 @@ export function createKimiAdapter() {
                         if (trimmed.startsWith('data:')) {
                             const data = trimmed.slice(5).trimStart();
                             if (data === '[DONE]') {
+                                sawDoneMarker = true;
                                 // Flush any remaining reasoning
                                 if (reasoningBuffer && !sentReasoning) {
                                     yield {
@@ -154,12 +207,28 @@ export function createKimiAdapter() {
                                         }]
                                     };
                                 }
+                                logger.info('[KimiAdapter] Stream received DONE marker', {
+                                    model,
+                                    chunk_count: chunkCount,
+                                    content_chars: contentChars,
+                                    reasoning_chars: reasoningBuffer.length,
+                                    last_finish_reason: lastFinishReason,
+                                    usage: finalUsage
+                                });
                                 yield { data: '[DONE]' };
                                 return;
                             }
                             try {
                                 const parsed = JSON.parse(data);
+                                chunkCount++;
                                 const delta = parsed.choices?.[0]?.delta;
+                                const finishReason = parsed.choices?.[0]?.finish_reason;
+                                if (finishReason !== undefined && finishReason !== null) {
+                                    lastFinishReason = finishReason;
+                                }
+                                if (parsed.usage) {
+                                    finalUsage = parsed.usage;
+                                }
                                 
                                 if (delta) {
                                     // Handle reasoning_content accumulation
@@ -175,6 +244,9 @@ export function createKimiAdapter() {
                                     } else if (delta.content && !reasoningBuffer) {
                                         // No reasoning, just content
                                     }
+                                    if (delta.content) {
+                                        contentChars += delta.content.length;
+                                    }
                                     
                                     // Skip empty deltas
                                     if (!delta.content && !delta.role) continue;
@@ -183,12 +255,25 @@ export function createKimiAdapter() {
                                 parsed.provider = 'kimi';
                                 yield parsed;
                             } catch (e) {
-                                // Skip broken JSON
+                                logger.warn('[KimiAdapter] Failed to parse stream chunk', {
+                                    model,
+                                    error: e.message,
+                                    raw_preview: data.slice(0, 300)
+                                });
                             }
                         }
                     }
                 }
             } finally {
+                logger.info('[KimiAdapter] Stream closed', {
+                    model,
+                    chunk_count: chunkCount,
+                    content_chars: contentChars,
+                    reasoning_chars: buffer.length,
+                    last_finish_reason: lastFinishReason,
+                    saw_done_marker: sawDoneMarker,
+                    usage: finalUsage
+                });
                 reader.releaseLock();
             }
         },
@@ -198,6 +283,42 @@ export function createKimiAdapter() {
          */
         async createEmbedding(modelConfig, request) {
             throw new Error('[KimiAdapter] Embeddings not supported');
+        },
+
+        async countMessageTokens(messages, modelConfig) {
+            const { apiKey, adapterModel, headers: customHeaders } = modelConfig;
+            const model = adapterModel || 'kimi-k2.5';
+
+            const headers = buildHeaders(apiKey, {}, customHeaders);
+            const payload = {
+                model,
+                messages: formatMessages(messages || [])
+            };
+
+            const tokenizerBases = resolveTokenizerEndpoints(modelConfig);
+            let lastError = null;
+
+            for (const tokenizerBase of tokenizerBases) {
+                try {
+                    const res = await httpRequest(`${tokenizerBase}/tokenizers/estimate-token-count`, {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify(payload)
+                    });
+
+                    const data = await res.json();
+                    const totalTokens = data?.data?.total_tokens;
+                    if (typeof totalTokens !== 'number') {
+                        throw new Error('[KimiAdapter] Invalid response from token estimate API');
+                    }
+
+                    return totalTokens;
+                } catch (error) {
+                    lastError = error;
+                }
+            }
+
+            throw lastError || new Error('[KimiAdapter] Token estimate failed');
         },
 
         /**
@@ -251,6 +372,44 @@ export function createKimiAdapter() {
     };
 }
 
+function summarizeMessagesForLog(messages) {
+    if (!Array.isArray(messages)) {
+        return [];
+    }
+
+    return messages.map((message, index) => {
+        if (typeof message?.content === 'string') {
+            return {
+                index,
+                role: message.role,
+                chars: message.content.length,
+                preview: message.content.slice(0, 160)
+            };
+        }
+
+        if (Array.isArray(message?.content)) {
+            const text = message.content
+                .filter(part => part?.type === 'text')
+                .map(part => part.text || '')
+                .join('\n');
+
+            return {
+                index,
+                role: message.role,
+                content_parts: message.content.length,
+                text_chars: text.length,
+                preview: text.slice(0, 160)
+            };
+        }
+
+        return {
+            index,
+            role: message?.role,
+            content_type: typeof message?.content
+        };
+    });
+}
+
 function buildHeaders(apiKey, extra = {}, custom = {}) {
     const headers = { ...extra, ...custom };
     if (apiKey) {
@@ -261,4 +420,38 @@ function buildHeaders(apiKey, extra = {}, custom = {}) {
         headers['User-Agent'] = 'Kilo-Code/1.0';
     }
     return headers;
+}
+
+function resolveTokenizerEndpoints(modelConfig = {}) {
+    const explicitEndpoint = normalizeBaseUrl(modelConfig.tokenizerEndpoint);
+    if (explicitEndpoint) {
+        return [explicitEndpoint];
+    }
+
+    const endpoint = normalizeBaseUrl(modelConfig.endpoint);
+    if (!endpoint) {
+        return [];
+    }
+
+    try {
+        const url = new URL(endpoint);
+        if (url.hostname === 'api.kimi.com' && url.pathname.startsWith('/coding/')) {
+            return [
+                'https://api.moonshot.cn/v1',
+                'https://api.moonshot.ai/v1'
+            ];
+        }
+    } catch {
+        // Fall through to using the configured endpoint as-is.
+    }
+
+    return [endpoint];
+}
+
+function normalizeBaseUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+        return null;
+    }
+
+    return value.replace(/\/+$/, '');
 }

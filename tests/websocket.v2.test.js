@@ -272,6 +272,84 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
         expect(observedSignal.aborted).to.equal(true);
     });
 
+    it('Context stats: keeps router context stable during streaming', async () => {
+        const client = await connectClient();
+
+        await sendAndWait(client, {
+            jsonrpc: "2.0",
+            id: "auth-context",
+            method: "session.initialize",
+            params: {}
+        });
+
+        app.locals.router.routeChatCompletion = async () => ({
+            stream: true,
+            context: {
+                window_size: 256000,
+                used_tokens: 22000,
+                available_tokens: 234000,
+                strategy_applied: false,
+                resolved_max_tokens: 12000,
+                max_tokens_source: 'implicit'
+            },
+            generator: (async function* () {
+                yield { choices: [{ delta: { content: 'first' } }] };
+                await new Promise(r => setTimeout(r, 5));
+                yield {
+                    choices: [{ delta: { content: ' second' } }],
+                    usage: {
+                        prompt_tokens: 22000,
+                        completion_tokens: 400,
+                        total_tokens: 22400
+                    }
+                };
+            })()
+        });
+
+        client.send(JSON.stringify({
+            jsonrpc: "2.0",
+            id: "req-context",
+            method: "chat.create",
+            params: {
+                model: "gemini-flash",
+                messages: [{ role: "user", content: "Check context stability." }]
+            }
+        }));
+
+        const contexts = [];
+        let doneContext = null;
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Timeout waiting for context stats')), 5000);
+
+            client.on('message', function handler(data) {
+                const msg = JSON.parse(data.toString());
+
+                if (msg.method === 'chat.progress' && msg.params.phase === 'context_stats') {
+                    contexts.push(msg.params.context);
+                }
+
+                if (msg.method === 'chat.done' && msg.params.request_id === 'req-context') {
+                    doneContext = msg.params.context;
+                    client.off('message', handler);
+                    clearTimeout(timeout);
+                    resolve();
+                }
+            });
+        });
+
+        expect(contexts.length).to.be.greaterThan(0);
+        expect(contexts.every(ctx => ctx.used_tokens === 22000)).to.equal(true);
+        expect(contexts.every(ctx => ctx.available_tokens === 234000)).to.equal(true);
+        expect(doneContext).to.deep.equal({
+            window_size: 256000,
+            used_tokens: 22000,
+            available_tokens: 234000,
+            strategy_applied: false,
+            resolved_max_tokens: 12000,
+            max_tokens_source: 'implicit'
+        });
+    });
+
     it('Incremental updates: handles chat.append and maintains buffer', async () => {
         const client = await connectClient();
         

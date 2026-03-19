@@ -55,10 +55,11 @@ export class ModelRouter {
 
         // Transform request to adapter format
         const opts = this._buildChatOptions(request, modelConfig);
+        const sanitizedMessages = this._sanitizeIncomingMessages(opts.messages);
 
         // Process images only if requested (fetch remote URLs and resize/transcode)
         const processedMessages = await this._processImagesInMessages(
-            opts.messages,
+            sanitizedMessages,
             modelConfig,
             request.image_processing  // { resize: 'auto'|'low'|'high'|number, transcode: 'jpg'|'png'|'webp' }
         );
@@ -79,6 +80,18 @@ export class ModelRouter {
             maxTokens: resolvedMaxTokens
         };
 
+        logger.info('[ModelRouter] Chat request prepared', {
+            model: modelId,
+            adapter: modelConfig.adapter,
+            stream: request.stream === true,
+            message_count: messages.length,
+            messages: this._summarizeMessagesForLog(messages),
+            context: responseContext,
+            explicit_max_tokens: request.max_tokens ?? null,
+            resolved_max_tokens: resolvedMaxTokens,
+            temperature: finalOpts.temperature ?? null
+        });
+
         // Route to adapter
         let result;
         if (request.stream) {
@@ -97,7 +110,7 @@ export class ModelRouter {
         if (thinkingConfig.enabled && result.choices?.[0]?.message?.content) {
             result.choices[0].message.content = stripThinking(
                 result.choices[0].message.content,
-                thinkingConfig
+                this._getThinkingStripConfig(thinkingConfig)
             );
         }
 
@@ -227,6 +240,65 @@ export class ModelRouter {
     }
 
     /**
+     * Remove prior assistant reasoning traces from incoming chat history.
+     */
+    _sanitizeIncomingMessages(messages) {
+        if (!Array.isArray(messages) || messages.length === 0) {
+            return [];
+        }
+
+        const stripConfig = this._getThinkingStripConfig(this.registry.getThinkingConfig());
+
+        return messages.reduce((acc, message) => {
+            if (!message || typeof message !== 'object') {
+                return acc;
+            }
+
+            if (message.role !== 'assistant') {
+                acc.push(message);
+                return acc;
+            }
+
+            const sanitizedMessage = this._sanitizeAssistantMessage(message, stripConfig);
+            if (sanitizedMessage) {
+                acc.push(sanitizedMessage);
+            }
+            return acc;
+        }, []);
+    }
+
+    _sanitizeAssistantMessage(message, stripConfig) {
+        if (typeof message.content === 'string') {
+            const content = stripThinking(message.content, stripConfig);
+            return content ? { ...message, content } : null;
+        }
+
+        if (Array.isArray(message.content)) {
+            const content = message.content
+                .map(part => {
+                    if (part?.type !== 'text') {
+                        return part;
+                    }
+
+                    const text = stripThinking(part.text || '', stripConfig);
+                    return text ? { ...part, text } : null;
+                })
+                .filter(Boolean);
+
+            return content.length > 0 ? { ...message, content } : null;
+        }
+
+        return message;
+    }
+
+    _getThinkingStripConfig(thinkingConfig = {}) {
+        return {
+            tags: thinkingConfig.stripTags || thinkingConfig.tags,
+            orphanCloseAsSeparator: thinkingConfig.orphanCloseAsSeparator
+        };
+    }
+
+    /**
      * Resolve the max output token budget for a chat request.
      */
     _resolveChatMaxTokens(request, modelConfig, context) {
@@ -334,6 +406,21 @@ export class ModelRouter {
      * Estimate tokens for messages.
      */
     async _estimateMessagesTokens(messages, adapter, modelConfig) {
+        if (adapter && typeof adapter.countMessageTokens === 'function') {
+            try {
+                const nativeCount = await adapter.countMessageTokens(messages, modelConfig);
+                if (typeof nativeCount === 'number' && Number.isFinite(nativeCount)) {
+                    return nativeCount;
+                }
+            } catch (err) {
+                logger.warn('[ModelRouter] Native message token count failed, falling back to estimator', {
+                    adapter: modelConfig?.adapter,
+                    model: modelConfig?.adapterModel,
+                    error: err.message
+                });
+            }
+        }
+
         let total = 3; // Base overhead for the request formatting
         for (const m of messages) {
             total += 4; // Base overhead for each message (role, formatting)
@@ -356,6 +443,44 @@ export class ModelRouter {
             available_tokens: Math.max(0, contextWindow - usedTokens),
             strategy_applied: strategyApplied
         };
+    }
+
+    _summarizeMessagesForLog(messages) {
+        if (!Array.isArray(messages)) {
+            return [];
+        }
+
+        return messages.map((message, index) => {
+            if (typeof message?.content === 'string') {
+                return {
+                    index,
+                    role: message.role,
+                    chars: message.content.length,
+                    preview: message.content.slice(0, 160)
+                };
+            }
+
+            if (Array.isArray(message?.content)) {
+                const text = message.content
+                    .filter(part => part?.type === 'text')
+                    .map(part => part.text || '')
+                    .join('\n');
+
+                return {
+                    index,
+                    role: message.role,
+                    content_parts: message.content.length,
+                    text_chars: text.length,
+                    preview: text.slice(0, 160)
+                };
+            }
+
+            return {
+                index,
+                role: message?.role,
+                content_type: typeof message?.content
+            };
+        });
     }
 
     /**

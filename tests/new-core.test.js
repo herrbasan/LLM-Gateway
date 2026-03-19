@@ -345,4 +345,67 @@ describe('ModelRouter', () => {
             max_tokens_source: 'explicit'
         });
     });
+
+    it('should strip assistant thinking traces from incoming history', () => {
+        const messages = [
+            { role: 'user', content: 'Hello' },
+            { role: 'assistant', content: '<think>private reasoning</think>Visible answer' },
+            { role: 'assistant', content: '<think>cut off reasoning only</think>' }
+        ];
+
+        const sanitized = router._sanitizeIncomingMessages(messages);
+
+        expect(sanitized).to.deep.equal([
+            { role: 'user', content: 'Hello' },
+            { role: 'assistant', content: 'Visible answer' }
+        ]);
+    });
+
+    it('should use sanitized assistant history when routing chat completions', async () => {
+        let capturedMessages;
+        router.adapters.set('gemini', {
+            chatComplete: async (modelConfig, request) => {
+                capturedMessages = request.messages;
+                return {
+                    id: 'chatcmpl-test',
+                    object: 'chat.completion',
+                    created: 0,
+                    model: 'gemini-flash',
+                    choices: [{
+                        index: 0,
+                        message: { role: 'assistant', content: 'ok' },
+                        finish_reason: 'stop'
+                    }]
+                };
+            }
+        });
+
+        await router.routeChatCompletion({
+            model: 'gemini-flash',
+            messages: [
+                { role: 'user', content: 'Hello' },
+                { role: 'assistant', content: '<think>private reasoning</think>Visible answer' },
+                { role: 'assistant', content: '<think>reasoning only</think>' },
+                { role: 'user', content: 'Continue' }
+            ]
+        });
+
+        expect(capturedMessages).to.deep.equal([
+            { role: 'user', content: 'Hello' },
+            { role: 'assistant', content: 'Visible answer' },
+            { role: 'user', content: 'Continue' }
+        ]);
+    });
+
+    it('should prefer native whole-message token counting when available', async () => {
+        const count = await router._estimateMessagesTokens(
+            [{ role: 'user', content: 'Hello' }],
+            {
+                countMessageTokens: async () => 4321
+            },
+            VALID_CONFIG.models['gemini-flash']
+        );
+
+        expect(count).to.equal(4321);
+    });
 });

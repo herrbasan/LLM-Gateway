@@ -2,19 +2,16 @@ import fs from 'fs';
 
 let content = fs.readFileSync('src/adapters/ollama.js', 'utf8');
 
-// Update capabilities
 content = content.replace(
     'structuredOutput: false, // Ollama does not natively support structured outputs mapping standardly',
     'structuredOutput: true,'
 );
 
-// Update buildPayload signature
 content = content.replace(
     'const buildPayload = ({ prompt, systemPrompt, maxTokens, temperature, messages, stream }, requestedModel = \'auto\') => {',
     'const buildPayload = ({ prompt, systemPrompt, maxTokens, temperature, schema, messages, stream }, requestedModel = \'auto\') => {'
 );
 
-// Map schema to format
 content = content.replace(
     'if (typeof temperature === \'number\') payload.options.temperature = temperature;',
     'if (typeof temperature === \'number\') payload.options.temperature = temperature;\n        if (schema && defaultCapabilities.structuredOutput) payload.format = schema;'
@@ -22,7 +19,6 @@ content = content.replace(
 
 fs.writeFileSync('src/adapters/ollama.js', content, 'utf8');
 
-// Also update openai.js to drop unsupported parameters for specific endpoints
 let openaiContent = fs.readFileSync('src/adapters/openai.js', 'utf8');
 
 openaiContent = openaiContent.replace(

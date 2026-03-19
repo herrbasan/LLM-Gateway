@@ -188,9 +188,8 @@ export class ChatHandler {
         }));
       }
 
-      let fullAssistantResponse = '';
       let finalUsage = null;
-      let chunkCounter = 0;
+      let fullAssistantResponse = '';
 
       if (result && typeof result.generator !== 'undefined') {
         for await (const chunk of result.generator) {
@@ -249,22 +248,6 @@ export class ChatHandler {
             choices: chunkChoices
           }));
           requestContext.chunksSent++;
-          chunkCounter++;
-
-          // Periodically update context stats during streaming to reflect output tokens
-          if (chunkCounter % 15 === 0) {
-            const tempOutputTokens = Math.ceil(fullAssistantResponse.length * 0.25);
-            const currentTotal = initialContext.used_tokens + tempOutputTokens;
-            connection.ws.send(formatNotification('chat.progress', {
-              request_id: id,
-              phase: 'context_stats',
-              context: {
-                ...initialContext,
-                used_tokens: currentTotal,
-                available_tokens: Math.max(0, initialContext.window_size - currentTotal)
-              }
-            }));
-          }
         }
       } else {
         const content = (typeof result === 'string') ? result : (result?.choices?.[0]?.message?.content || '');
@@ -285,27 +268,6 @@ export class ChatHandler {
           connection.conversationBuffer.push({ role: 'assistant', content: fullAssistantResponse });
         }
 
-        // Final context stats update combining prompt and exact output tokens
-        let finalOutputTokens = 0;
-        if (finalUsage && finalUsage.completion_tokens) {
-          finalOutputTokens = finalUsage.completion_tokens;
-        } else if (this.modelRouter.tokenEstimator) {
-          finalOutputTokens = await this.modelRouter.tokenEstimator.estimate(fullAssistantResponse, null, model);
-        } else {
-          finalOutputTokens = Math.ceil(fullAssistantResponse.length * 0.25);
-        }
-
-        const finalTotalTokens = initialContext.used_tokens + finalOutputTokens;
-        connection.ws.send(formatNotification('chat.progress', {
-             request_id: id,
-             phase: 'context_stats',
-             context: {
-                 ...initialContext,
-                 used_tokens: finalTotalTokens,
-                 available_tokens: Math.max(0, initialContext.window_size - finalTotalTokens)
-             }
-        }));
-
         requestContext.transition(RequestState.COMPLETED);
         
         wsMetrics.recordFirstTokenLatency(requestContext.firstTokenLatencyMs / 1000);
@@ -314,6 +276,7 @@ export class ChatHandler {
         connection.ws.send(formatNotification('chat.done', {
           request_id: id,
           cancelled: false,
+          context: initialContext,
           telemetry: {
             time_to_first_token_ms: requestContext.firstTokenLatencyMs,
             total_duration_ms: requestContext.totalLatencyMs,
@@ -325,6 +288,7 @@ export class ChatHandler {
         connection.ws.send(formatNotification('chat.done', {
           request_id: id,
           cancelled: true,
+          context: initialContext,
           telemetry: {
             total_duration_ms: requestContext.totalLatencyMs
           }
@@ -340,6 +304,7 @@ export class ChatHandler {
         connection.ws.send(formatNotification('chat.done', {
           request_id: id,
           cancelled: true,
+          context: null,
           telemetry: {
             total_duration_ms: requestContext.totalLatencyMs
           }

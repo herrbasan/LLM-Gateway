@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DEFAULT_LOG_RETENTION_DAYS = 1;
 
 /**
  * Centralized logging utility.
@@ -16,6 +17,7 @@ class Logger {
         this.logStream = null;
         this.startTime = new Date();
         this.sessionId = this._generateSessionId();
+        this.logRetentionDays = this._resolveLogRetentionDays();
         
         this._initializeLogFile();
     }
@@ -31,6 +33,8 @@ class Logger {
         if (!fs.existsSync(logsDir)) {
             fs.mkdirSync(logsDir, { recursive: true });
         }
+
+        this._pruneOldLogs(logsDir);
         
         // Create timestamped filename: YYYYMMDD-HHMMSS-sessionId.log
         const timestamp = this.startTime.toISOString()
@@ -47,10 +51,56 @@ class Logger {
         this._writeToFile(`LLM Gateway Session: ${this.sessionId}`);
         this._writeToFile(`Started: ${this.startTime.toISOString()}`);
         this._writeToFile(`Log File: ${this.logFile}`);
+        this._writeToFile(`Retention Days: ${this.logRetentionDays}`);
         this._writeToFile(`========================================\n`);
-        
-        // Also log to console that we're logging
-        console.log(`[Logger] Session ${this.sessionId} - Logging to: ${this.logFile}`);
+    }
+
+    _resolveLogRetentionDays() {
+        const rawValue = process.env.LOG_RETENTION_DAYS;
+        if (rawValue == null || rawValue === '') {
+            return DEFAULT_LOG_RETENTION_DAYS;
+        }
+
+        const parsed = Number(rawValue);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+            return DEFAULT_LOG_RETENTION_DAYS;
+        }
+
+        return parsed;
+    }
+
+    _pruneOldLogs(logsDir) {
+        if (this.logRetentionDays <= 0) {
+            return;
+        }
+
+        const cutoffMs = this.startTime.getTime() - (this.logRetentionDays * 24 * 60 * 60 * 1000);
+
+        try {
+            const entries = fs.readdirSync(logsDir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isFile() || !entry.name.endsWith('.log')) {
+                    continue;
+                }
+
+                const filePath = path.join(logsDir, entry.name);
+                const stats = fs.statSync(filePath);
+                if (stats.mtimeMs < cutoffMs) {
+                    fs.unlinkSync(filePath);
+                }
+            }
+        } catch (error) {
+            const fallback = `[${new Date().toISOString()}] [WARN] [Logger] Failed to prune old logs ${JSON.stringify({ error: error.message, retentionDays: this.logRetentionDays })}`;
+            if (this.logStream) {
+                this._writeToFile(fallback);
+            } else {
+                try {
+                    fs.appendFileSync(path.join(logsDir, 'logger-retention-errors.log'), fallback + '\n');
+                } catch {
+                    // Ignore retention logging failures.
+                }
+            }
+        }
     }
     
     _writeToFile(message) {
@@ -73,7 +123,6 @@ class Logger {
     info(message, meta = {}) {
         const formatted = this._formatMessage('INFO', message, meta);
         this._writeToFile(formatted);
-        console.log(`[INFO] ${message}`, meta);
     }
     
     /**
@@ -82,7 +131,6 @@ class Logger {
     warn(message, meta = {}) {
         const formatted = this._formatMessage('WARN', message, meta);
         this._writeToFile(formatted);
-        console.warn(`[WARN] ${message}`, meta);
     }
     
     /**
@@ -96,15 +144,6 @@ class Logger {
         } : (meta || {});
         const formatted = this._formatMessage('ERROR', message, errorMeta);
         this._writeToFile(formatted);
-        
-        // Only log to console if there's something to show
-        const hasError = error && error.message;
-        const hasMeta = meta && Object.keys(meta).length > 0;
-        if (hasError || hasMeta) {
-            console.error(`[ERROR] ${message}`, error || '', meta || '');
-        } else {
-            console.error(`[ERROR] ${message}`);
-        }
     }
     
     /**
@@ -114,7 +153,6 @@ class Logger {
         if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
             const formatted = this._formatMessage('DEBUG', message, meta);
             this._writeToFile(formatted);
-            console.debug(`[DEBUG] ${message}`, meta);
         }
     }
     
