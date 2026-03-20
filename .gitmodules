@@ -1,6 +1,3 @@
 [submodule "WebAdmin/lib/nui_wc2"]
 	path = WebAdmin/lib/nui_wc2
 	url = https://github.com/herrbasan/nui_wc2.git
-[submodule "WebAdmin/LLM-Gateway-Chat"]
-	path = WebAdmin/LLM-Gateway-Chat
-	url = https://github.com/herrbasan/LLM-Gateway-Chat.git
