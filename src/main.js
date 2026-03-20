@@ -9,7 +9,6 @@ async function main() {
   // Initialize logger first - creates timestamped log file
   const logger = createLogger();
   
-  try {
     logger.info('Starting LLM Gateway', { 
       nodeEnv: process.env.NODE_ENV || 'development',
       nodeVersion: process.version 
@@ -71,14 +70,6 @@ async function main() {
       logger.error('Unhandled rejection', null, { reason, promise });
     });
 
-  } catch (error) {
-    logger.error('Failed to start LLM Gateway', error, { 
-      message: error?.message,
-      stack: error?.stack 
-    });
-    logger.close();
-    process.exit(1);
-  }
 }
 
 main();

@@ -41,6 +41,26 @@ export class ModelRouter {
     }
 
     /**
+     * Reload configuration dynamically without restarting the server.
+     */
+    reloadConfig(newConfig) {
+        if (!newConfig) {
+            throw new Error('[ModelRouter] Config is required for reload');
+        }
+
+        this.registry = new ModelRegistry(newConfig);
+        this.tokenEstimator = new TokenEstimator(newConfig);
+        this.contextManager = new ContextManager(newConfig);
+        this.mediaProcessor = new MediaProcessorClient(newConfig);
+        
+        logger.info('[ModelRouter] Configuration reloaded', {
+            models: this.registry.getModelIds().length,
+            adapters: Array.from(this.adapters.keys()),
+            mediaProcessor: this.mediaProcessor.isEnabled ? 'enabled' : 'disabled'
+        });
+    }
+
+    /**
      * Route a chat completion request.
      */
     async routeChatCompletion(request) {

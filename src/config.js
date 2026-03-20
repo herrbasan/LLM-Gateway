@@ -6,6 +6,24 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+export async function getRawConfig() {
+  const configPath = path.resolve(__dirname, '../config.json');
+  try {
+    const rawParams = await fs.readFile(configPath, 'utf8');
+    return JSON.parse(rawParams);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw new Error(`Config file not found at ${configPath}.`);
+    }
+    throw new Error(`Failed to parse raw config: ${error.message}`);
+  }
+}
+
+export async function saveRawConfig(newConfig) {
+  const configPath = path.resolve(__dirname, '../config.json');
+  await fs.writeFile(configPath, JSON.stringify(newConfig, null, 2), 'utf8');
+}
+
 export async function loadConfig() {
   const configPath = path.resolve(__dirname, '../config.json');
   try {
@@ -32,9 +50,9 @@ export async function loadConfig() {
         }
       }
     };
-    
+
     substituteEnvVars(parsed);
-    
+
     // Add default mediaProcessor config for Multimodal capabilities
     if (!parsed.mediaProcessor) {
         parsed.mediaProcessor = {

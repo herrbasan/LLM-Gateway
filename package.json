@@ -23,11 +23,13 @@
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "js-tiktoken": "^1.0.21"
+    "js-tiktoken": "^1.0.21",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "chai": "^6.2.2",
     "eventsource": "^4.1.0",
+    "fs-extra": "^11.3.4",
     "mocha": "^11.7.5",
     "supertest": "^7.2.2"
   }

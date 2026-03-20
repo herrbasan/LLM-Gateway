@@ -12,6 +12,7 @@ import { createImagesHandler } from './routes/images.js';
 import { createAudioSpeechHandler } from './routes/audio.js';
 import { createVideosHandler } from './routes/videos.js';
 import { createSystemEventsHandler } from './routes/events.js';
+import { createConfigGetHandler, createConfigStoreHandler } from './routes/config.js';
 import { ModelRouter } from './core/model-router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
 import { getLogger } from './utils/logger.js';
@@ -157,6 +158,10 @@ export function createServer(config) {
 
   // System Events endpoint
   app.get('/v1/system/events', createSystemEventsHandler());
+
+  // Config endpoints
+  app.get('/config', createConfigGetHandler());
+  app.post('/config/store', createConfigStoreHandler(router));
 
   // Media generation endpoints
   app.post('/v1/images/generations', createImagesHandler(router));
