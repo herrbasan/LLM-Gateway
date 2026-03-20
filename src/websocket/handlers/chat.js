@@ -15,10 +15,15 @@ export class ChatHandler {
 
   async handleCreate(connection, message) {
     const { id, params } = message;
+    connection.lastActive = Date.now();
 
     if (!params) {
       wsMetrics.increment('ws_errors_total', ErrorCodes.INVALID_PARAMS);
-      connection.ws.send(formatError(id, ErrorCodes.INVALID_PARAMS, 'Missing parameters'));
+      this._sendWsMessage(connection, formatError(id, ErrorCodes.INVALID_PARAMS, 'Missing parameters'), {
+        requestId: id,
+        event: 'error_response',
+        details: { code: ErrorCodes.INVALID_PARAMS, reason: 'Missing parameters' }
+      });
       return;
     }
 
@@ -26,7 +31,11 @@ export class ChatHandler {
 
     if (!messages || !Array.isArray(messages)) {
       wsMetrics.increment('ws_errors_total', ErrorCodes.INVALID_PARAMS);
-      connection.ws.send(formatError(id, ErrorCodes.INVALID_PARAMS, '"messages" must be an array'));
+      this._sendWsMessage(connection, formatError(id, ErrorCodes.INVALID_PARAMS, '"messages" must be an array'), {
+        requestId: id,
+        event: 'error_response',
+        details: { code: ErrorCodes.INVALID_PARAMS, reason: 'messages must be an array' }
+      });
       return;
     }
 
@@ -38,9 +47,14 @@ export class ChatHandler {
 
   async handleAppend(connection, message) {
     const { id, params } = message;
+    connection.lastActive = Date.now();
 
     if (!params || !params.message) {
-      connection.ws.send(formatError(id, ErrorCodes.INVALID_PARAMS, 'Missing parameters (message)'));
+      this._sendWsMessage(connection, formatError(id, ErrorCodes.INVALID_PARAMS, 'Missing parameters (message)'), {
+        requestId: id,
+        event: 'error_response',
+        details: { code: ErrorCodes.INVALID_PARAMS, reason: 'Missing parameters (message)' }
+      });
       return;
     }
 
@@ -64,7 +78,12 @@ export class ChatHandler {
 
   async handleSettingsUpdate(connection, message) {
      const { id, params } = message;
-     connection.ws.send(formatResponse(id, { updated: true }));
+      connection.lastActive = Date.now();
+      this._sendWsMessage(connection, formatResponse(id, { updated: true }), {
+       requestId: id,
+       event: 'response',
+       details: { updated: true }
+      });
   }
 
   _injectMediaStreams(connection, messages) {
@@ -127,20 +146,40 @@ export class ChatHandler {
     // Set up request context for state machine and multiplexing
     const requestContext = new RequestContext(id, params);
     connection.activeRequests.set(id, requestContext);
+    logger.info('[ChatHandler] Request registered', {
+      connectionId: connection.id,
+      requestId: id,
+      model,
+      messageCount: processedMessages.length,
+      activeRequests: connection.activeRequests.size,
+      readyState: describeReadyState(connection.ws.readyState)
+    });
 
     // Initial Processing State
     try {
       requestContext.transition(RequestState.PROCESSING);
-      connection.ws.send(formatResponse(id, { accepted: true }));
+      this._sendWsMessage(connection, formatResponse(id, { accepted: true }), {
+        requestId: id,
+        event: 'response',
+        details: { accepted: true }
+      });
       
       // Progress routing
-      connection.ws.send(formatNotification('chat.progress', {
+      this._sendWsMessage(connection, formatNotification('chat.progress', {
         request_id: id,
         phase: 'routing'
-      }));
+      }), {
+        requestId: id,
+        event: 'chat.progress',
+        details: { phase: 'routing' }
+      });
     } catch (err) {
       wsMetrics.increment('ws_errors_total', ErrorCodes.INTERNAL_ERROR);
-      connection.ws.send(formatError(id, ErrorCodes.INTERNAL_ERROR, 'State transition failed'));
+      this._sendWsMessage(connection, formatError(id, ErrorCodes.INTERNAL_ERROR, 'State transition failed'), {
+        requestId: id,
+        event: 'error_response',
+        details: { code: ErrorCodes.INTERNAL_ERROR, reason: 'State transition failed' }
+      });
       return;
     }
 
@@ -157,19 +196,31 @@ export class ChatHandler {
       const resolvedModel = this.modelRouter.registry.resolveModel(model, 'chat');
       if (resolvedModel) {
         // Emit model routing status to the client
-        connection.ws.send(formatNotification('chat.progress', {
+        this._sendWsMessage(connection, formatNotification('chat.progress', {
           request_id: id,
           phase: 'model_routed',
           model: resolvedModel.id,
           provider: resolvedModel.adapter ? resolvedModel.adapter.name : 'unknown'
-        }));
+        }), {
+          requestId: id,
+          event: 'chat.progress',
+          details: {
+            phase: 'model_routed',
+            model: resolvedModel.id,
+            provider: resolvedModel.adapter ? resolvedModel.adapter.name : 'unknown'
+          }
+        });
       }
 
       // Progress context
-      connection.ws.send(formatNotification('chat.progress', {
+      this._sendWsMessage(connection, formatNotification('chat.progress', {
         request_id: id,
         phase: 'context'
-      }));
+      }), {
+        requestId: id,
+        event: 'chat.progress',
+        details: { phase: 'context' }
+      });
 
       const result = await this.modelRouter.routeChatCompletion(requestObject);
 
@@ -181,11 +232,20 @@ export class ChatHandler {
       };
 
       if (result && result.context) {
-        connection.ws.send(formatNotification('chat.progress', {
+        this._sendWsMessage(connection, formatNotification('chat.progress', {
           request_id: id,
           phase: 'context_stats',
           context: initialContext
-        }));
+        }), {
+          requestId: id,
+          event: 'chat.progress',
+          details: {
+            phase: 'context_stats',
+            used_tokens: initialContext.used_tokens,
+            available_tokens: initialContext.available_tokens,
+            resolved_max_tokens: initialContext.resolved_max_tokens ?? null
+          }
+        });
       }
 
       let finalUsage = null;
@@ -201,11 +261,18 @@ export class ChatHandler {
           let throttled = false;
           while (connection.ws.bufferedAmount && connection.ws.bufferedAmount > 65536) {
             if (!throttled) {
-              connection.ws.send(formatNotification('chat.progress', {
+              this._sendWsMessage(connection, formatNotification('chat.progress', {
                 request_id: id,
                 phase: 'network_throttled',
                 message: 'Buffering downstream...'
-              }));
+              }), {
+                requestId: id,
+                event: 'chat.progress',
+                details: {
+                  phase: 'network_throttled',
+                  bufferedAmount: connection.ws.bufferedAmount || 0
+                }
+              });
               throttled = true;
             }
             await new Promise(resolve => setTimeout(resolve, 50));
@@ -225,11 +292,15 @@ export class ChatHandler {
               // Forward reasoning/thinking markers explicitly as progress events
               if (delta.reasoning_content && !requestContext.hasEmittedReasoning) {
                 requestContext.hasEmittedReasoning = true;
-                connection.ws.send(formatNotification('chat.progress', {
+                this._sendWsMessage(connection, formatNotification('chat.progress', {
                   request_id: id,
                   phase: 'reasoning_started',
                   message: 'Model is thinking...'
-                }));
+                }), {
+                  requestId: id,
+                  event: 'chat.progress',
+                  details: { phase: 'reasoning_started' }
+                });
               }
               
               chunkChoices = chunk.choices;
@@ -243,10 +314,19 @@ export class ChatHandler {
             fullAssistantResponse += content;
           }
 
-          connection.ws.send(formatNotification('chat.delta', {
+          this._sendWsMessage(connection, formatNotification('chat.delta', {
             request_id: id,
             choices: chunkChoices
-          }));
+          }), {
+            requestId: id,
+            event: 'chat.delta',
+            details: {
+              chunkIndex: requestContext.chunksSent + 1,
+              contentChars: content.length,
+              accumulatedChars: fullAssistantResponse.length,
+              choices: chunkChoices.length
+            }
+          });
           requestContext.chunksSent++;
         }
       } else {
@@ -254,13 +334,22 @@ export class ChatHandler {
         if (result?.usage) finalUsage = result.usage;
         
         fullAssistantResponse = content;
-        connection.ws.send(formatNotification('chat.delta', {
+        this._sendWsMessage(connection, formatNotification('chat.delta', {
           request_id: id,
           choices: [{
             index: 0,
             delta: { content }
           }]
-        }));
+        }), {
+          requestId: id,
+          event: 'chat.delta',
+          details: {
+            chunkIndex: 1,
+            contentChars: content.length,
+            accumulatedChars: fullAssistantResponse.length,
+            choices: 1
+          }
+        });
       }
 
       if (requestContext.state !== RequestState.CANCELLED) {
@@ -273,7 +362,17 @@ export class ChatHandler {
         wsMetrics.recordFirstTokenLatency(requestContext.firstTokenLatencyMs / 1000);
         wsMetrics.recordRequestDuration(requestContext.totalLatencyMs / 1000);
 
-        connection.ws.send(formatNotification('chat.done', {
+        logger.info('[ChatHandler] Request completed before final send', {
+          connectionId: connection.id,
+          requestId: id,
+          chunksSent: requestContext.chunksSent,
+          responseChars: fullAssistantResponse.length,
+          readyState: describeReadyState(connection.ws.readyState),
+          bufferedAmount: connection.ws.bufferedAmount || 0,
+          usage: finalUsage
+        });
+
+        this._sendWsMessage(connection, formatNotification('chat.done', {
           request_id: id,
           cancelled: false,
           context: initialContext,
@@ -282,17 +381,42 @@ export class ChatHandler {
             total_duration_ms: requestContext.totalLatencyMs,
             usage: finalUsage
           }
-        }));
+        }), {
+          requestId: id,
+          event: 'chat.done',
+          details: {
+            cancelled: false,
+            chunksSent: requestContext.chunksSent,
+            responseChars: fullAssistantResponse.length,
+            usage: finalUsage
+          }
+        });
       } else {
         wsMetrics.increment('ws_request_cancelled_total');
-        connection.ws.send(formatNotification('chat.done', {
+        logger.info('[ChatHandler] Request cancelled before final send', {
+          connectionId: connection.id,
+          requestId: id,
+          chunksSent: requestContext.chunksSent,
+          readyState: describeReadyState(connection.ws.readyState),
+          bufferedAmount: connection.ws.bufferedAmount || 0
+        });
+
+        this._sendWsMessage(connection, formatNotification('chat.done', {
           request_id: id,
           cancelled: true,
           context: initialContext,
           telemetry: {
             total_duration_ms: requestContext.totalLatencyMs
           }
-        }));
+        }), {
+          requestId: id,
+          event: 'chat.done',
+          details: {
+            cancelled: true,
+            chunksSent: requestContext.chunksSent,
+            responseChars: fullAssistantResponse.length
+          }
+        });
       }
 
     } catch (err) {
@@ -301,14 +425,32 @@ export class ChatHandler {
           requestContext.cancel();
         }
         wsMetrics.increment('ws_request_cancelled_total');
-        connection.ws.send(formatNotification('chat.done', {
+        logger.info('[ChatHandler] Request aborted', {
+          connectionId: connection.id,
+          requestId: id,
+          chunksSent: requestContext.chunksSent,
+          readyState: describeReadyState(connection.ws.readyState),
+          bufferedAmount: connection.ws.bufferedAmount || 0,
+          error: err.message
+        });
+
+        this._sendWsMessage(connection, formatNotification('chat.done', {
           request_id: id,
           cancelled: true,
           context: null,
           telemetry: {
             total_duration_ms: requestContext.totalLatencyMs
           }
-        }));
+        }), {
+          requestId: id,
+          event: 'chat.done',
+          details: {
+            cancelled: true,
+            chunksSent: requestContext.chunksSent,
+            aborted: true,
+            error: err.message
+          }
+        });
         return;
       }
 
@@ -317,11 +459,25 @@ export class ChatHandler {
       }
       wsMetrics.increment('ws_errors_total', ErrorCodes.INTERNAL_ERROR);
       logger.error(`Error in chat.create/append [${id}]:`, err);
-      connection.ws.send(formatNotification('chat.error', {
+      this._sendWsMessage(connection, formatNotification('chat.error', {
         request_id: id,
         error: { code: ErrorCodes.INTERNAL_ERROR, message: err.message || 'Internal error' }
-      }));
+      }), {
+        requestId: id,
+        event: 'chat.error',
+        details: { code: ErrorCodes.INTERNAL_ERROR, error: err.message || 'Internal error' }
+      });
     } finally {
+      logger.info('[ChatHandler] Request cleanup', {
+        connectionId: connection.id,
+        requestId: id,
+        finalState: requestContext.state,
+        activeRequestsBeforeDelete: connection.activeRequests.size,
+        chunksSent: requestContext.chunksSent,
+        readyState: describeReadyState(connection.ws.readyState),
+        bufferedAmount: connection.ws.bufferedAmount || 0
+      });
+
       if (connection.mediaStreams) {
         for (const streamId of usedStreams) {
           const stream = connection.mediaStreams.get(streamId);
@@ -330,6 +486,11 @@ export class ChatHandler {
         }
       }
       connection.activeRequests.delete(id);
+      logger.info('[ChatHandler] Request deregistered', {
+        connectionId: connection.id,
+        requestId: id,
+        activeRequestsRemaining: connection.activeRequests.size
+      });
     }
   }
 
@@ -339,7 +500,174 @@ export class ChatHandler {
 
     const requestContext = connection.activeRequests.get(params.request_id);
     if (requestContext) {
+      logger.info('[ChatHandler] Cancel requested', {
+        connectionId: connection.id,
+        requestId: params.request_id,
+        requestState: requestContext.state,
+        readyState: describeReadyState(connection.ws.readyState)
+      });
       requestContext.cancel();
+    } else {
+      logger.warn('[ChatHandler] Cancel requested for unknown request', {
+        connectionId: connection.id,
+        requestId: params.request_id,
+        activeRequests: Array.from(connection.activeRequests.keys())
+      });
     }
   }
+
+  _sendWsMessage(connection, payload, metadata = {}) {
+    connection.lastActive = Date.now();
+
+    const readyState = connection.ws.readyState;
+    const readyStateLabel = describeReadyState(readyState);
+    const bufferedAmount = connection.ws.bufferedAmount || 0;
+    const summary = summarizePayload(payload);
+    const shouldLogAttempt = shouldLogWsSendAttempt(metadata, summary);
+
+    if (shouldLogAttempt) {
+      logger.info('[ChatHandler] WS send attempt', {
+        connectionId: connection.id,
+        requestId: metadata.requestId || summary.requestId || null,
+        event: metadata.event || summary.event,
+        readyState: readyStateLabel,
+        bufferedAmount,
+        payloadBytes: Buffer.byteLength(payload, 'utf8'),
+        summary,
+        details: metadata.details || null
+      });
+    }
+
+    if (readyState !== 1) {
+      logger.warn('[ChatHandler] WS send on non-open socket', {
+        connectionId: connection.id,
+        requestId: metadata.requestId || summary.requestId || null,
+        event: metadata.event || summary.event,
+        readyState: readyStateLabel,
+        bufferedAmount,
+        details: metadata.details || null
+      });
+    }
+
+    try {
+      connection.ws.send(payload, (error) => {
+        if (error) {
+          logger.warn('[ChatHandler] WS send callback error', {
+            connectionId: connection.id,
+            requestId: metadata.requestId || summary.requestId || null,
+            event: metadata.event || summary.event,
+            readyState: describeReadyState(connection.ws.readyState),
+            bufferedAmount: connection.ws.bufferedAmount || 0,
+            error: error.message
+          });
+          return;
+        }
+
+        if (shouldLogAttempt) {
+          logger.info('[ChatHandler] WS send success', {
+            connectionId: connection.id,
+            requestId: metadata.requestId || summary.requestId || null,
+            event: metadata.event || summary.event,
+            readyState: describeReadyState(connection.ws.readyState),
+            bufferedAmount: connection.ws.bufferedAmount || 0,
+            details: metadata.details || null
+          });
+        }
+      });
+    } catch (error) {
+      logger.warn('[ChatHandler] WS send threw synchronously', {
+        connectionId: connection.id,
+        requestId: metadata.requestId || summary.requestId || null,
+        event: metadata.event || summary.event,
+        readyState: readyStateLabel,
+        bufferedAmount,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+}
+
+function describeReadyState(readyState) {
+  switch (readyState) {
+    case 0:
+      return 'CONNECTING';
+    case 1:
+      return 'OPEN';
+    case 2:
+      return 'CLOSING';
+    case 3:
+      return 'CLOSED';
+    default:
+      return `UNKNOWN(${readyState})`;
+  }
+}
+
+function summarizePayload(payload) {
+  try {
+    const parsed = JSON.parse(payload);
+    const params = parsed.params || {};
+    const event = parsed.method || (parsed.result ? 'response' : parsed.error ? 'error' : 'unknown');
+    const summary = {
+      event,
+      requestId: parsed.id ?? params.request_id ?? null
+    };
+
+    if (parsed.method === 'chat.progress') {
+      summary.phase = params.phase || null;
+    }
+
+    if (parsed.method === 'chat.delta') {
+      const content = params.choices?.[0]?.delta?.content || '';
+      summary.contentChars = content.length;
+      summary.contentPreview = content.slice(0, 120);
+    }
+
+    if (parsed.method === 'chat.done') {
+      summary.cancelled = params.cancelled === true;
+      summary.totalDurationMs = params.telemetry?.total_duration_ms ?? null;
+    }
+
+    if (parsed.method === 'chat.error') {
+      summary.errorCode = params.error?.code ?? null;
+      summary.errorMessage = params.error?.message ?? null;
+    }
+
+    if (parsed.result) {
+      summary.resultKeys = Object.keys(parsed.result);
+    }
+
+    if (parsed.error) {
+      summary.errorCode = parsed.error.code;
+      summary.errorMessage = parsed.error.message;
+    }
+
+    return summary;
+  } catch {
+    return {
+      event: 'raw',
+      requestId: null,
+      preview: payload.slice(0, 160)
+    };
+  }
+}
+
+function shouldLogWsSendAttempt(metadata, summary) {
+  const event = metadata.event || summary.event;
+  const details = metadata.details || {};
+
+  if (event === 'chat.done' || event === 'chat.error' || event === 'error_response' || event === 'response') {
+    return true;
+  }
+
+  if (event === 'chat.progress') {
+    return details.phase === 'network_throttled' || details.phase === 'reasoning_started';
+  }
+
+  if (event === 'chat.delta') {
+    const chunkIndex = details.chunkIndex || 0;
+    return chunkIndex === 1 || chunkIndex % 200 === 0;
+  }
+
+  return false;
 }

@@ -36,6 +36,7 @@ export class ConnectionManager {
       id: connectionId,
       ws,
       ip: req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] || null,
       connectedAt: Date.now(),
       lastActive: Date.now(),
       isAlive: true,
@@ -49,18 +50,45 @@ export class ConnectionManager {
     };
 
     this.connections.set(connectionId, connection);
+    logger.info(`WebSocket connection opened: ${connectionId}`, {
+      ip: connection.ip,
+      userAgent: connection.userAgent,
+      activeConnections: this.connections.size
+    });
     wsMetrics.increment('ws_connections_total');
     wsMetrics.set('ws_connections_active', this.connections.size);
     // Handle ping/pong for keep-alive
     ws.on('pong', () => {
       if (this.connections.has(connectionId)) {
-        this.connections.get(connectionId).isAlive = true;
+        const activeConnection = this.connections.get(connectionId);
+        activeConnection.isAlive = true;
+        activeConnection.lastActive = Date.now();
+        logger.debug(`WebSocket pong received: ${connectionId}`, {
+          activeRequests: activeConnection.activeRequests.size,
+          bufferedAmount: activeConnection.ws.bufferedAmount || 0
+        });
       }
     });
 
+    ws.on('error', (error) => {
+      logger.warn(`WebSocket connection error: ${connectionId}`, {
+        error: error.message,
+        activeRequests: connection.activeRequests.size,
+        bufferedAmount: connection.ws.bufferedAmount || 0
+      });
+    });
+
     // Cleanup on close
-    ws.on('close', () => {
-      this.removeConnection(connectionId);
+    ws.on('close', (code, reasonBuffer) => {
+      const reason = Buffer.isBuffer(reasonBuffer) ? reasonBuffer.toString('utf8') : (reasonBuffer || '');
+      logger.info(`WebSocket close event: ${connectionId}`, {
+        code,
+        reason,
+        activeRequests: connection.activeRequests.size,
+        bufferedAmount: connection.ws.bufferedAmount || 0,
+        readyState: describeReadyState(connection.ws.readyState)
+      });
+      this.removeConnection(connectionId, { code, reason });
     });
 
     return connection;
@@ -70,7 +98,7 @@ export class ConnectionManager {
     return this.connections.get(id);
   }
 
-  removeConnection(id) {
+  removeConnection(id, closeInfo = null) {
     const connection = this.connections.get(id);
     if (!connection) return;
 
@@ -79,6 +107,11 @@ export class ConnectionManager {
       for (const [reqId, req] of connection.activeRequests.entries()) {
         try {
           if (typeof req.cancel === 'function') {
+            logger.info(`Cancelling active request on connection close: ${id}`, {
+              requestId: reqId,
+              requestState: req.state,
+              closeInfo
+            });
             req.cancel();
           }
         } catch (e) {
@@ -100,7 +133,13 @@ export class ConnectionManager {
     }
 
     // Cleanup resources
-    logger.info(`WebSocket connection closed: ${id}`, { duration: Date.now() - connection.connectedAt });
+    logger.info(`WebSocket connection closed: ${id}`, {
+      duration: Date.now() - connection.connectedAt,
+      closeInfo,
+      activeRequests: connection.activeRequests.size,
+      bufferedAmount: connection.ws.bufferedAmount || 0,
+      readyState: describeReadyState(connection.ws.readyState)
+    });
     this.connections.delete(id);
     wsMetrics.set('ws_connections_active', this.connections.size);
   }
@@ -117,6 +156,10 @@ export class ConnectionManager {
       
       connection.isAlive = false; // Mark false, wait for pong
       try {
+        logger.debug(`Sending WebSocket ping: ${id}`, {
+          activeRequests: connection.activeRequests.size,
+          bufferedAmount: connection.ws.bufferedAmount || 0
+        });
         connection.ws.ping();
       } catch (err) {
         logger.warn(`Failed to ping WebSocket connection: ${id}`);
@@ -139,5 +182,20 @@ export class ConnectionManager {
     }
     this.connections.clear();
     wsMetrics.set('ws_connections_active', 0);
+  }
+}
+
+function describeReadyState(readyState) {
+  switch (readyState) {
+    case 0:
+      return 'CONNECTING';
+    case 1:
+      return 'OPEN';
+    case 2:
+      return 'CLOSING';
+    case 3:
+      return 'CLOSED';
+    default:
+      return `UNKNOWN(${readyState})`;
   }
 }

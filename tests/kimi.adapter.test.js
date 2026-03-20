@@ -44,20 +44,13 @@ describe('Kimi Adapter', () => {
         expect(payload.max_tokens).to.equal(4096);
     });
 
-    it('should use Moonshot token estimate endpoint for native counting', async () => {
+    it('should skip native counting without an explicit tokenizer endpoint', async () => {
         const adapter = createKimiAdapter();
-        let url;
-        let payload;
+        let called = false;
 
-        global.fetch = async (requestUrl, options = {}) => {
-            url = requestUrl;
-            payload = JSON.parse(options.body);
-            return {
-                ok: true,
-                json: async () => ({
-                    data: { total_tokens: 9876 }
-                })
-            };
+        global.fetch = async () => {
+            called = true;
+            throw new Error('fetch should not be called');
         };
 
         const count = await adapter.countMessageTokens([
@@ -68,12 +61,8 @@ describe('Kimi Adapter', () => {
             apiKey: 'test-key'
         });
 
-        expect(url).to.equal('https://api.moonshot.cn/v1/tokenizers/estimate-token-count');
-        expect(payload).to.deep.equal({
-            model: 'kimi-k2.5',
-            messages: [{ role: 'user', content: 'Hello' }]
-        });
-        expect(count).to.equal(9876);
+        expect(called).to.equal(false);
+        expect(count).to.equal(null);
     });
 
     it('should honor explicit tokenizer endpoint overrides', async () => {

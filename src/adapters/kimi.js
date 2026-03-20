@@ -289,13 +289,16 @@ export function createKimiAdapter() {
             const { apiKey, adapterModel, headers: customHeaders } = modelConfig;
             const model = adapterModel || 'kimi-k2.5';
 
+            const tokenizerBases = resolveTokenizerEndpoints(modelConfig);
+            if (tokenizerBases.length === 0) {
+                return null;
+            }
+
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const payload = {
                 model,
                 messages: formatMessages(messages || [])
             };
-
-            const tokenizerBases = resolveTokenizerEndpoints(modelConfig);
             let lastError = null;
 
             for (const tokenizerBase of tokenizerBases) {
@@ -428,24 +431,7 @@ function resolveTokenizerEndpoints(modelConfig = {}) {
         return [explicitEndpoint];
     }
 
-    const endpoint = normalizeBaseUrl(modelConfig.endpoint);
-    if (!endpoint) {
-        return [];
-    }
-
-    try {
-        const url = new URL(endpoint);
-        if (url.hostname === 'api.kimi.com' && url.pathname.startsWith('/coding/')) {
-            return [
-                'https://api.moonshot.cn/v1',
-                'https://api.moonshot.ai/v1'
-            ];
-        }
-    } catch {
-        // Fall through to using the configured endpoint as-is.
-    }
-
-    return [endpoint];
+    return [];
 }
 
 function normalizeBaseUrl(value) {
