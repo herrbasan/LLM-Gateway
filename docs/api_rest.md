@@ -162,6 +162,7 @@ If `max_tokens` is omitted, the gateway derives a safe output budget from the mo
   "max_tokens": 1000,
   "temperature": 0.7,
   "stream": false,
+  "strip_thinking": true,
   "response_format": {
     "type": "json_schema",
     "json_schema": { "name": "response", "strict": true, "schema": {...} }
@@ -173,6 +174,8 @@ If `max_tokens` is omitted, the gateway derives a safe output budget from the mo
   }
 }
 ```
+
+> **Thinking Stripper:** When `strip_thinking: true` (or `no_thinking: true`) is provided, and the model outputs reasoning/thinking tokens (like DeepSeek `<think>` blocks or native `reasoning_content`), the gateway will automatically strip the reasoning portion. This works seamlessly for both standard and streaming requests, ensuring clean JSON/markdown outputs.
 
 > **Image Processing:** The `image_processing` field is optional. When provided, images in messages are fetched (remote URLs) and optionally resized/transcoded via MediaService. See [Vision (Image Input)](#vision-image-input) for complete examples.
 

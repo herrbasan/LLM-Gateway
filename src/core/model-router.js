@@ -125,13 +125,21 @@ export class ModelRouter {
             result.context = responseContext;
         }
 
-        // Apply thinking strip if configured
-        const thinkingConfig = this.registry.getThinkingConfig();
-        if (thinkingConfig.enabled && result.choices?.[0]?.message?.content) {
-            result.choices[0].message.content = stripThinking(
-                result.choices[0].message.content,
-                this._getThinkingStripConfig(thinkingConfig)
-            );
+        // Apply thinking strip if configured or requested
+        const globalThinkingConfig = this.registry.getThinkingConfig();
+        const clientStrip = request.strip_thinking === true || request.no_thinking === true;
+        const shouldStripThinking = clientStrip || globalThinkingConfig.enabled;
+
+        if (shouldStripThinking && result.choices?.[0]?.message) {
+            if (result.choices[0].message.content) {
+                result.choices[0].message.content = stripThinking(
+                    result.choices[0].message.content,
+                    this._getThinkingStripConfig(globalThinkingConfig)
+                );
+            }
+            if (result.choices[0].message.reasoning_content !== undefined) {
+                delete result.choices[0].message.reasoning_content;
+            }
         }
 
         return result;

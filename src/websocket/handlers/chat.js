@@ -3,6 +3,7 @@ import { RequestContext, RequestState } from '../request-state.js';
 import { getLogger } from '../../utils/logger.js';
 import { wsMetrics } from '../metrics.js';
 import { isAbortError } from '../../utils/http.js';
+import { createThinkingStripper } from '../../utils/format.js';
 
 const logger = getLogger();
 
@@ -251,6 +252,11 @@ export class ChatHandler {
       let finalUsage = null;
       let fullAssistantResponse = '';
 
+      const globalThinkingConfig = this.modelRouter.registry.getThinkingConfig();
+      const clientStrip = requestObject.strip_thinking === true || requestObject.no_thinking === true;
+      const shouldStripThinking = clientStrip || globalThinkingConfig.enabled;
+      const thinkingStripper = shouldStripThinking ? createThinkingStripper(globalThinkingConfig) : null;
+
       if (result && typeof result.generator !== 'undefined') {
         for await (const chunk of result.generator) {
           if (requestContext.state === RequestState.CANCELLED) {
@@ -287,6 +293,16 @@ export class ChatHandler {
           } else if (chunk) {
             if (chunk.choices && chunk.choices.length > 0) {
               const delta = chunk.choices[0].delta || {};
+              
+              if (delta) {
+                if (delta.content && thinkingStripper) {
+                  delta.content = thinkingStripper.process(delta.content);
+                }
+                if (shouldStripThinking && delta.reasoning_content !== undefined) {
+                  delete delta.reasoning_content;
+                }
+              }
+
               content = delta.content || '';
               
               // Forward reasoning/thinking markers explicitly as progress events
@@ -328,6 +344,27 @@ export class ChatHandler {
             }
           });
           requestContext.chunksSent++;
+        }
+
+        if (thinkingStripper && requestContext.state !== RequestState.CANCELLED) {
+          const remaining = thinkingStripper.flush();
+          if (remaining) {
+            fullAssistantResponse += remaining;
+            this._sendWsMessage(connection, formatNotification('chat.delta', {
+              request_id: id,
+              choices: [{ index: 0, delta: { content: remaining } }]
+            }), {
+              requestId: id,
+              event: 'chat.delta',
+              details: {
+                chunkIndex: requestContext.chunksSent + 1,
+                contentChars: remaining.length,
+                accumulatedChars: fullAssistantResponse.length,
+                choices: 1
+              }
+            });
+            requestContext.chunksSent++;
+          }
         }
       } else {
         const content = (typeof result === 'string') ? result : (result?.choices?.[0]?.message?.content || '');

@@ -54,12 +54,14 @@ export function createChatHandler(router, ticketRegistry) {
                     const result = await router.routeChatCompletion(requestBody);
                     
                     if (result.stream) {
-                        const thinkingConfig = router.registry.getThinkingConfig();
+                        const globalThinkingConfig = router.registry.getThinkingConfig();
+                        const clientStrip = requestBody.strip_thinking === true || requestBody.no_thinking === true;
+                        const shouldStripThinking = clientStrip || globalThinkingConfig.enabled;
                         await streamHandler.process(
                             result.generator,
                             result.context,
-                            thinkingConfig.enabled,
-                            thinkingConfig
+                            shouldStripThinking,
+                            globalThinkingConfig
                         );
                     } else {
                         // Non-streaming result but streaming was requested

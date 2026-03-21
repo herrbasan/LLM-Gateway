@@ -55,8 +55,13 @@ export class StreamHandler {
                 if (!this.isActive) break;
                 
                 const delta = chunk.choices?.[0]?.delta;
-                if (delta?.content && thinkingStripper) {
-                    delta.content = thinkingStripper.process(delta.content);
+                if (delta) {
+                    if (delta.content && thinkingStripper) {
+                        delta.content = thinkingStripper.process(delta.content);
+                    }
+                    if (stripThinking && delta.reasoning_content !== undefined) {
+                        delete delta.reasoning_content;
+                    }
                 }
 
                 const payloadStr = `data: ${JSON.stringify(chunk)}\n\n`;

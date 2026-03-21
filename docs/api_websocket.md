@@ -51,10 +51,13 @@ Initiates a new chat completion stream.
   "method": "chat.create",
   "params": {
     "model": "gemini-flash",
-    "messages": [{"role": "user", "content": "Hello"}]
+    "messages": [{"role": "user", "content": "Hello"}],
+    "strip_thinking": true
   }
 }
 ```
+
+> **Thinking Stripper:** When `strip_thinking: true` or `no_thinking: true` is included in the params, any output reasoning tokens (like DeepSeek `<think>` tags or native `reasoning_content`) are automatically stripped from the `chat.delta` stream, yielding only the final cleanly-formatted answer.
 
 **Responses:** Server streams multiple `chat.delta` notifications, followed by `chat.done`.
 
