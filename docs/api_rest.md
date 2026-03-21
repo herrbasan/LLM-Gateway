@@ -1,6 +1,6 @@
-# LLM Gateway REST API Documentation v2.0
+# LLM Gateway API Documentation v2.0
 
-Complete REST/OpenAI-compatible API reference for the LLM Gateway v2.0 (model-centric, stateless architecture).
+Complete API reference for the LLM Gateway v2.0 (model-centric, stateless architecture).
 
 ---
 
@@ -140,7 +140,7 @@ X-Async: true
 
 Main chat completion endpoint. Supports both streaming and non-streaming responses.
 
-If `max_tokens` is omitted, the gateway derives a safe output budget from the configured model context window, the estimated prompt size, and an internal safety margin. The resolved value is returned in `context.resolved_max_tokens`.
+If `max_tokens` is omitted, the gateway derives a safe output budget from the model's configured `capabilities.contextWindow`, the estimated prompt size, and an internal safety margin. The resolved value is reported back in the response `context` payload.
 
 **Headers:**
 
@@ -199,7 +199,7 @@ If `max_tokens` is omitted, the gateway derives a safe output budget from the co
 }
 ```
 
-`max_tokens_source` is `explicit` when the caller supplied `max_tokens`, otherwise `implicit`.
+`context.max_tokens_source` is `explicit` when the request supplied `max_tokens`, otherwise `implicit`.
 
 **Response 202 (With `X-Async: true`):**
 
@@ -268,7 +268,7 @@ data: [DONE]
 
 > Compaction progress events are non-standard SSE events (prefixed with `compaction.`). Standard OpenAI SDKs will ignore them, receiving only the `data:` token chunks. Clients that understand compaction events get progress visibility for free.
 
-If the HTTP client disconnects while a chat request is still in flight, the gateway aborts the upstream provider request for supported fetch-based chat adapters.
+If the HTTP client disconnects during streaming or before a non-streaming response completes, the gateway aborts the upstream provider request for fetch-based chat adapters instead of continuing generation in the background.
 
 **Streaming Error Handling:**
 ```

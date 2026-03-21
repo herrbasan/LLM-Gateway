@@ -5,6 +5,9 @@
 >
 > **🚨 CRITICAL SECURITY RULE: DO NOT PUSH `config.json` TO REMOTES 🚨**
 > **`config.json` contains live API keys and must never be committed or pushed to any remote. Keep secrets local and use `config.example.json` for shareable configuration changes.**
+>
+> **🚨 CRITICAL AI AGENT RULE: USE NATIVE EDIT TOOLS 🚨**
+> **NEVER use terminal scripts (`node -e`, `echo`, `Set-Content`, etc.) to create or modify files. ALWAYS use native VS Code tools (`replace_string_in_file`, `create_file`) to prevent encoding bugs and preserve undo history.**
 
 > **✅ v2.0 Model-Centric Architecture - COMPLETE**
 > 
@@ -22,11 +25,22 @@
 
 ## Documentation
 
-- [API Documentation](../docs/api_documentation.md) - Current API (v2.0)
-- [Refactor Plan](../docs/_Archive/REFACTOR_PLAN_MODEL_CENTRIC.md) - Architecture specification & completion status
-- [Archived Documentation](../docs/_Archive/) - Historical docs from v1.x
+- [REST API](../docs/api_rest.md) - Standard HTTP interface
+- [WebSocket API](../docs/api_websocket.md) - JSON-RPC real-time interface
 
-## Architecture Overview
+## Overall Design & Architecture
+
+The LLM Gateway is a lightweight, high-performance Node.js API that sits between client applications and disparate LLM providers (OpenAI, Anthropic, Gemini, local models, etc.), normalizing these endpoints into a single unified interface.
+
+*Note: The WebAdmin graphical frontend has been split into its own independent project.*
+
+### Core Components
+- **Adapters (`src/adapters/`)**: Normalizes upstream LLM APIs into a unified standard interface.
+- **Core (`src/core/`)**: Handles model routing, ticket registries for async jobs, and circuit breaking for resilience.
+- **Context Management (`src/context/`)**: Performs token estimation and automatic context compaction for oversized prompt requests.
+- **Dual Interfaces**:
+  - **HTTP/REST (`src/routes/`, `src/streaming/`)**: Standard OpenAI-compatible endpoints with Server-Sent Events (SSE).
+  - **WebSocket (`src/websocket/`)**: Low-latency, bi-directional JSON-RPC protocol supporting active chat cancellation and multiplexing.
 
 ### Model-Centric Design (v2.0)
 
@@ -64,32 +78,6 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 - Logs are written to files only; the central logger no longer mirrors entries to stdio
 - Logs older than 1 day are pruned automatically on startup (override with `LOG_RETENTION_DAYS`)
 - Logs are excluded from git via `.gitignore`
-
-### WebAdmin Updates Needed
-
-The WebAdmin interface (`WebAdmin/` directory) needs updates to align with v2.0:
-
-1. **Remove Sessions Page**
-   - Delete `public/pages/test-sessions.html`
-   - Remove "Sessions" from navigation in `public/js/main.js`
-   - Remove session API routes from `routes/api.js`
-
-2. **Update Dashboard**
-   - Change "Providers" section to "Models" section
-   - Display model list from `/v1/models` endpoint
-   - Update health display to show adapter states
-
-3. **Update Providers Page**
-   - Rename to "Models"
-   - Show flat model list instead of provider-grouped view
-   - Display model capabilities directly from config
-
-4. **Update Config Validation**
-   - Change from `providers` to `models` section validation
-   - Update example configs in Settings editor
-
-5. **Update Footer Version**
-   - Change from "v1.0" to "v2.0" in `public/index.html`
 
 ---
 

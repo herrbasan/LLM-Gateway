@@ -327,11 +327,18 @@ export class ModelRouter {
         }
 
         const contextWindow = modelConfig?.capabilities?.contextWindow || 8192;
+        const maxOutputTokens = modelConfig?.capabilities?.maxOutputTokens;
         const usedTokens = context?.used_tokens || 0;
         const safetyMargin = Math.floor(contextWindow * 0.20);
-        const remainingBudget = contextWindow - usedTokens - safetyMargin;
+        let remainingBudget = contextWindow - usedTokens - safetyMargin;
+        
+        remainingBudget = Math.max(1, remainingBudget);
 
-        return Math.max(1, remainingBudget);
+        if (maxOutputTokens && remainingBudget > maxOutputTokens) {
+            return maxOutputTokens;
+        }
+
+        return remainingBudget;
     }
 
     /**

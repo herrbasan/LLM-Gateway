@@ -48,9 +48,9 @@ export function createServer(config) {
   
   app.get('/help', (req, res) => {
     try {
-      const docsPath = join(__dirname, '..', 'docs', 'api_documentation.md');
+      const docsPath = join(__dirname, '..', 'docs', 'api_rest.md');
       const content = readFileSync(docsPath, 'utf-8');
-      
+
       const html = `<!DOCTYPE html>
 <html lang="en">
 <head>

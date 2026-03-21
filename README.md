@@ -156,10 +156,10 @@ Each model is independently configured with:
 
 ## API Documentation
 
-See [docs/api_documentation.md](docs/api_documentation.md) for complete API reference.
+The gateway provides two core interaction interfaces depending on use case. See the documentation below:
 
-- REST/OpenAI-compatible reference: [docs/api_rest.md](docs/api_rest.md)
-- WebSocket real-time reference: [docs/api_websocket.md](docs/api_websocket.md)
+- [REST API Reference](docs/api_rest.md) - Standard OpenAI-compatible HTTP endpoints
+- [WebSocket API Reference](docs/api_websocket.md) - Real-time active connection protocol
 
 ## Development
 

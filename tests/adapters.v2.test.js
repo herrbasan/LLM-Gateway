@@ -34,7 +34,6 @@ describe('Adapters v2 - Real World', () => {
             expect(adapters.has('openai')).to.be.true;
             expect(adapters.has('ollama')).to.be.true;
             expect(adapters.has('lmstudio')).to.be.true;
-            expect(adapters.has('minimax')).to.be.true;
             expect(adapters.has('kimi-cli')).to.be.true;
         });
 

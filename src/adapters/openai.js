@@ -67,6 +67,8 @@ export function createOpenAIAdapter() {
 
             if (request.maxTokens) payload.max_tokens = request.maxTokens;
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
+            if (typeof request.topP === 'number') payload.top_p = request.topP;
+            if (request.stop) payload.stop = request.stop;
 
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {

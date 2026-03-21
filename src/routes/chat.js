@@ -9,7 +9,6 @@ function bindRequestAbortController(req, res) {
 
     const cleanup = () => {
         req.off('aborted', abort);
-        req.off('close', onClose);
         res.off('close', onClose);
         res.off('finish', cleanup);
     };
@@ -30,7 +29,6 @@ function bindRequestAbortController(req, res) {
     };
 
     req.once('aborted', abort);
-    req.once('close', onClose);
     res.once('close', onClose);
     res.once('finish', cleanup);
 
