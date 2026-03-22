@@ -147,7 +147,7 @@ export class ChatHandler {
     // Set up request context for state machine and multiplexing
     const requestContext = new RequestContext(id, params);
     connection.activeRequests.set(id, requestContext);
-    logger.info('[ChatHandler] Request registered', {
+    logger.info('Request registered', {
       connectionId: connection.id,
       requestId: id,
       model,
@@ -399,7 +399,7 @@ export class ChatHandler {
         wsMetrics.recordFirstTokenLatency(requestContext.firstTokenLatencyMs / 1000);
         wsMetrics.recordRequestDuration(requestContext.totalLatencyMs / 1000);
 
-        logger.info('[ChatHandler] Request completed before final send', {
+        logger.info('Request completed before final send', {
           connectionId: connection.id,
           requestId: id,
           chunksSent: requestContext.chunksSent,
@@ -430,7 +430,7 @@ export class ChatHandler {
         });
       } else {
         wsMetrics.increment('ws_request_cancelled_total');
-        logger.info('[ChatHandler] Request cancelled before final send', {
+        logger.info('Request cancelled before final send', {
           connectionId: connection.id,
           requestId: id,
           chunksSent: requestContext.chunksSent,
@@ -462,7 +462,7 @@ export class ChatHandler {
           requestContext.cancel();
         }
         wsMetrics.increment('ws_request_cancelled_total');
-        logger.info('[ChatHandler] Request aborted', {
+        logger.info('Request aborted', {
           connectionId: connection.id,
           requestId: id,
           chunksSent: requestContext.chunksSent,
@@ -495,7 +495,7 @@ export class ChatHandler {
         requestContext.transition(RequestState.FAILED);
       }
       wsMetrics.increment('ws_errors_total', ErrorCodes.INTERNAL_ERROR);
-      logger.error(`Error in chat.create/append [${id}]:`, err);
+      logger.error(`Error in chat.create/append [${id}]:`, err, null, 'ChatHandler');
       this._sendWsMessage(connection, formatNotification('chat.error', {
         request_id: id,
         error: { code: ErrorCodes.INTERNAL_ERROR, message: err.message || 'Internal error' }
@@ -505,7 +505,7 @@ export class ChatHandler {
         details: { code: ErrorCodes.INTERNAL_ERROR, error: err.message || 'Internal error' }
       });
     } finally {
-      logger.info('[ChatHandler] Request cleanup', {
+      logger.info('Request cleanup', {
         connectionId: connection.id,
         requestId: id,
         finalState: requestContext.state,
@@ -523,7 +523,7 @@ export class ChatHandler {
         }
       }
       connection.activeRequests.delete(id);
-      logger.info('[ChatHandler] Request deregistered', {
+      logger.info('Request deregistered', {
         connectionId: connection.id,
         requestId: id,
         activeRequestsRemaining: connection.activeRequests.size
@@ -537,7 +537,7 @@ export class ChatHandler {
 
     const requestContext = connection.activeRequests.get(params.request_id);
     if (requestContext) {
-      logger.info('[ChatHandler] Cancel requested', {
+      logger.info('Cancel requested', {
         connectionId: connection.id,
         requestId: params.request_id,
         requestState: requestContext.state,
@@ -545,7 +545,7 @@ export class ChatHandler {
       });
       requestContext.cancel();
     } else {
-      logger.warn('[ChatHandler] Cancel requested for unknown request', {
+      logger.warn('Cancel requested for unknown request', {
         connectionId: connection.id,
         requestId: params.request_id,
         activeRequests: Array.from(connection.activeRequests.keys())
@@ -563,7 +563,7 @@ export class ChatHandler {
     const shouldLogAttempt = shouldLogWsSendAttempt(metadata, summary);
 
     if (shouldLogAttempt) {
-      logger.info('[ChatHandler] WS send attempt', {
+      logger.info('WS send attempt', {
         connectionId: connection.id,
         requestId: metadata.requestId || summary.requestId || null,
         event: metadata.event || summary.event,
@@ -576,7 +576,7 @@ export class ChatHandler {
     }
 
     if (readyState !== 1) {
-      logger.warn('[ChatHandler] WS send on non-open socket', {
+      logger.warn('WS send on non-open socket', {
         connectionId: connection.id,
         requestId: metadata.requestId || summary.requestId || null,
         event: metadata.event || summary.event,
@@ -589,7 +589,7 @@ export class ChatHandler {
     try {
       connection.ws.send(payload, (error) => {
         if (error) {
-          logger.warn('[ChatHandler] WS send callback error', {
+          logger.warn('WS send callback error', {
             connectionId: connection.id,
             requestId: metadata.requestId || summary.requestId || null,
             event: metadata.event || summary.event,
@@ -601,7 +601,7 @@ export class ChatHandler {
         }
 
         if (shouldLogAttempt) {
-          logger.info('[ChatHandler] WS send success', {
+          logger.info('WS send success', {
             connectionId: connection.id,
             requestId: metadata.requestId || summary.requestId || null,
             event: metadata.event || summary.event,
@@ -612,7 +612,7 @@ export class ChatHandler {
         }
       });
     } catch (error) {
-      logger.warn('[ChatHandler] WS send threw synchronously', {
+      logger.warn('WS send threw synchronously', {
         connectionId: connection.id,
         requestId: metadata.requestId || summary.requestId || null,
         event: metadata.event || summary.event,

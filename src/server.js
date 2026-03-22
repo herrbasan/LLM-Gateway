@@ -13,6 +13,7 @@ import { createAudioSpeechHandler } from './routes/audio.js';
 import { createVideosHandler } from './routes/videos.js';
 import { createSystemEventsHandler } from './routes/events.js';
 import { createConfigGetHandler, createConfigStoreHandler } from './routes/config.js';
+import { createLogsHandler } from './routes/logs.js';
 import { ModelRouter } from './core/model-router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
 import { getLogger } from './utils/logger.js';
@@ -163,6 +164,9 @@ export function createServer(config) {
   app.get('/config', createConfigGetHandler());
   app.post('/config/store', createConfigStoreHandler(router));
 
+  // Logs endpoint
+  app.get('/logs', createLogsHandler());
+
   // Media generation endpoints
   app.post('/v1/images/generations', createImagesHandler(router));
   app.post('/v1/audio/speech', createAudioSpeechHandler(router));
@@ -178,7 +182,7 @@ export function createServer(config) {
     const isExpectedError = err.status && err.status >= 400 && err.status < 500;
     
     if (isExpectedError) {
-      logger.warn(`[${err.status}] ${err.message || 'Client error'}`);
+      logger.warn(`[${err.status}] ${err.message || 'Client error'}`, {}, 'Server');
     } else {
       // Use safe logging to prevent binary data from hitting logs
       const safeMeta = sanitizeForLogging({ 
@@ -186,7 +190,7 @@ export function createServer(config) {
         status: err.status,
         code: err.code
       });
-      logger.error(`Unhandled server error: ${err.message}`, safeMeta);
+      logger.error(`Unhandled server error: ${err.message}`, null, safeMeta, 'Server');
     }
     
     if (res.headersSent) {

@@ -8,7 +8,7 @@ export function parseBinaryFrame(buffer) {
   const separatorIndex = buffer.indexOf(0x00);
   
   if (separatorIndex === -1) {
-    logger.warn('Malformed binary frame: no null byte separator');
+    logger.warn('Malformed binary frame: no null byte separator', {}, 'BinaryProtocol');
     return null;
   }
   
@@ -24,7 +24,7 @@ export function parseBinaryFrame(buffer) {
       payload
     };
   } catch (error) {
-    logger.warn('Malformed binary frame: invalid JSON header', { error: error.message });
+    logger.warn('Malformed binary frame: invalid JSON header', { error: error.message }, 'BinaryProtocol');
     return null;
   }
 }

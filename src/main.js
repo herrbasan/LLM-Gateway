@@ -12,14 +12,14 @@ async function main() {
     logger.info('Starting LLM Gateway', { 
       nodeEnv: process.env.NODE_ENV || 'development',
       nodeVersion: process.version 
-    });
+    }, 'System');
     
     const config = await loadConfig();
     logger.info('Configuration loaded', { 
       port: config.port, 
       host: config.host,
       modelsConfigured: Object.keys(config.models || {}).length 
-    });
+    }, 'System');
     
     const app = createServer(config);
 
@@ -27,7 +27,7 @@ async function main() {
       logger.info('Gateway started', {
         url: `http://${config.host}:${config.port}`,
         logFile: logger.getSessionInfo().logFile
-      });
+      }, 'System');
       console.log(`LLM Gateway running on http://${config.host}:${config.port}`);
       console.log(`Log file: ${logger.getSessionInfo().logFile}`);
     });
@@ -40,7 +40,7 @@ async function main() {
     });
 
     const shutdown = (signal) => {
-      logger.info(`Received ${signal}, shutting down...`);
+      logger.info(`Received ${signal}, shutting down...`, {}, 'System');
       if (wsServer && wsServer.shutdown) {
         try { wsServer.shutdown(); } catch(e) {}
       }
@@ -50,7 +50,7 @@ async function main() {
       });
       // Force exit after 5s
       setTimeout(() => {
-        logger.error('Forced shutdown after timeout');
+        logger.error('Forced shutdown after timeout', null, null, 'System');
         logger.close();
         process.exit(1);
       }, 5000);
@@ -61,13 +61,13 @@ async function main() {
     
     // Log uncaught exceptions
     process.on('uncaughtException', (error) => {
-      logger.error('Uncaught exception', error);
+      logger.error('Uncaught exception', error, null, 'System');
       logger.close();
       process.exit(1);
     });
     
     process.on('unhandledRejection', (reason, promise) => {
-      logger.error('Unhandled rejection', null, { reason, promise });
+      logger.error('Unhandled rejection', null, { reason, promise }, 'System');
     });
 
 }

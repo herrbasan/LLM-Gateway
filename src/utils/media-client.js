@@ -174,7 +174,7 @@ export class MediaProcessorClient {
 
         const { maxDimension, format, quality = 85 } = options;
 
-        logger.info(`Processing: maxDimension=${maxDimension}, format=${format}, quality=${quality}`);
+        logger.info(`Processing: maxDimension=${maxDimension}, format=${format}, quality=${quality}`, {}, 'MediaProcessor');
 
         const endpoint = `${this.config.endpoint}/v1/optimize/image`;
         try {
@@ -205,16 +205,16 @@ export class MediaProcessorClient {
             
             if (!res.ok) {
                 const errorText = await res.text().catch(() => 'Unknown error');
-                logger.warn(`MediaService error: ${res.status} ${res.statusText}`, { error: errorText, sizeMB: (base64Data.length * 3 / 4 / 1024 / 1024).toFixed(2) });
+                logger.warn(`MediaService error: ${res.status} ${res.statusText}`, { error: errorText, sizeMB: (base64Data.length * 3 / 4 / 1024 / 1024).toFixed(2) }, 'MediaProcessor');
                 if (res.status === 413) {
-                    logger.error('Image too large for MediaService. Consider reducing image size or increasing MAX_FILE_SIZE_MB.');
+                    logger.error('Image too large for MediaService. Consider reducing image size or increasing MAX_FILE_SIZE_MB.', null, null, 'MediaProcessor');
                 }
                 return base64Data; // fallback to original
             }
 
             // Check content-type to debug SSE vs JSON issue
             const contentType = res.headers.get('content-type');
-            logger.info(`MediaProcessor response content-type: ${contentType}`);
+            logger.info(`MediaProcessor response content-type: ${contentType}`, {}, 'MediaProcessor');
             
             // Clone response for potential error debugging
             const resClone = res.clone();
@@ -224,7 +224,7 @@ export class MediaProcessorClient {
             } catch (parseError) {
                 // Try to get raw text for debugging
                 const text = await resClone.text().catch(() => 'unable to get text');
-                logger.error(`JSON parse error. Raw response (first 200 chars):`, text.substring(0, 200));
+                logger.error(`JSON parse error. Raw response (first 200 chars):`, null, { raw: text.substring(0, 200) }, 'MediaProcessor');
                 throw parseError;
             }
             if (data.base64) {
@@ -233,7 +233,7 @@ export class MediaProcessorClient {
             return base64Data;
             
         } catch (error) {
-            logger.error(`Error communicating with media-processor node:`, { message: error.message, code: error.code });
+            logger.error(`Error communicating with media-processor node:`, null, { message: error.message, code: error.code }, 'MediaProcessor');
             return base64Data; // Fail gracefully by returning original
         }
     }

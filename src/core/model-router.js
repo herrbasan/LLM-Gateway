@@ -33,11 +33,11 @@ export class ModelRouter {
         // Media processor for image optimization
         this.mediaProcessor = new MediaProcessorClient(config);
 
-        logger.info('[ModelRouter] Initialized', {
+        logger.info('Initialized', {
             models: this.registry.getModelIds().length,
             adapters: Array.from(this.adapters.keys()),
             mediaProcessor: this.mediaProcessor.isEnabled ? 'enabled' : 'disabled'
-        });
+        }, 'ModelRouter');
     }
 
     /**
@@ -53,11 +53,11 @@ export class ModelRouter {
         this.contextManager = new ContextManager(newConfig);
         this.mediaProcessor = new MediaProcessorClient(newConfig);
         
-        logger.info('[ModelRouter] Configuration reloaded', {
+        logger.info('Configuration reloaded', {
             models: this.registry.getModelIds().length,
             adapters: Array.from(this.adapters.keys()),
             mediaProcessor: this.mediaProcessor.isEnabled ? 'enabled' : 'disabled'
-        });
+        }, 'ModelRouter');
     }
 
     /**
@@ -71,7 +71,7 @@ export class ModelRouter {
         const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'chat');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('[ModelRouter] Routing chat completion', { model: modelId, adapter: modelConfig.adapter });
+        logger.info('Routing chat completion', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
 
         // Transform request to adapter format
         const opts = this._buildChatOptions(request, modelConfig);
@@ -100,7 +100,7 @@ export class ModelRouter {
             maxTokens: resolvedMaxTokens
         };
 
-        logger.info('[ModelRouter] Chat request prepared', {
+        logger.info('Chat request prepared', {
             model: modelId,
             adapter: modelConfig.adapter,
             stream: request.stream === true,
@@ -110,7 +110,7 @@ export class ModelRouter {
             explicit_max_tokens: request.max_tokens ?? null,
             resolved_max_tokens: resolvedMaxTokens,
             temperature: finalOpts.temperature ?? null
-        });
+        }, 'ModelRouter');
 
         // Route to adapter
         let result;
@@ -156,7 +156,7 @@ export class ModelRouter {
         const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'embedding');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('[ModelRouter] Routing embedding', { model: modelId, adapter: modelConfig.adapter });
+        logger.info('Routing embedding', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
 
         return adapter.createEmbedding(modelConfig, request);
     }
@@ -178,7 +178,7 @@ export class ModelRouter {
         const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'image');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('[ModelRouter] Routing image generation', { model: modelId, adapter: modelConfig.adapter });
+        logger.info('Routing image generation', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
 
         return adapter.generateImage(modelConfig, request);
     }
@@ -200,7 +200,7 @@ export class ModelRouter {
         const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'audio');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('[ModelRouter] Routing audio speech', { model: modelId, adapter: modelConfig.adapter });
+        logger.info('Routing audio speech', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
 
         return adapter.synthesizeSpeech(modelConfig, request);
     }
@@ -222,7 +222,7 @@ export class ModelRouter {
         const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'video');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('[ModelRouter] Routing video generation', { model: modelId, adapter: modelConfig.adapter });
+        logger.info('Routing video generation', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
 
         return adapter.generateVideo(modelConfig, request);
     }
@@ -383,11 +383,11 @@ export class ModelRouter {
         const safetyMargin = Math.floor(contextWindow * 0.20);
         const availableTokens = contextWindow - outputBuffer - safetyMargin;
 
-        logger.debug('[ModelRouter] Context check', {
+        logger.debug('Context check', {
             estimated: estimatedTokens,
             window: contextWindow,
             available: availableTokens
-        });
+        }, 'ModelRouter');
 
         const minTokens = compactionConfig.minTokensToCompact || 2000;
         const shouldCompact = compactionConfig.enabled !== false && estimatedTokens >= minTokens && estimatedTokens > availableTokens;
@@ -410,7 +410,7 @@ export class ModelRouter {
             throw err;
         }
 
-        logger.info('[ModelRouter] Applying compaction', { mode: compactionConfig.mode, tokens: estimatedTokens });
+        logger.info('Applying compaction', { mode: compactionConfig.mode, tokens: estimatedTokens }, 'ModelRouter');
 
         const strategyFn = this.contextManager[compactionConfig.mode]?.bind(this.contextManager)
             || this.contextManager.truncate.bind(this.contextManager);
@@ -425,11 +425,11 @@ export class ModelRouter {
 
         const finalTokens = await this._estimateMessagesTokens(compactedMessages, adapter, modelConfig);
 
-        logger.info('[ModelRouter] Compaction complete', {
+        logger.info('Compaction complete', {
             original: estimatedTokens,
             final: finalTokens,
             mode: compactionConfig.mode
-        });
+        }, 'ModelRouter');
 
         return {
             messages: compactedMessages,
@@ -448,11 +448,11 @@ export class ModelRouter {
                     return nativeCount;
                 }
             } catch (err) {
-                logger.warn('[ModelRouter] Native message token count failed, falling back to estimator', {
+                logger.warn('Native message token count failed, falling back to estimator', {
                     adapter: modelConfig?.adapter,
                     model: modelConfig?.adapterModel,
                     error: err.message
-                });
+                }, 'ModelRouter');
             }
         }
 
@@ -539,7 +539,7 @@ export class ModelRouter {
         }
 
         if (!this.mediaProcessor.isEnabled) {
-            logger.warn('[ModelRouter] Image processing requested but MediaService not enabled');
+            logger.warn('Image processing requested but MediaService not enabled', {}, 'ModelRouter');
             return this._fetchRemoteImagesOnly(messages);
         }
 
@@ -584,12 +584,12 @@ export class ModelRouter {
                     // Log image size for debugging 413 errors
                     const base64SizeMB = (processedBase64.length * 3 / 4) / 1024 / 1024;
                     if (base64SizeMB > 5) {
-                        logger.warn('[ModelRouter] Large image processed', {
+                        logger.warn('Large image processed', {
                             sizeMB: base64SizeMB.toFixed(2),
                             maxDimension: processOptions.maxDimension,
                             quality: processOptions.quality,
                             format: processOptions.format
-                        });
+                        }, 'ModelRouter');
                     }
 
                     // Determine output mime type based on transcode option
@@ -607,15 +607,15 @@ export class ModelRouter {
                     });
                     processedCount++;
 
-                    logger.debug('[ModelRouter] Image processed', {
+                    logger.debug('Image processed', {
                         resize: processOptions.maxDimension,
                         format: processOptions.format,
                         quality: processOptions.quality
-                    });
+                    }, 'ModelRouter');
                 } catch (error) {
-                    logger.warn('[ModelRouter] Failed to process image, using original', {
+                    logger.warn('Failed to process image, using original', {
                         error: error.message
-                    });
+                    }, 'ModelRouter');
                     // Fall back to original
                     processedContent.push(part);
                 }
@@ -628,7 +628,7 @@ export class ModelRouter {
         }
 
         if (processedCount > 0) {
-            logger.info('[ModelRouter] Images processed', { count: processedCount });
+            logger.info('Images processed', { count: processedCount }, 'ModelRouter');
         }
 
         return processedMessages;
@@ -672,9 +672,9 @@ export class ModelRouter {
                         }
                     });
                 } catch (error) {
-                    logger.warn('[ModelRouter] Failed to fetch remote image, using original URL', {
+                    logger.warn('Failed to fetch remote image, using original URL', {
                         error: error.message
-                    });
+                    }, 'ModelRouter');
                     processedContent.push(part);
                 }
             }

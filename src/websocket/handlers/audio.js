@@ -43,7 +43,7 @@ export class AudioHandler {
       lastSequence: -1
     });
 
-    logger.debug(`Audio stream started: ${streamId}`);
+    logger.debug(`Audio stream started: ${streamId}`, {}, 'AudioHandler');
     connection.ws.send(formatResponse(id, format));
   }
 
@@ -62,7 +62,7 @@ export class AudioHandler {
     }
 
     connection.audioStreams.delete(streamId);
-    logger.debug(`Audio stream stopped: ${streamId}`);
+    logger.debug(`Audio stream stopped: ${streamId}`, {}, 'AudioHandler');
     connection.ws.send(formatResponse(id, { stopped: true }));
   }
 
@@ -81,7 +81,7 @@ export class AudioHandler {
       return;
     }
 
-    logger.debug(`VAD event for ${streamId}: ${event}`);
+    logger.debug(`VAD event for ${streamId}: ${event}`, {}, 'AudioHandler');
     
     // In a real implementation this might trigger generation or interrupt streaming
     if (id) {
@@ -97,7 +97,7 @@ export class AudioHandler {
     const { s: streamId, seq, t } = header;
 
     if (!connection.audioStreams?.has(streamId)) {
-      logger.warn(`Binary frame for unknown stream ID dropped: ${streamId}`);
+      logger.warn(`Binary frame for unknown stream ID dropped: ${streamId}`, {}, 'AudioHandler');
       return;
     }
 
@@ -105,12 +105,12 @@ export class AudioHandler {
     
     // Gap detection
     if (seq !== stream.lastSequence + 1 && stream.lastSequence !== -1) {
-      logger.warn(`Binary frame gap detected for ${streamId}: expected ${stream.lastSequence + 1}, got ${seq}`);
+      logger.warn(`Binary frame gap detected for ${streamId}: expected ${stream.lastSequence + 1}, got ${seq}`, {}, 'AudioHandler');
     }
     
     stream.lastSequence = seq;
 
-    logger.debug(`Received binary frame for ${streamId}, seq: ${seq}, bytes: ${payload.length}`);
+    logger.debug(`Received binary frame for ${streamId}, seq: ${seq}, bytes: ${payload.length}`, {}, 'AudioHandler');
     
     // In a real implementation this would route the audio data to the backend or model
   }

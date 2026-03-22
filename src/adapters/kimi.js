@@ -63,7 +63,7 @@ export function createKimiAdapter() {
                 };
             }
 
-            logger.info('[KimiAdapter] Sending chat completion request', {
+            logger.info('Sending chat completion request', {
                 endpoint,
                 model,
                 stream: false,
@@ -71,7 +71,7 @@ export function createKimiAdapter() {
                 max_completion_tokens: payload.max_completion_tokens ?? null,
                 temperature: payload.temperature ?? null,
                 messages: summarizeMessagesForLog(payload.messages)
-            });
+            }, 'KimiAdapter');
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
@@ -102,12 +102,12 @@ export function createKimiAdapter() {
                 delete message.reasoning_content;
             }
 
-            logger.info('[KimiAdapter] Received chat completion response', {
+            logger.info('Received chat completion response', {
                 model,
                 finish_reason: data?.choices?.[0]?.finish_reason ?? null,
                 usage: data?.usage ?? null,
                 content_chars: message?.content?.length ?? 0
-            });
+            }, 'KimiAdapter');
 
             return {
                 ...data,
@@ -134,7 +134,7 @@ export function createKimiAdapter() {
             }
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
 
-            logger.info('[KimiAdapter] Sending streaming chat request', {
+            logger.info('Sending streaming chat request', {
                 endpoint,
                 model,
                 stream: true,
@@ -142,7 +142,7 @@ export function createKimiAdapter() {
                 max_completion_tokens: payload.max_completion_tokens ?? null,
                 temperature: payload.temperature ?? null,
                 messages: summarizeMessagesForLog(payload.messages)
-            });
+            }, 'KimiAdapter');
 
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
@@ -168,7 +168,7 @@ export function createKimiAdapter() {
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-                        logger.info('[KimiAdapter] Stream reader completed', {
+                        logger.info('Stream reader completed', {
                             model,
                             chunk_count: chunkCount,
                             content_chars: contentChars,
@@ -176,7 +176,7 @@ export function createKimiAdapter() {
                             last_finish_reason: lastFinishReason,
                             saw_done_marker: sawDoneMarker,
                             usage: finalUsage
-                        });
+                        }, 'KimiAdapter');
                         break;
                     }
 
@@ -207,14 +207,14 @@ export function createKimiAdapter() {
                                         }]
                                     };
                                 }
-                                logger.info('[KimiAdapter] Stream received DONE marker', {
+                                logger.info('Stream received DONE marker', {
                                     model,
                                     chunk_count: chunkCount,
                                     content_chars: contentChars,
                                     reasoning_chars: reasoningBuffer.length,
                                     last_finish_reason: lastFinishReason,
                                     usage: finalUsage
-                                });
+                                }, 'KimiAdapter');
                                 yield { data: '[DONE]' };
                                 return;
                             }
@@ -255,17 +255,17 @@ export function createKimiAdapter() {
                                 parsed.provider = 'kimi';
                                 yield parsed;
                             } catch (e) {
-                                logger.warn('[KimiAdapter] Failed to parse stream chunk', {
+                                logger.warn('Failed to parse stream chunk', {
                                     model,
                                     error: e.message,
                                     raw_preview: data.slice(0, 300)
-                                });
+                                }, 'KimiAdapter');
                             }
                         }
                     }
                 }
             } finally {
-                logger.info('[KimiAdapter] Stream closed', {
+                logger.info('Stream closed', {
                     model,
                     chunk_count: chunkCount,
                     content_chars: contentChars,
@@ -273,7 +273,7 @@ export function createKimiAdapter() {
                     last_finish_reason: lastFinishReason,
                     saw_done_marker: sawDoneMarker,
                     usage: finalUsage
-                });
+                }, 'KimiAdapter');
                 reader.releaseLock();
             }
         },

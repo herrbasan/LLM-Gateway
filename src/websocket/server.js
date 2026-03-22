@@ -54,7 +54,7 @@ export function setupWebSocketServer(server, app, config, dependencies) {
     const isTrustedIp = checkIpTrusted(clientIp);
 
     if (isLocalOnly && !isTrustedIp) {
-      logger.warn(`WebSocket upgrade rejected (not a trusted IP): ${clientIp}`);
+      logger.warn(`WebSocket upgrade rejected (not a trusted IP): ${clientIp}`, {}, 'WebSocket');
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;
@@ -75,7 +75,7 @@ export function setupWebSocketServer(server, app, config, dependencies) {
         if (expectedKey && accessKey === expectedKey) {
             preAuthenticated = true;
         } else {
-            logger.warn(`WebSocket upgrade rejected (invalid access key via header): ${clientIp}`);
+            logger.warn(`WebSocket upgrade rejected (invalid access key via header): ${clientIp}`, {}, 'WebSocket');
             socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
             socket.destroy();
             return;
@@ -107,7 +107,7 @@ export function setupWebSocketServer(server, app, config, dependencies) {
     });
 
     ws.on('error', (error) => {
-      logger.error(`WebSocket connection error: ${connection.id}`, error);
+      logger.error(`WebSocket connection error: ${connection.id}`, error, null, 'WebSocket');
     });
   });
 
@@ -119,7 +119,7 @@ export function setupWebSocketServer(server, app, config, dependencies) {
   // Close interval on shutdown
   wss.on('close', () => clearInterval(pingInterval));
 
-  logger.info('WebSocket Real-Time server initialized on /v1/realtime');
+  logger.info('WebSocket Real-Time server initialized on /v1/realtime', {}, 'WebSocket');
 
   return {
     wss,

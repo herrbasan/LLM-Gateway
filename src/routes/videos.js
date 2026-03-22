@@ -8,7 +8,7 @@ export function createVideosHandler(router) {
             const isAsync = String(req.headers['x-async'] || '').toLowerCase() === 'true';
 
             if (isAsync) {
-                logger.warn('Async video generation not yet implemented in v2, handling synchronously');
+                logger.warn('Async video generation not yet implemented in v2, handling synchronously', {}, 'VideosRoute');
             }
 
             const result = await router.routeVideoGeneration(req.body);

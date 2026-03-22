@@ -38,7 +38,7 @@ export class MediaHandler {
     // Protection 3: Stale stream cleanup (TTL)
     const cleanupTimeout = setTimeout(() => {
       if (connection.mediaStreams && connection.mediaStreams.has(streamId)) {
-        logger.warn(`Media stream ${streamId} timed out and was cleaned up`);
+        logger.warn(`Media stream ${streamId} timed out and was cleaned up`, {}, 'MediaHandler');
         connection.mediaStreams.delete(streamId);
       }
     }, this.mediaStreamTimeoutMs);
@@ -54,7 +54,7 @@ export class MediaHandler {
       timeout: cleanupTimeout
     });
 
-    logger.debug(`Media stream started: ${streamId} (${mimeType})`);
+    logger.debug(`Media stream started: ${streamId} (${mimeType})`, {}, 'MediaHandler');
     
     connection.ws.send(formatResponse(id, {
       stream_id: streamId,
@@ -87,7 +87,7 @@ export class MediaHandler {
 
     stream.completed = true;
 
-    logger.debug(`Media stream stopped: ${streamId}, total size: ${stream.totalSize} bytes`);
+    logger.debug(`Media stream stopped: ${streamId}, total size: ${stream.totalSize} bytes`, {}, 'MediaHandler');
     
     connection.ws.send(formatResponse(id, { 
       stopped: true,
@@ -105,20 +105,20 @@ export class MediaHandler {
     const { s: streamId, seq } = header;
 
     if (!connection.mediaStreams?.has(streamId)) {
-      logger.warn(`Binary frame for unknown media stream dropped: ${streamId}`);
+      logger.warn(`Binary frame for unknown media stream dropped: ${streamId}`, {}, 'MediaHandler');
       return;
     }
 
     const stream = connection.mediaStreams.get(streamId);
     
     if (stream.completed) {
-      logger.warn(`Binary frame for completed media stream dropped: ${streamId}`);
+      logger.warn(`Binary frame for completed media stream dropped: ${streamId}`, {}, 'MediaHandler');
       return;
     }
 
     // Protection 1: Max stream size limits
     if (stream.totalSize + payload.length > this.maxMediaBytes) {
-      logger.error(`Media stream ${streamId} exceeded max size of ${this.maxMediaBytes} bytes. Dropping stream.`);
+      logger.error(`Media stream ${streamId} exceeded max size of ${this.maxMediaBytes} bytes. Dropping stream.`, null, null, 'MediaHandler');
       
       // Clear timeout and remove from maps
       if (stream.timeout) clearTimeout(stream.timeout);
@@ -143,7 +143,7 @@ export class MediaHandler {
 
     // Gap detection
     if (seq !== stream.lastSequence + 1 && stream.lastSequence !== -1) {
-      logger.warn(`Binary frame gap detected for media ${streamId}: expected ${stream.lastSequence + 1}, got ${seq}`);
+      logger.warn(`Binary frame gap detected for media ${streamId}: expected ${stream.lastSequence + 1}, got ${seq}`, {}, 'MediaHandler');
     }
     
     stream.lastSequence = seq;
@@ -167,6 +167,6 @@ export class MediaHandler {
       }
     }
 
-    logger.debug(`Received binary frame for media ${streamId}, seq: ${seq}, bytes: ${payload.length}`);
+    logger.debug(`Received binary frame for media ${streamId}, seq: ${seq}, bytes: ${payload.length}`, {}, 'MediaHandler');
   }
 }

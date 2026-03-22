@@ -10,7 +10,7 @@ export function createImagesHandler(router) {
             if (isAsync) {
                 // Async handling through ticket registry would need to be added
                 // For now, handle synchronously
-                logger.warn('Async image generation not yet implemented in v2, handling synchronously');
+                logger.warn('Async image generation not yet implemented in v2, handling synchronously', {}, 'ImagesRoute');
             }
 
             const result = await router.routeImageGeneration(req.body);
@@ -21,7 +21,7 @@ export function createImagesHandler(router) {
             
             // Debug: Verify the response contains actual base64 data, not sanitized placeholders
             if (responseData?.data?.[0]?.b64_json?.includes('[BINARY_DATA]')) {
-                logger.error('[ImagesHandler] CRITICAL: Response contains sanitized placeholder instead of actual data');
+                logger.error('CRITICAL: Response contains sanitized placeholder instead of actual data', null, null, 'ImagesRoute');
             }
             
             return res.status(200).json(responseData);

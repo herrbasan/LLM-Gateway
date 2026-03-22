@@ -12,7 +12,7 @@ export class ConnectionManager {
 
   addConnection(ws, req) {
     if (this.connections.size >= this.maxConnections) {
-      logger.warn('WebSocket maximum connections reached. Rejecting connection.');
+      logger.warn('WebSocket maximum connections reached. Rejecting connection.', {}, 'WebSocket');
       wsMetrics.increment('ws_connections_rejected');
       ws.close(1013, 'Try Again Later'); // 1013 = Try Again Later
       return null;
@@ -54,7 +54,7 @@ export class ConnectionManager {
       ip: connection.ip,
       userAgent: connection.userAgent,
       activeConnections: this.connections.size
-    });
+    }, 'WebSocket');
     wsMetrics.increment('ws_connections_total');
     wsMetrics.set('ws_connections_active', this.connections.size);
     // Handle ping/pong for keep-alive
@@ -115,7 +115,7 @@ export class ConnectionManager {
             req.cancel();
           }
         } catch (e) {
-          logger.warn(`Failed to cancel request ${reqId} on connection close`, { error: e.message });
+          logger.warn(`Failed to cancel request ${reqId} on connection close`, { error: e.message }, 'WebSocket');
         }
       }
     }
@@ -148,7 +148,7 @@ export class ConnectionManager {
   pingConnections() {
     for (const [id, connection] of this.connections.entries()) {
       if (!connection.isAlive) {
-        logger.debug(`WebSocket connection timeout: ${id}`);
+        logger.debug(`WebSocket connection timeout: ${id}`, {}, 'WebSocket');
         connection.ws.terminate();
         this.removeConnection(id);
         continue;
@@ -162,7 +162,7 @@ export class ConnectionManager {
         });
         connection.ws.ping();
       } catch (err) {
-        logger.warn(`Failed to ping WebSocket connection: ${id}`);
+        logger.warn(`Failed to ping WebSocket connection: ${id}`, {}, 'WebSocket');
         this.removeConnection(id);
       }
     }

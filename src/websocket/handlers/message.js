@@ -32,7 +32,7 @@ export class MessageRouter {
         } else if (connection.mediaStreams?.has(streamId)) {
           this.mediaHandler.handleBinaryFrame(connection, messageBody);
         } else {
-          logger.warn(`Binary frame for unknown stream ID dropped: ${streamId}`);
+          logger.warn(`Binary frame for unknown stream ID dropped: ${streamId}`, {}, 'MessageHandler');
         }
         return;
       }
@@ -48,7 +48,7 @@ export class MessageRouter {
       const { message } = parsed;
       this.routeMethod(connection, message);
     } catch (err) {
-      logger.error('Error handling WebSocket message', err);
+      logger.error('Error handling WebSocket message', err, null, 'MessageHandler');
       // Hard failure handling, mostly shouldn't hit due to robust transport/layer
     }
   }
@@ -56,7 +56,7 @@ export class MessageRouter {
   routeMethod(connection, message) {
     const { method, params, id } = message;
 
-    logger.debug(`Received JSON-RPC method: ${method} from ${connection.id}`);
+    logger.debug(`Received JSON-RPC method: ${method} from ${connection.id}`, {}, 'MessageHandler');
 
     switch (method) {
       case 'ping':
@@ -126,7 +126,7 @@ export class MessageRouter {
         break;
 
       default:
-        logger.warn(`Unknown method: ${method}`);
+        logger.warn(`Unknown method: ${method}`, {}, 'MessageHandler');
         connection.ws.send(formatError(id, ErrorCodes.METHOD_NOT_FOUND, `Method not found: ${method}`));
         break;
     }

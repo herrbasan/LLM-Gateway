@@ -34,10 +34,10 @@ export class ModelRegistry {
             routing: resolvedConfig.routing || {}
         });
 
-        logger.info('[ModelRegistry] Initialized', { 
+        logger.info('Initialized', { 
             modelCount: this.models.size,
             models: Array.from(this.models.keys())
-        });
+        }, 'ModelRegistry');
     }
 
     /**

@@ -90,7 +90,7 @@ class Logger {
                 }
             }
         } catch (error) {
-            const fallback = `[${new Date().toISOString()}] [WARN] [Logger] Failed to prune old logs ${JSON.stringify({ error: error.message, retentionDays: this.logRetentionDays })}`;
+            const fallback = `[${new Date().toISOString()}] [WARN] [System] Failed to prune old logs ${JSON.stringify({ error: error.message, retentionDays: this.logRetentionDays })}`;
             if (this.logStream) {
                 this._writeToFile(fallback);
             } else {
@@ -109,49 +109,62 @@ class Logger {
         }
     }
     
-    _formatMessage(level, message, meta = {}) {
+    _formatMessage(level, type, message, meta = {}) {
         const timestamp = new Date().toISOString();
         const metaStr = Object.keys(meta).length > 0 
             ? ' ' + JSON.stringify(meta) 
             : '';
-        return `[${timestamp}] [${level}] ${message}${metaStr}`;
+        return `[${timestamp}] [${level}] [${type}] ${message}${metaStr}`;
     }
     
     /**
      * Log an info message
+     * @param {string} message - Log message
+     * @param {object} meta - Metadata object
+     * @param {string} type - Event type/category (default: 'System')
      */
-    info(message, meta = {}) {
-        const formatted = this._formatMessage('INFO', message, meta);
+    info(message, meta = {}, type = 'System') {
+        const formatted = this._formatMessage('INFO', type, message, meta);
         this._writeToFile(formatted);
     }
     
     /**
      * Log a warning message
+     * @param {string} message - Log message
+     * @param {object} meta - Metadata object
+     * @param {string} type - Event type/category (default: 'System')
      */
-    warn(message, meta = {}) {
-        const formatted = this._formatMessage('WARN', message, meta);
+    warn(message, meta = {}, type = 'System') {
+        const formatted = this._formatMessage('WARN', type, message, meta);
         this._writeToFile(formatted);
     }
     
     /**
      * Log an error message
+     * @param {string} message - Log message
+     * @param {Error|null} error - Error object
+     * @param {object|null} meta - Additional metadata
+     * @param {string} type - Event type/category (default: 'System')
      */
-    error(message, error = null, meta = null) {
+    error(message, error = null, meta = null, type = 'System') {
         const errorMeta = error ? { 
             error: error.message, 
             stack: error.stack,
             ...(meta || {}) 
         } : (meta || {});
-        const formatted = this._formatMessage('ERROR', message, errorMeta);
+        const formatted = this._formatMessage('ERROR', type, message, errorMeta);
         this._writeToFile(formatted);
     }
     
     /**
      * Log a debug message
+     * @param {string} message - Log message
+     * @param {object} meta - Metadata object
+     * @param {string} type - Event type/category (default: 'System')
      */
-    debug(message, meta = {}) {
+    debug(message, meta = {}, type = 'System') {
         if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
-            const formatted = this._formatMessage('DEBUG', message, meta);
+            const formatted = this._formatMessage('DEBUG', type, message, meta);
             this._writeToFile(formatted);
         }
     }
@@ -173,7 +186,7 @@ class Logger {
     close() {
         if (this.logStream) {
             const duration = Date.now() - this.startTime.getTime();
-            this._writeToFile(`\n[${new Date().toISOString()}] [INFO] Gateway shutting down. Session duration: ${Math.round(duration / 1000)}s`);
+            this._writeToFile(`\n[${new Date().toISOString()}] [INFO] [System] Gateway shutting down. Session duration: ${Math.round(duration / 1000)}s`);
             this.logStream.end();
             this.logStream = null;
         }

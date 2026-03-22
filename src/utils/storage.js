@@ -96,7 +96,7 @@ export class MediaStorage {
         }
 
         if (evictedCount > 0) {
-            logger.info(`evicted_files_count=${evictedCount}`);
+            logger.info(`evicted_files_count=${evictedCount}`, {}, 'Storage');
         }
 
         return { evictedCount };
