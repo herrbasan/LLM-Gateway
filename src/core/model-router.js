@@ -104,7 +104,6 @@ export class ModelRouter {
         logger.info('Chat request prepared', {
             model: modelId,
             adapter: modelConfig.adapter,
-            sessionId: request.sessionId || request.session_id || null,
             stream: request.stream === true,
             message_count: messages.length,
             messages: this._summarizeMessagesForLog(messages),
