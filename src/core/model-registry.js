@@ -137,7 +137,10 @@ export class ModelRegistry {
                 object: 'model',
                 owned_by: config.adapter,
                 type: config.type,
-                capabilities: { ...config.capabilities }
+                capabilities: {
+                        ...config.capabilities,
+                        ...(config.imageInputLimit && { imageInputLimit: config.imageInputLimit })
+                    }
             });
         }
         return { object: 'list', data };
@@ -166,7 +169,10 @@ export class ModelRegistry {
                 id,
                 object: 'model',
                 owned_by: config.adapter,
-                capabilities: { ...config.capabilities }
+                capabilities: {
+                        ...config.capabilities,
+                        ...(config.imageInputLimit && { imageInputLimit: config.imageInputLimit })
+                    }
             };
 
             if (result[config.type]) {
@@ -208,6 +214,34 @@ export class ModelRegistry {
      */
     getRoutingConfig() {
         return this.globalConfig.routing;
+    }
+
+    /**
+     * Get models by capability.
+     * @param {string} capability - Capability name (e.g., 'vision', 'streaming')
+     * @param {boolean} [includeDisabled=false] - If true, include disabled models
+     * @returns {Array} Models that have the specified capability set to true
+     */
+    getByCapability(capability, includeDisabled = false) {
+        const result = [];
+        for (const [id, config] of this.models.entries()) {
+            if (!includeDisabled && config.disabled) {
+                continue;
+            }
+            if (config.capabilities && config.capabilities[capability] === true) {
+                result.push({
+                    id,
+                    object: 'model',
+                    owned_by: config.adapter,
+                    type: config.type,
+                    capabilities: {
+                        ...config.capabilities,
+                        ...(config.imageInputLimit && { imageInputLimit: config.imageInputLimit })
+                    }
+                });
+            }
+        }
+        return result;
     }
 
     _capitalize(str) {

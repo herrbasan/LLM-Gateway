@@ -39,20 +39,21 @@ export function createChatHandler(router, ticketRegistry) {
     return async (req, res, next) => {
         try {
             const isAsync = String(req.headers['x-async'] || '').toLowerCase() === 'true';
+            const sessionId = req.headers['x-session-id'] || null;
             const isStream = req.body.stream === true;
             const abortController = !isAsync ? bindRequestAbortController(req, res) : null;
             const requestBody = abortController
-                ? { ...req.body, signal: abortController.signal }
-                : req.body;
+                ? { ...req.body, signal: abortController.signal, sessionId }
+                : { ...req.body, sessionId };
 
             // Handle streaming
             if (isStream && !isAsync) {
-                const streamHandler = new StreamHandler(res, null, null, null);
+                const streamHandler = new StreamHandler(res);
                 streamHandler.start();
 
                 try {
                     const result = await router.routeChatCompletion(requestBody);
-                    
+
                     if (result.stream) {
                         const globalThinkingConfig = router.registry.getThinkingConfig();
                         const clientStrip = requestBody.strip_thinking === true || requestBody.no_thinking === true;
@@ -85,7 +86,7 @@ export function createChatHandler(router, ticketRegistry) {
                 setImmediate(async () => {
                     try {
                         const result = await router.routeChatCompletion(req.body);
-                        
+
                         if (result.stream) {
                             // Stream through ticket
                             for await (const chunk of result.generator) {

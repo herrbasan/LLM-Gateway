@@ -41,7 +41,7 @@ export function createServer(config) {
   }));
 
   // Basic middleware
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '300mb' }));
 
   // Help endpoint
   const __filename = fileURLToPath(import.meta.url);

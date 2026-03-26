@@ -97,7 +97,8 @@ export class ModelRouter {
         const finalOpts = {
             ...opts,
             messages,
-            maxTokens: resolvedMaxTokens
+            maxTokens: resolvedMaxTokens,
+            sessionId: request.sessionId
         };
 
         logger.info('Chat request prepared', {

@@ -24,7 +24,7 @@ class MockResponse extends EventEmitter {
 describe('Streaming & SSE', () => {
     it('should set appropriate headers, format data, and terminate with [DONE]', async () => {
         const res = new MockResponse();
-        const handler = new StreamHandler(res, null, null, { compaction: { heartbeatIntervalMs: 100 } });
+        const handler = new StreamHandler(res, { heartbeatIntervalMs: 100 });
         
         async function* mockGenerator() {
             yield { choices: [{ delta: { content: 'chunk1' } }] };
@@ -44,7 +44,7 @@ describe('Streaming & SSE', () => {
 
     it('should inject heartbeat comments', async () => {
         const res = new MockResponse();
-        const handler = new StreamHandler(res, null, null, { compaction: { heartbeatIntervalMs: 10 } });
+        const handler = new StreamHandler(res, { heartbeatIntervalMs: 10 });
         handler.start();
         
         await new Promise(r => setTimeout(r, 25)); // longer than 10ms

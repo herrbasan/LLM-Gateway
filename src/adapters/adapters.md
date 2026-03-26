@@ -161,6 +161,25 @@ General-purpose API access to Kimi models. Separate from Kimi Code - different a
 #### 3. Kimi CLI (Legacy)
 **Note:** The `kimi-cli` adapter exists for legacy CLI-based access but is **not recommended** for new setups. The HTTP API provides better conversation history handling and native streaming.
 
+**Important Limitations:**
+- **Fixed output token limit:** The CLI tool has an internal maximum output limit (typically ~4096 tokens) that cannot be configured via command line arguments. The gateway's `max_tokens` parameter is ignored.
+- **Use `maxOutputTokens` capability:** Configure this in your model config to match the CLI's actual limit. The adapter will warn if requests exceed this.
+- **Output shrinkage:** Long conversations may appear to produce shorter outputs as the CLI hits its fixed limit while the gateway calculates dynamic budgets.
+
+**Configuration:**
+```json
+{
+  "type": "chat",
+  "adapter": "kimi-cli",
+  "adapterModel": "kimi-k2.5",
+  "capabilities": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 4096,
+    "vision": false
+  }
+}
+```
+
 ### E. Alibaba Cloud Qwen (DashScope) Specifics
 **Official Docs:** [https://www.alibabacloud.com/help/en/model-studio/getting-started/what-is-model-studio](https://www.alibabacloud.com/help/en/model-studio/getting-started/what-is-model-studio)
 

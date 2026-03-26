@@ -1,3 +1,6 @@
 [submodule "WebAdmin/lib/nui_wc2"]
 	path = WebAdmin/lib/nui_wc2
 	url = https://github.com/herrbasan/nui_wc2.git
+[submodule "src/nLogger"]
+	path = src/nLogger
+	url = https://github.com/herrbasan/nLogger.git

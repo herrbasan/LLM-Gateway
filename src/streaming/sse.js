@@ -2,9 +2,9 @@ import { createThinkingStripper } from '../utils/format.js';
 import { isAbortError } from '../utils/http.js';
 
 export class StreamHandler {
-    constructor(res) {
+    constructor(res, options = {}) {
         this.res = res;
-        this.heartbeatIntervalMs = 15000;
+        this.heartbeatIntervalMs = options?.heartbeatIntervalMs || 15000;
         this.heartbeatInterval = null;
         this.isActive = true;
         this.started = false;
@@ -36,6 +36,13 @@ export class StreamHandler {
         this.res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     }
 
+    emitDeltaEvent(chunk) {
+        if (!this.isActive) return;
+        if (!this.started) this.start();
+        const payloadStr = `data: ${JSON.stringify(chunk)}\n\n`;
+        this.res.write(payloadStr);
+    }
+
     cleanup() {
         this.isActive = false;
         if (this.heartbeatInterval) {
@@ -46,14 +53,14 @@ export class StreamHandler {
 
     async process(chunkGenerator, contextPayload = null, stripThinking = false, thinkingConfig = undefined) {
         this.start();
-        
+
         // Create thinking stripper if enabled
         const thinkingStripper = stripThinking ? createThinkingStripper(thinkingConfig) : null;
 
         try {
             for await (const chunk of chunkGenerator) {
                 if (!this.isActive) break;
-                
+
                 const delta = chunk.choices?.[0]?.delta;
                 if (delta) {
                     if (delta.content && thinkingStripper) {
@@ -84,13 +91,13 @@ export class StreamHandler {
                     });
                 }
             }
-            
+
             // Flush any remaining content from stripper buffer
             if (thinkingStripper) {
                 const remaining = thinkingStripper.flush();
                 if (remaining) {
-                    this.res.write(`data: ${JSON.stringify({ 
-                        choices: [{ delta: { content: remaining } }] 
+                    this.res.write(`data: ${JSON.stringify({
+                        choices: [{ delta: { content: remaining } }]
                     })}\n\n`);
                 }
             }

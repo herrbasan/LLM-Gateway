@@ -9,7 +9,8 @@ const logger = getLogger();
 export function setupWebSocketServer(server, app, config, dependencies) {
   const wss = new WebSocketServer({ 
     noServer: true,
-    clientTracking: false // Managed by ConnectionManager
+    clientTracking: false, // Managed by ConnectionManager
+    maxPayload: 300 * 1024 * 1024 // 300MB max payload size
   });
 
   const connectionManager = new ConnectionManager({
