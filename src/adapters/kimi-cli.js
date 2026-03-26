@@ -229,9 +229,21 @@ export function createKimiCliAdapter() {
 
             const sessionId = request.sessionId || null;
             const args = buildCliArgs(sessionId);
-            const message = { role: 'user', content: request.prompt || '' };
 
-            const content = await runCli(args, message, cliTimeout);
+            // Session-aware: extract the last user message from the array.
+            // The model-router compacts messages before sending, so last user msg is the latest.
+            // Non-session: use request.prompt (already squashed by buildMessages in router).
+            const messageContent = sessionId
+                ? (() => {
+                    const msgs = request.messages || [];
+                    for (let i = msgs.length - 1; i >= 0; i--) {
+                        if (msgs[i].role === 'user') return msgs[i].content || '';
+                    }
+                    return '';
+                })()
+                : (request.prompt || '');
+
+            const content = await runCli(args, { role: 'user', content: messageContent }, cliTimeout);
             const finalContent = request.schema ? extractJson(content) : content;
 
             return {
@@ -265,10 +277,19 @@ export function createKimiCliAdapter() {
                 console.warn(`[kimi-cli] Warning: Requested max_tokens (${request.maxTokens}) exceeds CLI fixed limit (~${maxOutputTokens}). Output may be truncated.`);
             }
 
-            const message = { role: 'user', content: request.prompt || '' };
             const streamId = `kimi-cli-${Date.now()}`;
 
             if (sessionId) {
+                // Session-aware: extract latest user message from array
+                const msgs = request.messages || [];
+                let messageContent = '';
+                for (let i = msgs.length - 1; i >= 0; i--) {
+                    if (msgs[i].role === 'user') {
+                        messageContent = msgs[i].content || '';
+                        break;
+                    }
+                }
+                const message = { role: 'user', content: messageContent };
                 // Session-aware: CLI manages conversation. Yield full response as one chunk.
                 const args = buildCliArgs(sessionId);
                 const content = await runCli(args, message, cliTimeout);
@@ -292,7 +313,7 @@ export function createKimiCliAdapter() {
                 let lastContent = '';
 
                 try {
-                    const input = JSON.stringify(message) + '\n\n';
+                    const input = JSON.stringify({ role: 'user', content: request.prompt || '' }) + '\n\n';
                     child.stdin.write(input);
                     child.stdin.end();
 
