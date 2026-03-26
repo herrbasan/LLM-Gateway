@@ -49,6 +49,10 @@ export function createKimiCliAdapter() {
 
             child.on('close', code => {
                 const output = Buffer.concat(stdout).toString('utf-8').trim();
+                if (process.env.DEBUG_KIMI_CLI === '1') {
+                    console.error('[kimi-cli][runCli] raw output:', JSON.stringify(output.slice(0, 500)));
+                    console.error('[kimi-cli][runCli] lines:', output.split('\n').map(l => l.trim()).filter(l => l).slice(0, 5));
+                }
                 const errors = Buffer.concat(stderr).toString('utf-8').trim();
 
                 const lines = output.split('\n').filter(l => l.trim());
@@ -294,6 +298,7 @@ export function createKimiCliAdapter() {
                 const args = buildCliArgs(sessionId);
                 const content = await runCli(args, message, cliTimeout);
                 const finalContent = request.schema ? extractJson(content) : content;
+                console.error('[kimi-cli][streamComplete][session] content length:', finalContent.length, 'preview:', finalContent.slice(0, 100));
 
                 yield {
                     id: streamId,
