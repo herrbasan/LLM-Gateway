@@ -98,12 +98,13 @@ export class ModelRouter {
             ...opts,
             messages,
             maxTokens: resolvedMaxTokens,
-            sessionId: request.sessionId
+            sessionId: request.sessionId || request.session_id || null
         };
 
         logger.info('Chat request prepared', {
             model: modelId,
             adapter: modelConfig.adapter,
+            sessionId: request.sessionId || request.session_id || null,
             stream: request.stream === true,
             message_count: messages.length,
             messages: this._summarizeMessagesForLog(messages),
