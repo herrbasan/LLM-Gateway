@@ -108,7 +108,7 @@ export class ModelRouter {
             message_count: messages.length,
             messages: this._summarizeMessagesForLog(messages),
             context: responseContext,
-            explicit_max_tokens: request.max_tokens ?? null,
+            explicit_max_tokens: (request.max_tokens ?? request.maxTokens) ?? null,
             resolved_max_tokens: resolvedMaxTokens,
             temperature: finalOpts.temperature ?? null
         }, 'ModelRouter');
@@ -331,8 +331,10 @@ export class ModelRouter {
      * Resolve the max output token budget for a chat request.
      */
     _resolveChatMaxTokens(request, modelConfig, context) {
-        if (request.max_tokens != null) {
-            return request.max_tokens;
+        // Accept both snake_case (max_tokens) and camelCase (maxTokens) from clients
+        const requestedMaxTokens = request.max_tokens ?? request.maxTokens;
+        if (requestedMaxTokens != null) {
+            return requestedMaxTokens;
         }
 
         const contextWindow = modelConfig?.capabilities?.contextWindow || 8192;
