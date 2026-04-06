@@ -64,8 +64,11 @@ Initiates a new chat completion stream.
 ```json
 // Server -> Client
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "routing"}}
+{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "model_routed", "model": "gemini-2.0-flash", "provider": "gemini"}}
+{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context"}}
+{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context_stats", "context": {"window_size": 1048576, "used_tokens": 2800, "available_tokens": 1045776, "strategy_applied": false, "resolved_max_tokens": 835060, "max_tokens_source": "implicit"}}}
 {"jsonrpc": "2.0", "method": "chat.delta", "params": {"request_id": "req-1", "choices": [{"index": 0, "delta": {"content": "Hello! "}}]}}
-{"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": false}}
+{"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": false, "finish_reason": "stop", "model": "gemini-2.0-flash", "provider": "gemini", "context": {...}, "telemetry": {"time_to_first_token_ms": 120, "total_duration_ms": 340, "chunks_sent": 5, "usage": {"prompt_tokens": 2800, "completion_tokens": 42, "total_tokens": 2842}, "reasoning_produced": false}}}
 ```
 
 If `max_tokens` is omitted from `params`, the gateway resolves a safe output budget automatically and reports it in the `chat.progress` `context_stats` payload.
@@ -100,7 +103,7 @@ Cancels an ongoing generation stream.
 The cancellation target is the original `chat.create` or `chat.append` request ID. On success, the server stops streaming, aborts the upstream provider request, and finishes with:
 
 ```json
-{"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": true, "telemetry": {"total_duration_ms": 1234}}}
+{"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": true, "finish_reason": "cancel", "telemetry": {"total_duration_ms": 1234, "chunks_sent": 3, "usage": null}}}
 ```
 
 There is no separate acknowledgement response for `chat.cancel`; `chat.done` with `cancelled: true` is the completion signal.
@@ -111,7 +114,7 @@ During an active request, the server can emit these JSON-RPC notifications:
 
 - `chat.progress`: lifecycle and context updates such as `routing`, `model_routed`, `context`, `context_stats`, `network_throttled`, and `reasoning_started`
 - `chat.delta`: streamed token chunks in OpenAI-compatible `choices[].delta` shape
-- `chat.done`: terminal event with `cancelled: false` or `cancelled: true`
+- `chat.done`: terminal event with `cancelled`, `finish_reason`, `model`, `provider`, `context`, and `telemetry` (including `usage`, `chunks_sent`, `reasoning_produced`, timing)
 - `chat.error`: terminal error event
 
 Example `context_stats` notification:

@@ -114,6 +114,14 @@ export function createOllamaAdapter() {
                             }]
                         };
 
+                        if (data.done && (data.eval_count || data.prompt_eval_count)) {
+                            chunk.usage = {
+                                prompt_tokens: data.prompt_eval_count || 0,
+                                completion_tokens: data.eval_count || 0,
+                                total_tokens: (data.prompt_eval_count || 0) + (data.eval_count || 0)
+                            };
+                        }
+
                         yield chunk;
                         if (data.done) return;
                     }

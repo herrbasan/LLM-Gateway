@@ -291,8 +291,12 @@ export class ChatHandler {
             content = chunk;
             chunkChoices = [{ index: 0, delta: { content } }];
           } else if (chunk) {
+            if (chunk.model) requestContext.adapterModel = chunk.model;
+            if (chunk.provider) requestContext.adapterProvider = chunk.provider;
+
             if (chunk.choices && chunk.choices.length > 0) {
               const delta = chunk.choices[0].delta || {};
+              const choiceFinishReason = chunk.choices[0].finish_reason;
               
               if (delta) {
                 if (delta.content && thinkingStripper) {
@@ -305,7 +309,6 @@ export class ChatHandler {
 
               content = delta.content || '';
               
-              // Forward reasoning/thinking markers explicitly as progress events
               if (delta.reasoning_content && !requestContext.hasEmittedReasoning) {
                 requestContext.hasEmittedReasoning = true;
                 this._sendWsMessage(connection, formatNotification('chat.progress', {
@@ -319,6 +322,10 @@ export class ChatHandler {
                 });
               }
               
+              if (choiceFinishReason) {
+                requestContext.finishReason = choiceFinishReason;
+              }
+
               chunkChoices = chunk.choices;
             }
             if (chunk.usage) {
@@ -369,6 +376,9 @@ export class ChatHandler {
       } else {
         const content = (typeof result === 'string') ? result : (result?.choices?.[0]?.message?.content || '');
         if (result?.usage) finalUsage = result.usage;
+        if (result?.model) requestContext.adapterModel = result.model;
+        if (result?.provider) requestContext.adapterProvider = result.provider;
+        if (result?.choices?.[0]?.finish_reason) requestContext.finishReason = result.choices[0].finish_reason;
         
         fullAssistantResponse = content;
         this._sendWsMessage(connection, formatNotification('chat.delta', {
@@ -413,10 +423,15 @@ export class ChatHandler {
           request_id: id,
           cancelled: false,
           context: initialContext,
+          finish_reason: requestContext.finishReason,
+          model: requestContext.adapterModel,
+          provider: requestContext.adapterProvider,
           telemetry: {
             time_to_first_token_ms: requestContext.firstTokenLatencyMs,
             total_duration_ms: requestContext.totalLatencyMs,
-            usage: finalUsage
+            chunks_sent: requestContext.chunksSent,
+            usage: finalUsage,
+            reasoning_produced: requestContext.hasEmittedReasoning
           }
         }), {
           requestId: id,
@@ -425,6 +440,9 @@ export class ChatHandler {
             cancelled: false,
             chunksSent: requestContext.chunksSent,
             responseChars: fullAssistantResponse.length,
+            finishReason: requestContext.finishReason,
+            model: requestContext.adapterModel,
+            provider: requestContext.adapterProvider,
             usage: finalUsage
           }
         });
@@ -442,8 +460,13 @@ export class ChatHandler {
           request_id: id,
           cancelled: true,
           context: initialContext,
+          finish_reason: requestContext.finishReason || 'cancel',
+          model: requestContext.adapterModel,
+          provider: requestContext.adapterProvider,
           telemetry: {
-            total_duration_ms: requestContext.totalLatencyMs
+            total_duration_ms: requestContext.totalLatencyMs,
+            chunks_sent: requestContext.chunksSent,
+            usage: finalUsage
           }
         }), {
           requestId: id,
@@ -451,7 +474,10 @@ export class ChatHandler {
           details: {
             cancelled: true,
             chunksSent: requestContext.chunksSent,
-            responseChars: fullAssistantResponse.length
+            responseChars: fullAssistantResponse.length,
+            finishReason: requestContext.finishReason,
+            model: requestContext.adapterModel,
+            provider: requestContext.adapterProvider
           }
         });
       }
@@ -475,8 +501,12 @@ export class ChatHandler {
           request_id: id,
           cancelled: true,
           context: null,
+          finish_reason: requestContext.finishReason || 'cancel',
+          model: requestContext.adapterModel,
+          provider: requestContext.adapterProvider,
           telemetry: {
-            total_duration_ms: requestContext.totalLatencyMs
+            total_duration_ms: requestContext.totalLatencyMs,
+            chunks_sent: requestContext.chunksSent
           }
         }), {
           requestId: id,
@@ -485,7 +515,10 @@ export class ChatHandler {
             cancelled: true,
             chunksSent: requestContext.chunksSent,
             aborted: true,
-            error: err.message
+            error: err.message,
+            finishReason: requestContext.finishReason,
+            model: requestContext.adapterModel,
+            provider: requestContext.adapterProvider
           }
         });
         return;
@@ -663,6 +696,13 @@ function summarizePayload(payload) {
     if (parsed.method === 'chat.done') {
       summary.cancelled = params.cancelled === true;
       summary.totalDurationMs = params.telemetry?.total_duration_ms ?? null;
+      summary.finishReason = params.finish_reason ?? null;
+      summary.model = params.model ?? null;
+      summary.provider = params.provider ?? null;
+      summary.usage = params.telemetry?.usage ? {
+        prompt: params.telemetry.usage.prompt_tokens,
+        completion: params.telemetry.usage.completion_tokens
+      } : null;
     }
 
     if (parsed.method === 'chat.error') {

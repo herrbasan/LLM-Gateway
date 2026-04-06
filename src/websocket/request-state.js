@@ -17,6 +17,10 @@ export class RequestContext {
     this.totalLatencyMs = 0;
     this.abortController = new AbortController();
     this.signal = this.abortController.signal;
+    this.finishReason = null;
+    this.adapterModel = null;
+    this.adapterProvider = null;
+    this.hasEmittedReasoning = false;
   }
 
   transition(newState) {

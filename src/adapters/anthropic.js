@@ -163,6 +163,8 @@ export function createAnthropicAdapter() {
             const decoder = new TextDecoder();
             let buffer = '';
             const processId = `msg_${Date.now()}`;
+            let inputTokens = 0;
+            let outputTokens = 0;
 
             try {
                 while (true) {
@@ -180,12 +182,16 @@ export function createAnthropicAdapter() {
 
                         try {
                             const event = JSON.parse(data);
+                            if (event.type === 'message_start' && event.message?.usage) {
+                                inputTokens = event.message.usage.input_tokens || 0;
+                            }
                             if (event.type === 'content_block_delta' && event.delta?.text) {
                                 yield {
                                     id: event.message?.id || processId,
                                     object: 'chat.completion.chunk',
                                     created: Math.floor(Date.now() / 1000),
                                     model,
+                                    provider: 'anthropic',
                                     choices: [{
                                         index: 0,
                                         delta: { content: event.delta.text },
@@ -193,17 +199,26 @@ export function createAnthropicAdapter() {
                                     }]
                                 };
                             }
-                            if (event.type === 'message_stop') {
+                            if (event.type === 'message_delta') {
+                                if (event.usage) {
+                                    outputTokens = event.usage.output_tokens || 0;
+                                }
                                 yield {
                                     id: event.message?.id || processId,
                                     object: 'chat.completion.chunk',
                                     created: Math.floor(Date.now() / 1000),
                                     model,
+                                    provider: 'anthropic',
                                     choices: [{
                                         index: 0,
                                         delta: {},
-                                        finish_reason: 'stop'
-                                    }]
+                                        finish_reason: event.delta?.stop_reason === 'end_turn' ? 'stop' : (event.delta?.stop_reason || 'stop')
+                                    }],
+                                    usage: {
+                                        prompt_tokens: inputTokens,
+                                        completion_tokens: outputTokens,
+                                        total_tokens: inputTokens + outputTokens
+                                    }
                                 };
                             }
                         } catch {

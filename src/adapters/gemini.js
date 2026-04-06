@@ -116,17 +116,28 @@ export function createGeminiAdapter() {
 
                         const textChunk = payloadData.candidates[0].content?.parts?.[0]?.text || '';
 
-                        yield {
+                        const chunk = {
                             id: processId,
                             object: 'chat.completion.chunk',
                             created: Math.floor(Date.now() / 1000),
                             model: model,
+                            provider: 'gemini',
                             choices: [{
                                 index: 0,
                                 delta: { content: textChunk },
                                 finish_reason: payloadData.candidates[0].finishReason === 'STOP' ? 'stop' : null
                             }]
                         };
+
+                        if (payloadData.usageMetadata) {
+                            chunk.usage = {
+                                prompt_tokens: payloadData.usageMetadata.promptTokenCount || 0,
+                                completion_tokens: payloadData.usageMetadata.candidatesTokenCount || 0,
+                                total_tokens: payloadData.usageMetadata.totalTokenCount || 0
+                            };
+                        }
+
+                        yield chunk;
                     }
                 }
             } finally {
