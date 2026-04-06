@@ -7,7 +7,7 @@ const MODEL_TYPES = ['chat', 'embedding', 'image', 'audio', 'video'];
 
 const REQUIRED_MODEL_FIELDS = ['type', 'adapter', 'capabilities'];
 
-const ADAPTER_TYPES = ['gemini', 'openai', 'ollama', 'lmstudio', 'anthropic', 'kimi-cli', 'kimi', 'dashscope'];
+const ADAPTER_TYPES = ['gemini', 'openai', 'ollama', 'lmstudio', 'anthropic', 'kimi-cli', 'kimi', 'dashscope', 'alibaba'];
 
 /**
  * Validates a model configuration object.
@@ -30,7 +30,7 @@ export function validateModelConfig(modelId, config) {
     }
 
     // Endpoint is required for all adapters except kimi-cli
-    const ADAPTERS_WITHOUT_ENDPOINT = ['kimi-cli'];
+    const ADAPTERS_WITHOUT_ENDPOINT = ['kimi-cli', 'alibaba'];
     if (!ADAPTERS_WITHOUT_ENDPOINT.includes(config.adapter) && !config.endpoint) {
         throw new Error(`[Config] Model "${modelId}": endpoint is required for adapter "${config.adapter}"`);
     }

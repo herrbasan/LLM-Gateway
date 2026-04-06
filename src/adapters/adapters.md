@@ -183,24 +183,108 @@ General-purpose API access to Kimi models. Separate from Kimi Code - different a
 ### E. Alibaba Cloud Qwen (DashScope) Specifics
 **Official Docs:** [https://www.alibabacloud.com/help/en/model-studio/getting-started/what-is-model-studio](https://www.alibabacloud.com/help/en/model-studio/getting-started/what-is-model-studio)
 
-Qwen models are accessed via the **DashScope** platform using OpenAI-compatible endpoints.
+There are **two adapter options** for Qwen models:
+
+#### Option 1: `alibaba` Adapter (Experimental)
+**Source:** `src/adapters/alibaba.js`
+
+> **⚠️ Experimental** — Requires a DashScope API key with full model access (not available on the coding plan which only covers Anthropic/OpenAI). This adapter is ready for use once you have a proper DashScope subscription.
+
+A dedicated adapter that uses the OpenAI SDK for DashScope's compatible endpoint. Provides full multimodal support in a single adapter — chat, streaming, embeddings, TTS, and image generation.
 
 **Endpoint:** `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
 
 For China-based deployments, use: `https://dashscope.aliyuncs.com/compatible-mode/v1`
 
-### Key Mapped Features
-- **Full OpenAI Compatibility:** The `/v1/chat/completions` endpoint accepts standard OpenAI request formats including `messages`, `temperature`, `max_tokens`, `stream`, and `response_format`.
-- **Streaming Support:** Server-Sent Events (SSE) are fully supported for real-time token streaming.
-- **Structured Output:** JSON mode works via `response_format: { type: "json_object" }` for compatible models.
-- **Multimodal Capabilities:** Qwen-VL models support image inputs via base64-encoded URLs in the message content.
+**Configuration:**
+```json
+{
+  "type": "chat",
+  "adapter": "alibaba",
+  "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  "apiKey": "${QWEN_API_KEY}",
+  "adapterModel": "qwen-plus",
+  "capabilities": {
+    "contextWindow": 131072,
+    "vision": true,
+    "structuredOutput": true,
+    "streaming": true
+  }
+}
+```
+
+**Chat model config:**
+```json
+{
+  "type": "audio",
+  "adapter": "alibaba",
+  "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  "apiKey": "${QWEN_API_KEY}",
+  "adapterModel": "qwen3-tts-flash",
+  "capabilities": {
+    "supportedVoices": ["zhichu", "zhixiang", "zhiyan", "zhimi"]
+  }
+}
+```
+
+**Image generation model config:**
+```json
+{
+  "type": "image",
+  "adapter": "alibaba",
+  "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  "apiKey": "${QWEN_API_KEY}",
+  "adapterModel": "qwen-image-2.0",
+  "capabilities": {
+    "supportedFormats": ["png", "jpg", "webp"]
+  }
+}
+```
+
+**Key Features:**
+- **Chat & Streaming:** Uses the OpenAI SDK for reliable SSE parsing and error handling
+- **Embeddings:** Supports configurable dimensions (64–2048) via `text-embedding-v3`/`v4`
+- **TTS:** Qwen TTS models via native DashScope multimodal-generation endpoint
+- **Image Generation:** Qwen Image models via native DashScope text2image endpoint (with async polling)
+- **DashScope-Specific Parameters:** Forwards `enable_search`, `enable_thinking`, `top_k`, `repetition_penalty`, `vl_high_resolution_images`, `min_pixels`, `max_pixels`
+- **Model Discovery:** DashScope-aware classification (vision, audio, image, embedding models)
+
+**DashScope-Specific Request Parameters:**
+These can be passed in any chat request body alongside standard OpenAI parameters:
+- `enable_search` (boolean) — Enable built-in web search
+- `enable_thinking` (boolean) — Enable thinking/reasoning mode for QwQ, qwen3.5+
+- `top_k` (number) — Candidate token count
+- `repetition_penalty` (number) — Repeat penalty
+- `vl_high_resolution_images` (boolean) — High-res vision mode
+- `min_pixels`, `max_pixels`, `total_pixels` (number) — Vision resolution control
+
+#### Option 2: `openai` Adapter (Basic)
+Qwen models can also be accessed via the generic `openai` adapter for basic chat/streaming. This is the legacy approach and does not support DashScope-specific features, TTS, or image generation.
+
+```json
+{
+  "type": "chat",
+  "adapter": "openai",
+  "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  "apiKey": "${QWEN_API_KEY}",
+  "adapterModel": "qwen-plus",
+  "capabilities": {
+    "contextWindow": 131072,
+    "streaming": true
+  }
+}
+```
 
 ### Available Model Families
 - **qwen-turbo**: Fast, cost-effective for general tasks
 - **qwen-plus**: Balanced performance and capability
 - **qwen-max**: Maximum capability for complex reasoning
 - **qwen-coder**: Specialized for code generation
-- **qwen-vl**: Vision-language models for image understanding
+- **qwen-vl** / **qwen2.5-vl** / **qwen3-vl**: Vision-language models
+- **qwen-omni**: Multimodal (audio + text) models
+- **qwen3-tts-flash**: Text-to-speech
+- **qwen-image-2.0**: Image generation
+- **text-embedding-v3** / **v4**: Embedding models with configurable dimensions
 
 ### Authentication
 Obtain API keys from the [Alibaba Cloud Model Studio Console](https://modelstudio.console.alibabacloud.com/). The key format is typically `sk-...`.
@@ -209,16 +293,17 @@ Obtain API keys from the [Alibaba Cloud Model Studio Console](https://modelstudi
 
 ## 5. Summary: Provider Quick Reference
 
-| Provider | Adapter Type | Endpoint | Embeddings | Streaming | JSON Mode |
-|----------|--------------|----------|------------|-----------|-----------|
-| Gemini | `gemini` | `generativelanguage.googleapis.com/v1beta` | ✅ | ✅ | ✅ |
-| LM Studio | `lmstudio` | `localhost:1234/v1` | ✅ | ✅ | ✅ |
-| Ollama | `ollama` | `localhost:11434` | ✅ | ✅ | ❌ |
-| Grok | `openai` | `api.x.ai/v1` | ❌ | ✅ | ✅ |
-| MiniMax | `minimax` | `api.minimax.io/anthropic` | ❌ | ❌ | ✅ |
-| GLM | `openai` | `api.z.ai/api/paas/v4` | ❌ | ✅ | ✅ |
-| Kimi Code | `kimi` | `api.kimi.com/coding/v1` | ❌ | ✅ | ✅* |
-| Kimi Platform | `openai` | `api.moonshot.cn/v1` | ❌ | ✅ | ✅ |
-| Qwen | `openai` | `dashscope-intl.aliyuncs.com/compatible-mode/v1` | ❌ | ✅ | ✅ |
+| Provider | Adapter Type | Endpoint | Embeddings | Streaming | JSON Mode | TTS | Images |
+|----------|--------------|----------|------------|-----------|-----------|-----|--------|
+| Gemini | `gemini` | `generativelanguage.googleapis.com/v1beta` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| LM Studio | `lmstudio` | `localhost:1234/v1` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Ollama | `ollama` | `localhost:11434` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Grok | `openai` | `api.x.ai/v1` | ❌ | ✅ | ✅ | ❌ | ❌ |
+| MiniMax | `minimax` | `api.minimax.io/anthropic` | ❌ | ❌ | ✅ | ❌ | ❌ |
+| GLM | `openai` | `api.z.ai/api/paas/v4` | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Kimi Code | `kimi` | `api.kimi.com/coding/v1` | ❌ | ✅ | ✅* | ❌ | ❌ |
+| Kimi Platform | `openai` | `api.moonshot.cn/v1` | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Qwen (basic) | `openai` | `dashscope-intl.aliyuncs.com/compatible-mode/v1` | ❌ | ✅ | ✅ | ❌ | ❌ |
+| **Qwen (full)** | **`alibaba`** | `dashscope-intl.aliyuncs.com/compatible-mode/v1` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 \* *Kimi Code vision requires base64-encoded images; image URLs are not supported directly*
