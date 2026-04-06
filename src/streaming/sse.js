@@ -63,6 +63,7 @@ export class StreamHandler {
 
                 const delta = chunk.choices?.[0]?.delta;
                 if (delta) {
+                    if (delta.content === null) delete delta.content;
                     if (delta.content && thinkingStripper) {
                         delta.content = thinkingStripper.process(delta.content);
                     }

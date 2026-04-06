@@ -299,6 +299,7 @@ export class ChatHandler {
               const choiceFinishReason = chunk.choices[0].finish_reason;
               
               if (delta) {
+                if (delta.content === null) delete delta.content;
                 if (delta.content && thinkingStripper) {
                   delta.content = thinkingStripper.process(delta.content);
                 }

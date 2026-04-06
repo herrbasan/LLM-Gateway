@@ -99,6 +99,10 @@ export function createOpenAIAdapter() {
                             if (data === '[DONE]') return;
                             try {
                                 const parsed = JSON.parse(data);
+                                const delta = parsed.choices?.[0]?.delta;
+                                if (delta && delta.content === null) {
+                                    delete delta.content;
+                                }
                                 parsed.provider = 'openai';
                                 yield parsed;
                             } catch (e) {
