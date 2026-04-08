@@ -76,6 +76,8 @@ export function createLlamaCppAdapter() {
                 Object.assign(payload, request.extra_body);
             }
 
+            logger.debug(`[llamacpp] Payload: ${JSON.stringify(payload).substring(0, 500)}`);
+
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
