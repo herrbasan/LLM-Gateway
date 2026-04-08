@@ -9,3 +9,10 @@ logs/
 
 # Reference projects (submodules for local dev only)
 Reference/
+
+# Local inference binaries (llama.cpp, etc.)
+inference/
+inference/*.md
+*.gguf
+*.bin
+*.dll
