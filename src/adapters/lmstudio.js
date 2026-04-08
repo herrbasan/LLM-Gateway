@@ -13,7 +13,7 @@ export function createLmStudioAdapter() {
          * Chat completion.
          */
         async chatComplete(modelConfig, request) {
-            const { endpoint, adapterModel, capabilities } = modelConfig;
+            const { endpoint, adapterModel, capabilities, maxTokens: configMaxTokens, extraBody } = modelConfig;
             const model = adapterModel || 'local-model';
 
             const payload = {
@@ -22,13 +22,29 @@ export function createLmStudioAdapter() {
                 stream: false
             };
 
-            if (request.maxTokens) payload.max_tokens = request.maxTokens;
+            // Max tokens: config override takes precedence, then request value
+            if (configMaxTokens !== undefined) {
+                payload.max_tokens = configMaxTokens;
+            } else if (request.maxTokens) {
+                payload.max_tokens = request.maxTokens;
+            }
+
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
             if (request.schema && capabilities?.structuredOutput) {
                 payload.response_format = {
                     type: 'json_schema',
                     json_schema: { name: 'response', strict: true, schema: request.schema }
                 };
+            }
+
+            // Config-level extraBody (applied to all requests)
+            if (extraBody) {
+                Object.assign(payload, extraBody);
+            }
+
+            // Request-level extra_body (overrides config)
+            if (request.extra_body) {
+                Object.assign(payload, request.extra_body);
             }
 
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
@@ -49,7 +65,7 @@ export function createLmStudioAdapter() {
          * Streaming chat completion.
          */
         async *streamComplete(modelConfig, request) {
-            const { endpoint, adapterModel } = modelConfig;
+            const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody, hardTokenCap } = modelConfig;
             const model = adapterModel || 'local-model';
 
             const payload = {
@@ -58,8 +74,24 @@ export function createLmStudioAdapter() {
                 stream: true
             };
 
-            if (request.maxTokens) payload.max_tokens = request.maxTokens;
+            // Max tokens: config override takes precedence, then request value
+            if (configMaxTokens !== undefined) {
+                payload.max_tokens = configMaxTokens;
+            } else if (request.maxTokens) {
+                payload.max_tokens = request.maxTokens;
+            }
+
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
+
+            // Config-level extraBody (applied to all requests)
+            if (extraBody) {
+                Object.assign(payload, extraBody);
+            }
+
+            // Request-level extra_body (overrides config)
+            if (request.extra_body) {
+                Object.assign(payload, request.extra_body);
+            }
 
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
@@ -71,6 +103,10 @@ export function createLmStudioAdapter() {
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
+            
+            // Hard token cap tracking
+            let generatedTokens = 0;
+            const tokenCap = hardTokenCap || configMaxTokens;
 
             try {
                 while (true) {
@@ -91,6 +127,26 @@ export function createLmStudioAdapter() {
                             try {
                                 const parsed = JSON.parse(data);
                                 parsed.provider = 'lmstudio';
+                                
+                                // Hard token cap check
+                                if (tokenCap) {
+                                    const content = parsed.choices?.[0]?.delta?.content || '';
+                                    // Rough token estimation: ~4 chars per token for English
+                                    const estimatedTokens = Math.ceil(content.length / 4);
+                                    generatedTokens += estimatedTokens;
+                                    
+                                    if (generatedTokens >= tokenCap) {
+                                        // Yield final chunk with finish_reason
+                                        parsed.choices = parsed.choices || [];
+                                        if (parsed.choices[0]) {
+                                            parsed.choices[0].finish_reason = 'length';
+                                            parsed.choices[0].delta = {}; // Clear delta to signal end
+                                        }
+                                        yield parsed;
+                                        return; // Stop generation
+                                    }
+                                }
+                                
                                 yield parsed;
                             } catch (e) {
                                 // Skip broken JSON

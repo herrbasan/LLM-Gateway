@@ -46,9 +46,112 @@ The LLM Gateway is a lightweight, high-performance Node.js API that sits between
 
 Each model is independently configured with:
 - **Type**: chat, embedding, image, audio
-- **Adapter**: Protocol handler (gemini, openai, ollama, etc.)
+- **Adapter**: Protocol handler (gemini, openai, ollama, responses, etc.)
 - **Capabilities**: Explicit declaration (contextWindow, vision, etc.)
 - **Endpoint/Auth**: Per-model configuration
+- **Disabled**: Set `disabled: true` to temporarily disable a model without removing it from config
+
+### Disabling Models
+
+Temporarily disable any model by adding `disabled: true`:
+
+```json
+"gpt-4": {
+  "type": "chat",
+  "adapter": "openai",
+  "endpoint": "...",
+  "disabled": true
+}
+```
+
+Disabled models:
+- Are excluded from `/v1/models` listing
+- Return `403 Forbidden` if requested directly
+- Can be re-enabled by removing the flag or setting `disabled: false`
+
+### Available Adapters
+
+| Adapter | Description | Supported Types |
+|---------|-------------|-----------------|
+| `openai` | Standard OpenAI Chat Completions API | chat, embedding, image, audio |
+| `responses` | OpenAI Responses API (newer format) | chat |
+| `anthropic` | Anthropic Claude API | chat |
+| `gemini` | Google Gemini API | chat, embedding, image, audio |
+| `kimi` | Moonshot Kimi API (native) | chat |
+| `ollama` | Ollama local API | chat, embedding |
+| `lmstudio` | LM Studio API | chat, embedding |
+| `dashscope` | Alibaba DashScope | chat |
+| `alibaba` | Alibaba Cloud AI | chat |
+| `llamacpp` | llama.cpp local server | chat, embedding |
+
+### Local Inference (llama.cpp)
+
+The gateway can auto-manage local llama.cpp servers for running GGUF models locally.
+
+**Setup:**
+1. Download/build `llama-server.exe` and place in `inference/` folder
+2. Add required DLLs for CUDA support: `cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll`
+3. Configure model in `config.json` with `localInference.enabled: true`
+
+**Config Example:**
+```json
+"llama-local": {
+  "adapter": "llamacpp",
+  "endpoint": "http://localhost:12346",
+  "capabilities": { 
+    "contextWindow": 8192,
+    "structuredOutput": true
+  },
+  "localInference": {
+    "enabled": true,
+    "modelPath": "D:/models/model.gguf",
+    "contextSize": 8192,
+    "gpuLayers": 99,
+    "flashAttention": "on",
+    "mlock": true,
+    "contBatching": true
+  }
+}
+```
+
+**Auto-Management:**
+- Gateway starts `llama-server.exe` on first request
+- Server runs on configured port
+- Process terminates when gateway shuts down
+- All stderr output piped through gateway logger
+
+**Path Handling:**
+- Paths containing `#` are automatically escaped (`#` → `\#`)
+- This prevents `#` from being interpreted as a comment by llama-server
+
+**Performance Tuning:**
+| Option | Effect |
+|--------|--------|
+| `contextSize` | Lower = faster (try 4096-8192 for chat) |
+| `flashAttention: "on"` | Essential for large contexts |
+| `mlock: true` | Prevents model swapping to disk |
+| `cacheTypeK/V: "q8_0"` | 8-bit KV cache saves VRAM |
+
+**Multi-Model Support:**
+Configure multiple models on different ports:
+```json
+"llama-chat": { "endpoint": "http://localhost:12346", ... },
+"llama-embed": { "endpoint": "http://localhost:12347", "embedding": true, ... }
+```
+Each model runs its own `llama-server.exe` process. VRAM is shared across models.
+
+**Keep-Alive (Always-Loaded):**
+By default, servers stay running indefinitely (no TTL). To prevent any idle cleanup:
+```json
+"noClearIdle": true,
+"sleepIdleSeconds": 0
+```
+This matches LMStudio behavior - models stay in VRAM permanently.
+
+**Files:**
+- `src/core/inference-manager.js` - Process lifecycle management
+- `src/adapters/llamacpp.js` - OpenAI-compatible API adapter
+- `inference/llama-server-reference.md` - Full command reference
 
 ### Stateless Operation
 
@@ -68,6 +171,8 @@ Each model is independently configured with:
 - Kimi chat requests sanitize prior assistant thinking traces before estimation and upstream dispatch
 - Kimi native token counting uses dedicated Moonshot tokenizer endpoints when available and falls back to estimator logic if token estimation is unavailable
 - `kimi-cli` is no longer part of the active chat path; do not rely on it for current behavior documentation
+- Qwen models support `enable_thinking` toggle via `extraBody.chat_template_kwargs` - set to `false` to disable verbose reasoning
+- Local inference servers (llama.cpp) pipe stderr through the gateway logger for debugging startup issues
 
 ### Logging
 

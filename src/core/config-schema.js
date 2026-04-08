@@ -7,7 +7,7 @@ const MODEL_TYPES = ['chat', 'embedding', 'image', 'audio', 'video'];
 
 const REQUIRED_MODEL_FIELDS = ['type', 'adapter', 'capabilities'];
 
-const ADAPTER_TYPES = ['gemini', 'openai', 'ollama', 'lmstudio', 'anthropic', 'kimi-cli', 'kimi', 'dashscope', 'alibaba'];
+const ADAPTER_TYPES = ['gemini', 'openai', 'ollama', 'lmstudio', 'anthropic', 'kimi-cli', 'kimi', 'dashscope', 'alibaba', 'responses', 'llamacpp'];
 
 /**
  * Validates a model configuration object.
@@ -54,6 +54,34 @@ export function validateModelConfig(modelId, config) {
 
     // Capabilities validation by type
     validateCapabilities(modelId, config.type, config.capabilities);
+
+    // Validate optional maxTokens if present
+    if ('maxTokens' in config && (typeof config.maxTokens !== 'number' || config.maxTokens < 1)) {
+        throw new Error(`[Config] Model "${modelId}": maxTokens must be a positive number`);
+    }
+
+    // Validate optional extraBody if present (must be an object)
+    if ('extraBody' in config && (typeof config.extraBody !== 'object' || config.extraBody === null || Array.isArray(config.extraBody))) {
+        throw new Error(`[Config] Model "${modelId}": extraBody must be an object`);
+    }
+
+    // Validate optional hardTokenCap if present (safety limit for endless generation)
+    if ('hardTokenCap' in config && (typeof config.hardTokenCap !== 'number' || config.hardTokenCap < 1)) {
+        throw new Error(`[Config] Model "${modelId}": hardTokenCap must be a positive number`);
+    }
+
+    // Validate optional localInference if present
+    if ('localInference' in config) {
+        if (typeof config.localInference !== 'object' || config.localInference === null) {
+            throw new Error(`[Config] Model "${modelId}": localInference must be an object`);
+        }
+        if (config.localInference.enabled !== true && config.localInference.enabled !== false) {
+            throw new Error(`[Config] Model "${modelId}": localInference.enabled must be boolean`);
+        }
+        if (config.localInference.enabled && !config.localInference.modelPath) {
+            throw new Error(`[Config] Model "${modelId}": localInference.modelPath is required when enabled`);
+        }
+    }
 
     return true;
 }

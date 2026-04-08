@@ -117,6 +117,21 @@
       "capabilities": {
         "streaming": false
       }
+    },
+    "openai-responses": {
+      "type": "chat",
+      "adapter": "responses",
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "your-openai-api-key",
+      "adapterModel": "gpt-4o",
+      "maxTokens": 4096,
+      "capabilities": {
+        "contextWindow": 128000,
+        "vision": true,
+        "streaming": true,
+        "tools": true,
+        "stateful": true
+      }
     }
   },
   

@@ -12,6 +12,8 @@ import { createKimiAdapter } from '../adapters/kimi.js';
 import { createAnthropicAdapter } from '../adapters/anthropic.js';
 import { createDashScopeAdapter } from '../adapters/dashscope.js';
 import { createAlibabaAdapter } from '../adapters/alibaba.js';
+import { createResponsesAdapter } from '../adapters/responses.js';
+import { createLlamaCppAdapter } from '../adapters/llamacpp.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 
 const ADAPTER_FACTORIES = {
@@ -23,7 +25,9 @@ const ADAPTER_FACTORIES = {
     kimi: createKimiAdapter,
     anthropic: createAnthropicAdapter,
     dashscope: createDashScopeAdapter,
-    alibaba: createAlibabaAdapter
+    alibaba: createAlibabaAdapter,
+    responses: createResponsesAdapter,
+    llamacpp: createLlamaCppAdapter
 };
 
 /**
