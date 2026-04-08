@@ -3,6 +3,9 @@
   "host": "0.0.0.0",
   
   "models": {
+    "_comment": "=== LLM GATEWAY MODEL CONFIGURATION ===",
+    
+    "_comment_lmstudio": "--- LM Studio (External Server) ---",
     "lmstudio-chat": {
       "type": "chat",
       "adapter": "lmstudio",
@@ -25,6 +28,94 @@
         "dimensions": 768
       }
     },
+    
+    "_comment_llamacpp": "--- llama.cpp (Auto-Managed Local Inference) ---",
+    "_comment_llamacpp_note": "Place llama-server.exe and CUDA DLLs in inference/ folder",
+    
+    "llama-chat": {
+      "type": "chat",
+      "adapter": "llamacpp",
+      "endpoint": "http://localhost:12346",
+      "adapterModel": "my-chat-model",
+      "maxTokens": 8192,
+      "hardTokenCap": 10000,
+      "capabilities": {
+        "contextWindow": 8192,
+        "vision": true,
+        "streaming": true,
+        "structuredOutput": true
+      },
+      "imageInputLimit": {
+        "maxDimension": 2048,
+        "maxFileSize": 52428800,
+        "supportedFormats": ["png", "jpeg", "gif", "webp"]
+      },
+      "localInference": {
+        "enabled": true,
+        "modelPath": "/path/to/your/model.gguf",
+        "contextSize": 8192,
+        "gpuLayers": 99,
+        "flashAttention": "on",
+        "mlock": true,
+        "noClearIdle": true,
+        "sleepIdleSeconds": -1
+      }
+    },
+    
+    "llama-vision": {
+      "type": "chat",
+      "adapter": "llamacpp",
+      "endpoint": "http://localhost:12346",
+      "adapterModel": "my-vision-model",
+      "capabilities": {
+        "contextWindow": 8192,
+        "vision": true,
+        "streaming": true,
+        "structuredOutput": true
+      },
+      "imageInputLimit": {
+        "maxDimension": 2048,
+        "maxFileSize": 52428800,
+        "supportedFormats": ["png", "jpeg", "gif", "webp"]
+      },
+      "localInference": {
+        "enabled": true,
+        "modelPath": "/path/to/your/vision-model.gguf",
+        "mmproj": "/path/to/your/mmproj-file.gguf",
+        "contextSize": 8192,
+        "gpuLayers": 99,
+        "flashAttention": "on",
+        "mlock": true,
+        "noClearIdle": true,
+        "sleepIdleSeconds": -1
+      }
+    },
+    
+    "llama-embed": {
+      "type": "embedding",
+      "adapter": "llamacpp",
+      "endpoint": "http://localhost:12347",
+      "adapterModel": "my-embedding-model",
+      "capabilities": {
+        "contextWindow": 512,
+        "embedding": true,
+        "embeddingDimensions": 1024
+      },
+      "localInference": {
+        "enabled": true,
+        "modelPath": "/path/to/your/embedding-model.gguf",
+        "contextSize": 512,
+        "gpuLayers": 99,
+        "embedding": true,
+        "pooling": "mean",
+        "batchSize": 512,
+        "mlock": true,
+        "noClearIdle": true,
+        "sleepIdleSeconds": -1
+      }
+    },
+    
+    "_comment_ollama": "--- Ollama ---",
     "ollama-chat": {
       "type": "chat",
       "adapter": "ollama",
@@ -47,6 +138,8 @@
         "dimensions": 768
       }
     },
+    
+    "_comment_gemini": "--- Google Gemini ---",
     "gemini-flash": {
       "type": "chat",
       "adapter": "gemini",
@@ -71,19 +164,31 @@
         "dimensions": 768
       }
     },
-    "grok-chat": {
-      "type": "chat",
-      "adapter": "openai",
-      "endpoint": "https://api.x.ai/v1",
-      "apiKey": "your-grok-api-key",
-      "adapterModel": "grok-2",
+    "gemini-image": {
+      "type": "image",
+      "adapter": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "your-gemini-api-key",
+      "adapterModel": "imagen-4.0-generate-001",
       "capabilities": {
-        "contextWindow": 1000000,
-        "vision": true,
-        "structuredOutput": true,
-        "streaming": true
+        "maxResolution": "2048x2048",
+        "supportedFormats": ["png", "jpeg", "webp"]
       }
     },
+    "gemini-tts": {
+      "type": "audio",
+      "adapter": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "your-gemini-api-key",
+      "adapterModel": "gemini-2.5-pro-preview-tts",
+      "capabilities": {
+        "tts": true,
+        "maxDuration": 600,
+        "supportedFormats": ["mp3", "wav", "pcm"]
+      }
+    },
+    
+    "_comment_openai": "--- OpenAI ---",
     "openai-chat": {
       "type": "chat",
       "adapter": "openai",
@@ -132,6 +237,82 @@
         "tools": true,
         "stateful": true
       }
+    },
+    
+    "_comment_grok": "--- xAI Grok ---",
+    "grok-chat": {
+      "type": "chat",
+      "adapter": "openai",
+      "endpoint": "https://api.x.ai/v1",
+      "apiKey": "your-grok-api-key",
+      "adapterModel": "grok-2",
+      "capabilities": {
+        "contextWindow": 1000000,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    
+    "_comment_anthropic": "--- Anthropic Claude ---",
+    "anthropic-chat": {
+      "type": "chat",
+      "adapter": "anthropic",
+      "endpoint": "https://api.anthropic.com/v1",
+      "apiKey": "your-anthropic-api-key",
+      "adapterModel": "claude-3-5-sonnet-20241022",
+      "capabilities": {
+        "contextWindow": 200000,
+        "vision": true,
+        "streaming": true,
+        "structuredOutput": true
+      }
+    },
+    
+    "_comment_kimi": "--- Moonshot Kimi ---",
+    "kimi-chat": {
+      "type": "chat",
+      "adapter": "kimi",
+      "endpoint": "https://api.kimi.com/coding/v1",
+      "apiKey": "your-kimi-api-key",
+      "adapterModel": "kimi-for-coding",
+      "capabilities": {
+        "contextWindow": 256000,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    
+    "_comment_alibaba": "--- Alibaba Cloud (DashScope) ---",
+    "alibaba-chat": {
+      "type": "chat",
+      "adapter": "alibaba",
+      "endpoint": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "apiKey": "your-dashscope-api-key",
+      "adapterModel": "qwen3.5-plus",
+      "capabilities": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 65536,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    
+    "_comment_disabled": "--- Disabled Model Example ---",
+    "disabled-model": {
+      "type": "chat",
+      "adapter": "openai",
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "your-api-key",
+      "adapterModel": "gpt-4",
+      "disabled": true,
+      "capabilities": {
+        "contextWindow": 128000,
+        "vision": true,
+        "streaming": true
+      }
     }
   },
   
@@ -142,8 +323,10 @@
   },
   
   "routing": {
-    "defaultChatModel": "lmstudio-chat",
-    "defaultEmbeddingModel": "lmstudio-embed"
+    "defaultChatModel": "llama-chat",
+    "defaultEmbeddingModel": "llama-embed",
+    "defaultImageModel": "gemini-image",
+    "defaultAudioModel": "gemini-tts"
   },
   
   "compaction": {
@@ -152,5 +335,15 @@
     "minTokensToCompact": 2000,
     "preserveSystemPrompt": true,
     "preserveLastN": 4
+  },
+  
+  "mediaProcessor": {
+    "enabled": true,
+    "endpoint": "http://localhost:3500"
+  },
+  
+  "ws": {
+    "localOnly": false,
+    "whitelistIps": ["192.168.*"]
   }
 }
