@@ -176,27 +176,30 @@ export function createLlamaCppAdapter() {
                                 
                                 // Normalize thinking content from <think> tags
                                 const delta = parsed.choices?.[0]?.delta;
-                                if (delta?.content) {
-                                    let content = delta.content;
+                                if (delta?.content !== undefined) {
+                                    let content = delta.content || '';
                                     
                                     // Check for <think> tag start
                                     if (content.includes('<think>')) {
-                                        inThinkingMode = true;
                                         const thinkIndex = content.indexOf('<think>');
                                         if (thinkIndex > 0) {
-                                            // Content before <think>
+                                            // Content before <think> - send as normal content
                                             delta.content = content.substring(0, thinkIndex);
                                         } else {
-                                            delta.content = null; // Will be removed below
+                                            delta.content = null;
                                         }
-                                        content = content.substring(thinkIndex + 7); // After <think>
+                                        // Extract content after <think> for processing
+                                        content = content.substring(thinkIndex + 7);
+                                        inThinkingMode = true;
                                     }
                                     
                                     // Check for </think> tag end
                                     if (inThinkingMode && content.includes('</think>')) {
                                         const endIndex = content.indexOf('</think>');
+                                        // Add thinking content before </think>
                                         thinkingBuffer += content.substring(0, endIndex);
-                                        content = content.substring(endIndex + 8); // After </think>
+                                        // Content after </think> is the actual response
+                                        content = content.substring(endIndex + 8);
                                         inThinkingMode = false;
                                         
                                         // Send reasoning_content first if we have it
@@ -216,16 +219,18 @@ export function createLlamaCppAdapter() {
                                         }
                                     }
                                     
-                                    // Accumulate thinking content
+                                    // Handle content based on mode
                                     if (inThinkingMode) {
+                                        // Accumulate thinking content
                                         thinkingBuffer += content;
-                                        delta.content = null; // Don't send thinking as content
+                                        delta.content = null;
                                     } else if (content) {
+                                        // Normal content (after </think>)
                                         delta.content = content;
                                     }
                                     
-                                    // Remove null content
-                                    if (delta.content === null) {
+                                    // Remove null/empty content
+                                    if (delta.content === null || delta.content === '') {
                                         delete delta.content;
                                     }
                                 }
