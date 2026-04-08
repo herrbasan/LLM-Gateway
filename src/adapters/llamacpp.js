@@ -251,6 +251,7 @@ export function createLlamaCppAdapter() {
         async listModels(modelConfig) {
             const { endpoint, capabilities } = modelConfig;
             const contextWindow = capabilities?.contextWindow || 4096;
+            const hasVision = capabilities?.vision === true || modelConfig.localInference?.mmproj !== undefined;
 
             try {
                 const res = await httpRequest(`${endpoint}/v1/models`);
@@ -266,7 +267,7 @@ export function createLlamaCppAdapter() {
                             embeddings: false,
                             structuredOutput: true,
                             streaming: true,
-                            vision: false,
+                            vision: hasVision,
                             context_window: contextWindow
                         }
                     }));
@@ -286,7 +287,7 @@ export function createLlamaCppAdapter() {
                     embeddings: false,
                     structuredOutput: true,
                     streaming: true,
-                    vision: false,
+                    vision: hasVision,
                     context_window: contextWindow
                 }
             }];

@@ -80,6 +80,11 @@ export class InferenceManager {
         if (localInference.embedding) args.push('--embedding');
         if (localInference.pooling) args.push('--pooling', localInference.pooling);
         
+        // Vision / multimodal
+        if (localInference.mmproj) args.push('--mmproj', localInference.mmproj);
+        if (localInference.imageMinTokens) args.push('--image-min-tokens', String(localInference.imageMinTokens));
+        if (localInference.imageMaxTokens) args.push('--image-max-tokens', String(localInference.imageMaxTokens));
+        
         // Keep-alive / prevent idle shutdown (for LMStudio-like behavior)
         if (localInference.noClearIdle) args.push('--no-clear-idle');
         if (localInference.sleepIdleSeconds !== undefined) {

@@ -1,0 +1,35 @@
+{
+  "_comment": "Example: Vision-capable model with llama.cpp",
+  
+  "models": {
+    "llama-vision": {
+      "type": "chat",
+      "adapter": "llamacpp",
+      "endpoint": "http://localhost:12346",
+      "adapterModel": "Qwen3.5-35B-A3B-Vision",
+      "capabilities": {
+        "contextWindow": 8192,
+        "vision": true,
+        "streaming": true,
+        "structuredOutput": true
+      },
+      "localInference": {
+        "enabled": true,
+        "modelPath": "D:/models/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive-Q3_K_M.gguf",
+        "contextSize": 8192,
+        "gpuLayers": 99,
+        "flashAttention": "on",
+        "mlock": true,
+        
+        "//": "Vision options (if model has built-in vision)",
+        "imageMinTokens": 256,
+        "imageMaxTokens": 1024
+      },
+      "imageInputLimit": {
+        "maxDimension": 2048,
+        "maxFileSize": 52428800,
+        "supportedFormats": ["png", "jpeg", "gif", "webp"]
+      }
+    }
+  }
+}
