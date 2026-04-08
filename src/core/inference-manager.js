@@ -88,6 +88,7 @@ export class InferenceManager {
         // Keep-alive / prevent idle shutdown (for LMStudio-like behavior)
         if (localInference.noClearIdle) args.push('--no-clear-idle');
         if (localInference.sleepIdleSeconds !== undefined) {
+            // -1 = disabled, 0 is invalid, positive = seconds
             args.push('--sleep-idle-seconds', String(localInference.sleepIdleSeconds));
         }
         if (localInference.timeout) args.push('-to', String(localInference.timeout));

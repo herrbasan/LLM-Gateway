@@ -144,7 +144,7 @@ Each model runs its own `llama-server.exe` process. VRAM is shared across models
 By default, servers stay running indefinitely (no TTL). To prevent any idle cleanup:
 ```json
 "noClearIdle": true,
-"sleepIdleSeconds": 0
+"sleepIdleSeconds": -1
 ```
 This matches LMStudio behavior - models stay in VRAM permanently.
 
