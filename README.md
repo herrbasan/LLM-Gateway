@@ -1,13 +1,14 @@
 # LLM Gateway v2.0
 
-A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface with support for multiple providers.
+A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface with support for multiple providers, including local inference via llama.cpp.
 
-Recent behavior of note:
+## Recent Behavior of Note
 
 - Chat requests without `max_tokens` get an automatically derived output budget based on remaining context
 - Chat responses expose `context.resolved_max_tokens` and `context.max_tokens_source`
 - WebSocket `chat.cancel` aborts the upstream provider request
 - HTTP client disconnects abort in-flight upstream chat generation for supported adapters
+- Local llama.cpp models auto-start on first request and stay loaded in VRAM
 
 ## Quick Start
 
@@ -29,7 +30,8 @@ The gateway runs on `http://localhost:3400` by default.
 LLM Gateway provides a unified interface to multiple LLM providers:
 
 - **OpenAI-compatible API** - Drop-in replacement for OpenAI client libraries
-- **Multi-provider** - Gemini, OpenAI, Ollama, LM Studio, MiniMax, Kimi
+- **Multi-provider** - Gemini, OpenAI, Anthropic, Ollama, LM Studio, llama.cpp, MiniMax, Kimi, Alibaba
+- **Local Inference** - Auto-managed llama.cpp servers for running GGUF models locally
 - **Stateless** - No server-side session management
 - **Model-centric config** - Each model configured independently
 - **Context compaction** - Automatic context window management
@@ -57,12 +59,24 @@ Define models in `config.json`:
     },
     "local-llama": {
       "type": "chat",
-      "adapter": "ollama",
-      "endpoint": "http://localhost:11434",
-      "adapterModel": "llama3.2",
+      "adapter": "llamacpp",
+      "endpoint": "http://localhost:12346",
+      "adapterModel": "my-local-model",
       "capabilities": {
-        "contextWindow": 128000,
+        "contextWindow": 8192,
+        "vision": true,
         "streaming": true
+      },
+      "localInference": {
+        "enabled": true,
+        "modelPath": "/path/to/model.gguf",
+        "mmproj": "/path/to/mmproj.gguf",
+        "contextSize": 8192,
+        "gpuLayers": 99,
+        "flashAttention": "on",
+        "mlock": true,
+        "noClearIdle": true,
+        "sleepIdleSeconds": -1
       }
     }
   },
@@ -72,7 +86,14 @@ Define models in `config.json`:
 }
 ```
 
-For SSE clients, closing the HTTP connection now aborts the upstream provider request instead of letting generation continue in the background.
+### Model Features
+
+| Feature | Description |
+|---------|-------------|
+| `disabled` | Set `true` to temporarily disable a model without removing it from config |
+| `hardTokenCap` | Safety limit - forcibly stops generation after N tokens |
+| `extraBody` | Config-level provider-specific parameters applied to all requests |
+| `extra_body` | Request-level provider-specific parameters (per-request override) |
 
 ### WebSocket Cancellation
 
@@ -132,9 +153,10 @@ curl http://localhost:3400/v1/embeddings \
 
 Each model is independently configured with:
 - **Type**: chat, embedding, image, audio
-- **Adapter**: Protocol handler (gemini, openai, ollama, etc.)
+- **Adapter**: Protocol handler (gemini, openai, llamacpp, etc.)
 - **Capabilities**: Explicit declaration (contextWindow, vision, etc.)
 - **Endpoint/Auth**: Per-model configuration
+- **Local Inference**: For running GGUF models locally (llama.cpp)
 
 ### Stateless Operation
 
@@ -145,18 +167,37 @@ Each model is independently configured with:
 
 ### Supported Adapters
 
-| Adapter | Chat | Embeddings | Images | Audio |
-|---------|------|------------|--------|-------|
-| Gemini | ✅ | ✅ | ❌ | ✅ |
-| OpenAI | ✅ | ✅ | ✅ | ✅ |
-| Ollama | ✅ | ✅ | ❌ | ❌ |
-| LM Studio | ✅ | ✅ | ❌ | ❌ |
-| MiniMax | ✅ | ❌ | ❌ | ❌ |
-| Kimi Code | ✅ | ❌ | ❌ | ❌ |
+| Adapter | Chat | Embeddings | Images | Audio | Vision | Local |
+|---------|------|------------|--------|-------|--------|-------|
+| Gemini | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| OpenAI | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Anthropic | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Ollama | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| LM Studio | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| **llama.cpp** | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| MiniMax | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Kimi | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Alibaba | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| OpenAI Responses | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+
+### Local Inference with llama.cpp
+
+The gateway can auto-manage local llama.cpp servers:
+
+1. Place `llama-server.exe` and CUDA DLLs in `inference/` folder
+2. Configure with `localInference.enabled: true`
+3. Server starts on first request, stays loaded in VRAM
+4. Supports multiple models on different ports
+
+**Key options:**
+- `modelPath` - Path to GGUF file
+- `mmproj` - Path to multimodal projector (for vision)
+- `gpuLayers` - Number of layers to offload to GPU (99 = all)
+- `flashAttention` - Enable Flash Attention ("on"/"off"/"auto")
+- `mlock` - Keep model in RAM
+- `noClearIdle` + `sleepIdleSeconds: -1` - Stay loaded forever
 
 ## API Documentation
-
-The gateway provides two core interaction interfaces depending on use case. See the documentation below:
 
 - [REST API Reference](docs/api_rest.md) - Standard OpenAI-compatible HTTP endpoints
 - [WebSocket API Reference](docs/api_websocket.md) - Real-time active connection protocol
@@ -182,6 +223,7 @@ npm run dev
 | Session-based (`X-Session-Id`) | Stateless |
 | Capability inference from model IDs | Explicit capabilities |
 | `providers` in config | `models` in config |
+| No local inference | Auto-managed llama.cpp support |
 
 ## Environment Variables
 
@@ -190,10 +232,10 @@ npm run dev
 | `GEMINI_API_KEY` | Google Gemini API key |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `GROK_API_KEY` | xAI Grok API key |
-| `GLM_API_KEY` | GLM API key |
-| `QWEN_API_KEY` | Qwen API key |
-| `MINIMAX_API_KEY` | MiniMax API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `KIMI_API_KEY` | Kimi API key |
 | `CORS_ORIGINS` | Comma-separated allowed origins |
+| `LOG_RETENTION_DAYS` | Days to keep log files (default: 1) |
 
 ## License
 

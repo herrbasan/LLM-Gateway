@@ -104,7 +104,7 @@ The gateway can auto-manage local llama.cpp servers for running GGUF models loca
   },
   "localInference": {
     "enabled": true,
-    "modelPath": "D:/models/model.gguf",
+    "modelPath": "/path/to/your/model.gguf",
     "contextSize": 8192,
     "gpuLayers": 99,
     "flashAttention": "on",
