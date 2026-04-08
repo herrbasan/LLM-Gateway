@@ -148,6 +148,11 @@ export function createLlamaCppAdapter() {
             // Hard token cap tracking
             let generatedTokens = 0;
             const tokenCap = hardTokenCap || configMaxTokens;
+            
+            // Thinking normalization - track if we're inside think tags
+            let inThinkingMode = false;
+            let thinkingBuffer = '';
+            let sentReasoning = false;
 
             try {
                 while (true) {
@@ -169,11 +174,68 @@ export function createLlamaCppAdapter() {
                                 const parsed = JSON.parse(data);
                                 parsed.provider = 'llamacpp';
                                 
+                                // Normalize thinking content from <think> tags
+                                const delta = parsed.choices?.[0]?.delta;
+                                if (delta?.content) {
+                                    let content = delta.content;
+                                    
+                                    // Check for <think> tag start
+                                    if (content.includes('<think>')) {
+                                        inThinkingMode = true;
+                                        const thinkIndex = content.indexOf('<think>');
+                                        if (thinkIndex > 0) {
+                                            // Content before <think>
+                                            delta.content = content.substring(0, thinkIndex);
+                                        } else {
+                                            delta.content = null; // Will be removed below
+                                        }
+                                        content = content.substring(thinkIndex + 7); // After <think>
+                                    }
+                                    
+                                    // Check for </think> tag end
+                                    if (inThinkingMode && content.includes('</think>')) {
+                                        const endIndex = content.indexOf('</think>');
+                                        thinkingBuffer += content.substring(0, endIndex);
+                                        content = content.substring(endIndex + 8); // After </think>
+                                        inThinkingMode = false;
+                                        
+                                        // Send reasoning_content first if we have it
+                                        if (thinkingBuffer && !sentReasoning) {
+                                            yield {
+                                                provider: 'llamacpp',
+                                                choices: [{
+                                                    index: 0,
+                                                    delta: {
+                                                        reasoning_content: thinkingBuffer,
+                                                        content: content || null
+                                                    }
+                                                }]
+                                            };
+                                            sentReasoning = true;
+                                            continue; // Skip the normal yield
+                                        }
+                                    }
+                                    
+                                    // Accumulate thinking content
+                                    if (inThinkingMode) {
+                                        thinkingBuffer += content;
+                                        delta.content = null; // Don't send thinking as content
+                                    } else if (content) {
+                                        delta.content = content;
+                                    }
+                                    
+                                    // Remove null content
+                                    if (delta.content === null) {
+                                        delete delta.content;
+                                    }
+                                }
+                                
                                 // Hard token cap check
                                 if (tokenCap) {
                                     const content = parsed.choices?.[0]?.delta?.content || '';
+                                    const reasoning = parsed.choices?.[0]?.delta?.reasoning_content || '';
                                     // Rough token estimation: ~4 chars per token for English
-                                    const estimatedTokens = Math.ceil(content.length / 4);
+                                    const estimatedTokens = Math.ceil((content.length + reasoning.length) / 4);
                                     generatedTokens += estimatedTokens;
                                     
                                     if (generatedTokens >= tokenCap) {
