@@ -108,6 +108,12 @@ export class ModelRegistry {
 
         const model = this.get(resolvedId);
 
+        if (model.disabled) {
+            const err = new Error(`[ModelRegistry] Model "${resolvedId}" is disabled`);
+            err.status = 403;
+            throw err;
+        }
+
         if (model.type !== expectedType) {
             const err = new Error(`[ModelRegistry] Model "${resolvedId}" is type "${model.type}", expected "${expectedType}"`);
             err.status = 400;
