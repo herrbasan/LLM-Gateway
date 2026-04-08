@@ -75,6 +75,17 @@ export class InferenceManager {
         if (localInference.ubatchSize) args.push('-ub', String(localInference.ubatchSize));
         if (localInference.parallel) args.push('-np', String(localInference.parallel)); // parallel slots
         if (localInference.splitMode) args.push('--split-mode', localInference.splitMode); // layer/node/none
+        
+        // Embedding mode
+        if (localInference.embedding) args.push('--embedding');
+        if (localInference.pooling) args.push('--pooling', localInference.pooling);
+        
+        // Keep-alive / prevent idle shutdown (for LMStudio-like behavior)
+        if (localInference.noClearIdle) args.push('--no-clear-idle');
+        if (localInference.sleepIdleSeconds !== undefined) {
+            args.push('--sleep-idle-seconds', String(localInference.sleepIdleSeconds));
+        }
+        if (localInference.timeout) args.push('-to', String(localInference.timeout));
 
         const inferenceDir = path.join(__dirname, '../../inference');
         const serverPath = path.join(inferenceDir, 'llama-server.exe');
