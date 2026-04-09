@@ -1,22 +1,22 @@
 # LLM Gateway
 
-> **🚨 CRITICAL AI AGENT RULE: DO NOT KILL NODE PROCESSES 🚨**
+> **ðŸš¨ CRITICAL AI AGENT RULE: DO NOT KILL NODE PROCESSES ðŸš¨**
 > **NEVER use `taskkill`, `Stop-Process`, `kill`, or any other commands to stop or manage Node processes. This machine runs multiple unrelated background node services. Let the user handle ALL server restarts and process management. NEVER start or stop node processes yourself.**
 >
-> **🚨 CRITICAL SECURITY RULE: DO NOT PUSH `config.json` TO REMOTES 🚨**
+> **ðŸš¨ CRITICAL SECURITY RULE: DO NOT PUSH `config.json` TO REMOTES ðŸš¨**
 > **`config.json` contains live API keys and must never be committed or pushed to any remote. Keep secrets local and use `config.example.json` for shareable configuration changes.**
 >
-> **🚨 CRITICAL AI AGENT RULE: USE NATIVE EDIT TOOLS 🚨**
+> **ðŸš¨ CRITICAL AI AGENT RULE: USE NATIVE EDIT TOOLS ðŸš¨**
 > **NEVER use terminal scripts (`node -e`, `echo`, `Set-Content`, etc.) to create or modify files. ALWAYS use native VS Code tools (`replace_string_in_file`, `create_file`) to prevent encoding bugs and preserve undo history.**
 
-> **✅ v2.0 Model-Centric Architecture - COMPLETE**
+> **âœ… v2.0 Model-Centric Architecture - COMPLETE**
 > 
 > The refactor from provider-centric to model-centric architecture is complete.
 > The gateway is now stateless with explicit capability declarations.
 
 ## Current Status
 
-- **v2.0**: Model-centric architecture (✅ **COMPLETE**)
+- **v2.0**: Model-centric architecture (âœ… **COMPLETE**)
 - **v1.x**: Provider-centric architecture (archived docs in `docs/_Archive/`)
 - **Chat cancellation**: WebSocket `chat.cancel` and HTTP disconnect abort propagation are implemented for fetch-based chat adapters
 - **Implicit max token budget**: Omitted `max_tokens` values are resolved centrally from remaining context and surfaced in response context metadata
@@ -121,7 +121,7 @@ The gateway can auto-manage local llama.cpp servers for running GGUF models loca
 - All stderr output piped through gateway logger
 
 **Path Handling:**
-- Paths containing `#` are automatically escaped (`#` → `\#`)
+- Paths containing `#` are automatically escaped (`#` â†’ `\#`)
 - This prevents `#` from being interpreted as a comment by llama-server
 
 **Performance Tuning:**
@@ -195,7 +195,7 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 1. **Design Failures Away**
    - Prevention produces more reliable systems than handling
    - Every eliminated failure condition is a state that can never occur
-   - If a function can fail on valid input, the design is wrong — fix the function
+   - If a function can fail on valid input, the design is wrong â€” fix the function
 
 2. **No Defensive Programming for Internal Code**
    - Silent fallbacks and swallowed exceptions hide bugs, they don't make systems safer
@@ -209,11 +209,11 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 4. **Block Until Truth**
    - UI reflects actual state, not assumed state
    - During transitions, inputs are blocked so race conditions are structurally impossible
-   - A UI that says "done" before the operation completes isn't responsive — it's dishonest
+   - A UI that says "done" before the operation completes isn't responsive â€” it's dishonest
 
 5. **Single Responsibility**
    - Can you describe what the function does without "and" or "or"?
-   - This is not about length — a long function performing one coherent transformation is fine
+   - This is not about length â€” a long function performing one coherent transformation is fine
    - Two operations that must always happen together are one responsibility
 
 6. **Code is Primary Truth**
@@ -228,16 +228,16 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 8. **Abstraction From Evidence**
    - First use case: write it directly
    - Second: copy and modify  
-   - Third: now the pattern is visible — abstract
+   - Third: now the pattern is visible â€” abstract
    - Wrong abstraction is harder to remove than no abstraction
 
 ### Additional Rules
 
-- **Prefer self-explanatory code over comments** — JSDoc is a parallel type system that competes with the actual one
-- **Functional purity** — isolate impurity at boundaries, keep core pure
-- **Explicit dependencies** — hidden dependencies are welded to their environment
-- **Immutability by default** — mutation creates temporal dependencies
-- **Composition over inheritance** — inheritance creates tight coupling
+- **Prefer self-explanatory code over comments** â€” JSDoc is a parallel type system that competes with the actual one
+- **Functional purity** â€” isolate impurity at boundaries, keep core pure
+- **Explicit dependencies** â€” hidden dependencies are welded to their environment
+- **Immutability by default** â€” mutation creates temporal dependencies
+- **Composition over inheritance** â€” inheritance creates tight coupling
 
 ### Universal Truths vs Inherited Patterns
 
@@ -252,13 +252,13 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 
 ### Anti-Patterns to Avoid
 
-- **The God Object** — single point of failure
-- **The Manager Class** — vague name hiding multiple responsibilities
-- **The Utility Dump** — unrelated functions creating false coupling
-- **The Abstract Factory Factory** — speculative flexibility with certain complexity
-- **Stringly-Typed Code** — moves error detection to production
-- **Documentation That Lies** — false confidence is dangerous
-- **Type Theater** — treating annotations as proof
+- **The God Object** â€” single point of failure
+- **The Manager Class** â€” vague name hiding multiple responsibilities
+- **The Utility Dump** â€” unrelated functions creating false coupling
+- **The Abstract Factory Factory** â€” speculative flexibility with certain complexity
+- **Stringly-Typed Code** â€” moves error detection to production
+- **Documentation That Lies** â€” false confidence is dangerous
+- **Type Theater** â€” treating annotations as proof
 
 ### The Mindset Shift
 
@@ -272,7 +272,7 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 
 **Applies to:** System design, resource management, state machines, UI architecture, internal code
 
-**Does not apply to:** Third-party code, external APIs, user input, hardware — these boundaries need defensive patterns
+**Does not apply to:** Third-party code, external APIs, user input, hardware â€” these boundaries need defensive patterns
 
 ### Verification Questions
 
