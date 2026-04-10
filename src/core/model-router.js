@@ -106,7 +106,6 @@ export class ModelRouter {
             adapter: modelConfig.adapter,
             stream: request.stream === true,
             message_count: messages.length,
-            messages: this._summarizeMessagesForLog(messages),
             context: responseContext,
             explicit_max_tokens: (request.max_tokens ?? request.maxTokens) ?? null,
             resolved_max_tokens: resolvedMaxTokens,
@@ -481,44 +480,6 @@ export class ModelRouter {
             available_tokens: Math.max(0, contextWindow - usedTokens),
             strategy_applied: strategyApplied
         };
-    }
-
-    _summarizeMessagesForLog(messages) {
-        if (!Array.isArray(messages)) {
-            return [];
-        }
-
-        return messages.map((message, index) => {
-            if (typeof message?.content === 'string') {
-                return {
-                    index,
-                    role: message.role,
-                    chars: message.content.length,
-                    preview: message.content.slice(0, 160)
-                };
-            }
-
-            if (Array.isArray(message?.content)) {
-                const text = message.content
-                    .filter(part => part?.type === 'text')
-                    .map(part => part.text || '')
-                    .join('\n');
-
-                return {
-                    index,
-                    role: message.role,
-                    content_parts: message.content.length,
-                    text_chars: text.length,
-                    preview: text.slice(0, 160)
-                };
-            }
-
-            return {
-                index,
-                role: message?.role,
-                content_type: typeof message?.content
-            };
-        });
     }
 
     /**

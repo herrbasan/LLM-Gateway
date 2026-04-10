@@ -70,7 +70,7 @@ export function createKimiAdapter() {
                 max_tokens: payload.max_tokens ?? null,
                 max_completion_tokens: payload.max_completion_tokens ?? null,
                 temperature: payload.temperature ?? null,
-                messages: summarizeMessagesForLog(payload.messages)
+                message_count: (payload.messages || []).length
             }, 'KimiAdapter');
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
@@ -141,7 +141,7 @@ export function createKimiAdapter() {
                 max_tokens: payload.max_tokens ?? null,
                 max_completion_tokens: payload.max_completion_tokens ?? null,
                 temperature: payload.temperature ?? null,
-                messages: summarizeMessagesForLog(payload.messages)
+                message_count: (payload.messages || []).length
             }, 'KimiAdapter');
 
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
@@ -373,44 +373,6 @@ export function createKimiAdapter() {
             }));
         }
     };
-}
-
-function summarizeMessagesForLog(messages) {
-    if (!Array.isArray(messages)) {
-        return [];
-    }
-
-    return messages.map((message, index) => {
-        if (typeof message?.content === 'string') {
-            return {
-                index,
-                role: message.role,
-                chars: message.content.length,
-                preview: message.content.slice(0, 160)
-            };
-        }
-
-        if (Array.isArray(message?.content)) {
-            const text = message.content
-                .filter(part => part?.type === 'text')
-                .map(part => part.text || '')
-                .join('\n');
-
-            return {
-                index,
-                role: message.role,
-                content_parts: message.content.length,
-                text_chars: text.length,
-                preview: text.slice(0, 160)
-            };
-        }
-
-        return {
-            index,
-            role: message?.role,
-            content_type: typeof message?.content
-        };
-    });
 }
 
 function buildHeaders(apiKey, extra = {}, custom = {}) {
