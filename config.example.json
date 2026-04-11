@@ -361,21 +361,21 @@
       "model": "openai-chat",
       "description": "Code inspection and analysis",
       "maxTokens": 8192,
-      "temperature": 0.1,
+      "temperature": 0.4,
       "stripThinking": false
     },
     "synthesis": {
       "model": "gemini-flash",
       "description": "Content synthesis and summarization",
       "maxTokens": 2048,
-      "temperature": 0.3,
+      "temperature": 0.4,
       "systemPrompt": "Summarize the following content concisely."
     },
     "analysis": {
       "model": "gemini-flash",
       "description": "Deep analysis and reasoning",
       "maxTokens": 8192,
-      "temperature": 0.2,
+      "temperature": 0.4,
       "stripThinking": false
     },
     "embed": {
@@ -386,7 +386,7 @@
       "model": "gemini-flash",
       "description": "Image understanding and visual analysis",
       "maxTokens": 4096,
-      "temperature": 0.3
+      "temperature": 0.4
     },
     "image": {
       "model": "openai-image",
