@@ -176,6 +176,12 @@ export function validateGlobalConfig(config) {
         if (config.thinking.stripTags && !Array.isArray(config.thinking.stripTags)) {
             throw new Error('[Config] thinking.stripTags must be an array');
         }
+        if ('orphanCloseAsSeparator' in config.thinking && typeof config.thinking.orphanCloseAsSeparator !== 'boolean') {
+            throw new Error('[Config] thinking.orphanCloseAsSeparator must be boolean');
+        }
+        if ('maxThinkingContent' in config.thinking && (typeof config.thinking.maxThinkingContent !== 'number' || config.thinking.maxThinkingContent < 1)) {
+            throw new Error('[Config] thinking.maxThinkingContent must be a positive number');
+        }
     }
 
     // Compaction config

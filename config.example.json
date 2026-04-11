@@ -319,7 +319,8 @@
   "thinking": {
     "enabled": false,
     "stripTags": ["think", "thinking", "thought", "reasoning"],
-    "orphanCloseAsSeparator": true
+    "orphanCloseAsSeparator": true,
+    "maxThinkingContent": 8192
   },
   
   "routing": {
@@ -369,6 +370,7 @@
       "description": "Content synthesis and summarization",
       "maxTokens": 2048,
       "temperature": 0.4,
+      "stripThinking": true,
       "systemPrompt": "Summarize the following content concisely."
     },
     "analysis": {
