@@ -13,36 +13,15 @@
  */
 
 import { request as httpRequest } from '../utils/http.js';
-import { getInferenceManager } from '../core/inference-manager.js';
 
 export function createLlamaCppAdapter() {
-    const inferenceManager = getInferenceManager();
-
     return {
         name: 'llamacpp',
-
-        /**
-         * Ensure local inference server is running.
-         */
-        async ensureServer(modelConfig) {
-            if (modelConfig.localInference?.enabled) {
-                const modelId = modelConfig.adapterModel || 'llama-local';
-                try {
-                    await inferenceManager.startServer(modelId, modelConfig);
-                } catch (err) {
-                    // Server might already be running
-                    if (!err.message.includes('already running')) {
-                        throw err;
-                    }
-                }
-            }
-        },
 
         /**
          * Chat completion.
          */
         async chatComplete(modelConfig, request) {
-            await this.ensureServer(modelConfig);
             
             const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody } = modelConfig;
             const model = adapterModel || 'unknown';
@@ -97,7 +76,6 @@ export function createLlamaCppAdapter() {
          * Streaming chat completion.
          */
         async *streamComplete(modelConfig, request) {
-            await this.ensureServer(modelConfig);
             
             const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody, hardTokenCap } = modelConfig;
             const model = adapterModel || 'unknown';
@@ -320,7 +298,7 @@ export function createLlamaCppAdapter() {
         async listModels(modelConfig) {
             const { endpoint, capabilities } = modelConfig;
             const contextWindow = capabilities?.contextWindow || 4096;
-            const hasVision = capabilities?.vision === true || modelConfig.localInference?.mmproj !== undefined;
+            const hasVision = capabilities?.vision === true;
 
             try {
                 const res = await httpRequest(`${endpoint}/v1/models`);
