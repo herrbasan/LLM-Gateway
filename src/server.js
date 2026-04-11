@@ -7,7 +7,7 @@ import { createHealthHandler } from './routes/health.js';
 import { createChatHandler } from './routes/chat.js';
 import { createEmbeddingsHandler } from './routes/embeddings.js';
 import { createModelsHandler } from './routes/models.js';
-import { createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
+import { createTaskListHandler, createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
 import { createImagesHandler } from './routes/images.js';
 import { createAudioSpeechHandler } from './routes/audio.js';
 import { createVideosHandler } from './routes/videos.js';
@@ -154,6 +154,7 @@ export function createServer(config) {
   app.get('/v1/models', createModelsHandler(router));
 
   // Tasks endpoints (kept for async operations)
+  app.get('/v1/tasks', createTaskListHandler(router));
   app.get('/v1/tasks/:id', createTasksHandler(ticketRegistry));
   app.get('/v1/tasks/:id/stream', createTasksStreamHandler(ticketRegistry));
 

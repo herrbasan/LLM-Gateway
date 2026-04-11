@@ -1,5 +1,23 @@
 import { StreamHandler } from '../streaming/sse.js';
 
+export function createTaskListHandler(router) {
+    return async (req, res, next) => {
+        try {
+            const taskRegistry = router.registry.getTaskRegistry();
+            const tasks = taskRegistry.getAll();
+            const data = Object.entries(tasks).map(([id, config]) => ({
+                id,
+                object: 'task',
+                model: config.model,
+                description: config.description || null
+            }));
+            return res.status(200).json({ object: 'list', data });
+        } catch (err) {
+            next(err);
+        }
+    };
+}
+
 export function createTasksHandler(ticketRegistry) {
     return async (req, res, next) => {
         try {

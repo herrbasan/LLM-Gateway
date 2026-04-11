@@ -4,6 +4,7 @@
  */
 
 import { validateConfig, resolveConfigEnvVars } from './config-schema.js';
+import { TaskRegistry } from './task-registry.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger();
@@ -34,9 +35,13 @@ export class ModelRegistry {
             routing: resolvedConfig.routing || {}
         });
 
+        // Task registry
+        this.taskRegistry = new TaskRegistry(resolvedConfig.tasks || {});
+
         logger.info('Initialized', { 
             modelCount: this.models.size,
-            models: Array.from(this.models.keys())
+            models: Array.from(this.models.keys()),
+            taskCount: this.taskRegistry.getAll() ? Object.keys(this.taskRegistry.getAll()).length : 0
         }, 'ModelRegistry');
     }
 
@@ -220,6 +225,13 @@ export class ModelRegistry {
      */
     getRoutingConfig() {
         return this.globalConfig.routing;
+    }
+
+    /**
+     * Get the task registry.
+     */
+    getTaskRegistry() {
+        return this.taskRegistry;
     }
 
     /**

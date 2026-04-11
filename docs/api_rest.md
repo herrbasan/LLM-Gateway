@@ -9,11 +9,12 @@ Complete API reference for the LLM Gateway v2.0 (model-centric, stateless archit
 1. [API Design Philosophy](#api-design-philosophy)
 2. [Response Patterns](#response-patterns)
 3. [Endpoints Reference](#endpoints-reference)
-4. [Ticket-Based API](#ticket-based-api)
-5. [System Events](#system-events)
-6. [Usage Patterns](#usage-patterns)
-7. [Error Handling](#error-handling)
-8. [Client Library Design](#client-library-design)
+4. [Task-Based Query System](#task-based-query-system)
+5. [Ticket-Based API](#ticket-based-api)
+6. [System Events](#system-events)
+7. [Usage Patterns](#usage-patterns)
+8. [Error Handling](#error-handling)
+9. [Client Library Design](#client-library-design)
 
 ---
 
@@ -504,6 +505,147 @@ GET /help
 
 ---
 
+## Task-Based Query System
+
+Tasks provide semantic routing with preset parameters. Instead of specifying a model and tuning parameters for every request, clients reference a named task that encapsulates the model choice, system prompt, temperature, max tokens, and other defaults.
+
+### How Tasks Work
+
+1. Client sends a request with `"task": "task-name"`
+2. Gateway looks up the task config and merges its defaults into the request
+3. Client-supplied parameters **always override** task defaults
+4. If the task defines a `systemPrompt`, it is prepended as the first system message
+
+### GET /v1/tasks
+
+List all available tasks.
+
+```bash
+GET /v1/tasks
+```
+
+**Response:**
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "query",
+      "object": "task",
+      "model": "minimax-chat",
+      "description": "General query and conversation"
+    },
+    {
+      "id": "inspect",
+      "object": "task",
+      "model": "minimax-chat",
+      "description": "Code inspection and analysis"
+    }
+  ]
+}
+```
+
+### Using Tasks in Chat Requests
+
+```json
+POST /v1/chat/completions
+{
+  "task": "synthesis",
+  "messages": [{"role": "user", "content": "Summarize this article..."}],
+  "temperature": 0.5
+}
+```
+
+The `synthesis` task might define `model: "glm5-turbo-chat"`, `temperature: 0.3`, `maxTokens: 2048`. The client's `temperature: 0.5` overrides the task default, while `model` and `maxTokens` come from the task.
+
+### Task Configuration
+
+Tasks are defined in `config.json`:
+
+```json
+{
+  "tasks": {
+    "synthesis": {
+      "model": "glm5-turbo-chat",
+      "description": "Content synthesis and summarization",
+      "systemPrompt": "Summarize the following content concisely.",
+      "maxTokens": 2048,
+      "temperature": 0.3
+    },
+    "inspect": {
+      "model": "minimax-chat",
+      "description": "Code inspection and analysis",
+      "maxTokens": 8192,
+      "temperature": 0.1,
+      "stripThinking": false,
+      "extraBody": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      }
+    }
+  }
+}
+```
+
+### Supported Task Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | string | **Required.** Model ID to route to |
+| `description` | string | Human-readable description |
+| `systemPrompt` | string | Prepended as first system message |
+| `maxTokens` | number | Default output token limit |
+| `temperature` | number | Sampling temperature (0-2) |
+| `topP` | number | Nucleus sampling threshold (0-1) |
+| `topK` | number | Top-K sampling limit |
+| `stripThinking` | boolean | Override global thinking strip |
+| `noThinking` | boolean | Disable model reasoning/thinking |
+| `responseFormat` | object | Structured output configuration |
+| `extraBody` | object | Adapter-specific passthrough params |
+| `presencePenalty` | number | Presence penalty (-2.0 to 2.0) |
+| `frequencyPenalty` | number | Frequency penalty (-2.0 to 2.0) |
+| `seed` | number | Random seed for reproducibility |
+| `stop` | array | Stop sequences |
+
+### Override Priority
+
+```
+final request = { ...taskDefaults, ...clientRequestBody }
+```
+
+Client parameters always win. If neither task nor client specifies a value, the model config or adapter default applies.
+
+### Using Tasks with Other Endpoints
+
+Tasks work with embeddings, image generation, and audio endpoints too:
+
+```json
+POST /v1/embeddings
+{
+  "task": "embed",
+  "input": ["text to embed"]
+}
+```
+
+```json
+POST /v1/images/generations
+{
+  "task": "image",
+  "prompt": "A cyberpunk city at night"
+}
+```
+
+```json
+POST /v1/audio/speech
+{
+  "task": "tts",
+  "input": "Welcome to the gateway"
+}
+```
+
+---
+
 ## Ticket-Based API
 
 Used for:
@@ -625,7 +767,9 @@ data: {"ticket":"tkt_abc123","status":"complete"}
 |----------|---------|------------|
 | Default model | Omit `model` or use configured default | Uses `routing.defaultChatModel` from config |
 | Specific model | `"model": "gemini-flash"` | Looks up model by ID in config |
+| Task-based | `"task": "synthesis"` | Uses task's model + defaults, client overrides apply |
 | List models | `GET /v1/models` | Returns flat list from config |
+| List tasks | `GET /v1/tasks` | Returns list of configured tasks |
 
 ### Chat Completions
 

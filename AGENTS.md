@@ -17,7 +17,8 @@
 ## Current Status
 
 - **v2.0**: Model-centric architecture (✅ **COMPLETE**)
-- **v1.x**: Provider-centric architecture (archived docs in `docs/_Archive/`)
+- **v1.x**: Provider-centric architecture (archived docs in `docs/_archive/`)
+- **Task-based query system**: Named tasks with preset model + parameters, client overrides apply (✅ **COMPLETE**)
 - **Chat cancellation**: WebSocket `chat.cancel` and HTTP disconnect abort propagation are implemented for fetch-based chat adapters
 - **Implicit max token budget**: Omitted `max_tokens` values are resolved centrally from remaining context and surfaced in response context metadata
 - **WebSocket context telemetry**: `chat.progress` context stats are kept authoritative during streaming and `chat.done` now carries final context metadata
@@ -84,81 +85,45 @@ Disabled models:
 | `alibaba` | Alibaba Cloud AI | chat |
 | `llamacpp` | llama.cpp local server | chat, embedding |
 
-### Local Inference (llama.cpp)
-
-The gateway can auto-manage local llama.cpp servers for running GGUF models locally.
-
-**Setup:**
-1. Download/build `llama-server.exe` and place in `inference/` folder
-2. Add required DLLs for CUDA support: `cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll`
-3. Configure model in `config.json` with `localInference.enabled: true`
-
-**Config Example:**
-```json
-"llama-local": {
-  "adapter": "llamacpp",
-  "endpoint": "http://localhost:12346",
-  "capabilities": { 
-    "contextWindow": 8192,
-    "structuredOutput": true
-  },
-  "localInference": {
-    "enabled": true,
-    "modelPath": "/path/to/your/model.gguf",
-    "contextSize": 8192,
-    "gpuLayers": 99,
-    "flashAttention": "on",
-    "mlock": true,
-    "contBatching": true
-  }
-}
-```
-
-**Auto-Management:**
-- Gateway starts `llama-server.exe` on first request
-- Server runs on configured port
-- Process terminates when gateway shuts down
-- All stderr output piped through gateway logger
-
-**Path Handling:**
-- Paths containing `#` are automatically escaped (`#` → `\#`)
-- This prevents `#` from being interpreted as a comment by llama-server
-
-**Performance Tuning:**
-| Option | Effect |
-|--------|--------|
-| `contextSize` | Lower = faster (try 4096-8192 for chat) |
-| `flashAttention: "on"` | Essential for large contexts |
-| `mlock: true` | Prevents model swapping to disk |
-| `cacheTypeK/V: "q8_0"` | 8-bit KV cache saves VRAM |
-
-**Multi-Model Support:**
-Configure multiple models on different ports:
-```json
-"llama-chat": { "endpoint": "http://localhost:12346", ... },
-"llama-embed": { "endpoint": "http://localhost:12347", "embedding": true, ... }
-```
-Each model runs its own `llama-server.exe` process. VRAM is shared across models.
-
-**Keep-Alive (Always-Loaded):**
-By default, servers stay running indefinitely (no TTL). To prevent any idle cleanup:
-```json
-"noClearIdle": true,
-"sleepIdleSeconds": -1
-```
-This matches LMStudio behavior - models stay in VRAM permanently.
-
-**Files:**
-- `src/core/inference-manager.js` - Process lifecycle management
-- `src/adapters/llamacpp.js` - OpenAI-compatible API adapter
-- `inference/llama-server-reference.md` - Full command reference
-
 ### Stateless Operation
 
 - Client sends full message history with each request
 - No server-side session management
 - No `X-Session-Id` header
 - Automatic context compaction when needed
+
+### Task-Based Query System
+
+Tasks provide semantic routing with preset parameters defined in `config.json`:
+
+```json
+"tasks": {
+  "query": {
+    "model": "minimax-chat",
+    "description": "General query and conversation",
+    "maxTokens": 4096,
+    "temperature": 0.7
+  }
+}
+```
+
+**Request:** `"task": "query"` in the request body (HTTP or WebSocket).
+
+**Merge behavior:** `finalRequest = { ...taskDefaults, ...clientRequestBody }` — client params always win.
+
+**Supported task parameters:** `model` (required), `description`, `systemPrompt`, `maxTokens`, `temperature`, `topP`, `topK`, `stripThinking`, `noThinking`, `responseFormat`, `extraBody`, `presencePenalty`, `frequencyPenalty`, `seed`, `stop`.
+
+**System prompt handling:** Task `systemPrompt` is prepended before all existing messages, regardless of role.
+
+**Task validation:** Task models must reference existing models. Unknown task names return `400`.
+
+**Endpoints:**
+- `GET /v1/tasks` — list available tasks
+- `POST /v1/chat/completions` — accepts `task` param
+- `POST /v1/embeddings` — accepts `task` param
+- `POST /v1/images/generations` — accepts `task` param
+- `POST /v1/audio/speech` — accepts `task` param
+- WebSocket `chat.create` / `chat.append` — accepts `task` in params
 
 ## Development Notes
 
@@ -172,7 +137,7 @@ This matches LMStudio behavior - models stay in VRAM permanently.
 - Kimi native token counting uses dedicated Moonshot tokenizer endpoints when available and falls back to estimator logic if token estimation is unavailable
 - `kimi-cli` is no longer part of the active chat path; do not rely on it for current behavior documentation
 - Qwen models support `enable_thinking` toggle via `extraBody.chat_template_kwargs` - set to `false` to disable verbose reasoning
-- Local inference servers (llama.cpp) pipe stderr through the gateway logger for debugging startup issues
+
 
 ### Logging
 

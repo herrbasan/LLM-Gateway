@@ -144,14 +144,21 @@ export class ChatHandler {
     // Inject proxy media streams
     const { processedMessages, usedStreams } = this._injectMediaStreams(connection, messages);
 
+    // Resolve task defaults if task is specified
+    const taskRegistry = this.modelRouter.registry.getTaskRegistry();
+    const { resolvedRequest, taskInfo } = taskRegistry.resolveChatRequest({ ...params, model, messages: processedMessages });
+    const effectiveModel = resolvedRequest.model || model;
+    const effectiveMessages = resolvedRequest.messages || processedMessages;
+
     // Set up request context for state machine and multiplexing
     const requestContext = new RequestContext(id, params);
     connection.activeRequests.set(id, requestContext);
     logger.info('Request registered', {
       connectionId: connection.id,
       requestId: id,
-      model,
-      messageCount: processedMessages.length,
+      model: effectiveModel,
+      task: taskInfo?.id || null,
+      messageCount: effectiveMessages.length,
       activeRequests: connection.activeRequests.size,
       readyState: describeReadyState(connection.ws.readyState)
     });
@@ -168,11 +175,12 @@ export class ChatHandler {
       // Progress routing
       this._sendWsMessage(connection, formatNotification('chat.progress', {
         request_id: id,
-        phase: 'routing'
+        phase: 'routing',
+        task: taskInfo?.id || null
       }), {
         requestId: id,
         event: 'chat.progress',
-        details: { phase: 'routing' }
+        details: { phase: 'routing', task: taskInfo?.id || null }
       });
     } catch (err) {
       wsMetrics.increment('ws_errors_total', ErrorCodes.INTERNAL_ERROR);
@@ -187,14 +195,14 @@ export class ChatHandler {
     try {
       // Fake a stream request to the router
       const requestObject = {
-        model,
+        model: effectiveModel,
         stream: true,
         signal: requestContext.abortController.signal,
-        ...params,
-        messages: processedMessages // Needs to be after params to prevent overwriting
+        ...resolvedRequest,
+        messages: effectiveMessages
       };
 
-      const resolvedModel = this.modelRouter.registry.resolveModel(model, 'chat');
+      const resolvedModel = this.modelRouter.registry.resolveModel(effectiveModel, 'chat');
       if (resolvedModel) {
         // Emit model routing status to the client
         this._sendWsMessage(connection, formatNotification('chat.progress', {

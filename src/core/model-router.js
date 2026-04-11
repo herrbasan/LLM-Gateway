@@ -68,20 +68,29 @@ export class ModelRouter {
             throw new Error('[ModelRouter] Request must be an object');
         }
 
-        const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'chat');
+        // Resolve task defaults if task is specified
+        const taskRegistry = this.registry.getTaskRegistry();
+        const { resolvedRequest, taskInfo } = taskRegistry.resolveChatRequest(request);
+        const effectiveRequest = resolvedRequest;
+
+        const { id: modelId, config: modelConfig } = this.registry.resolveModel(effectiveRequest.model, 'chat');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('Routing chat completion', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
+        logger.info('Routing chat completion', {
+            model: modelId,
+            adapter: modelConfig.adapter,
+            task: taskInfo?.id || null
+        }, 'ModelRouter');
 
         // Transform request to adapter format
-        const opts = this._buildChatOptions(request, modelConfig);
+        const opts = this._buildChatOptions(effectiveRequest, modelConfig);
         const sanitizedMessages = this._sanitizeIncomingMessages(opts.messages);
 
         // Process images only if requested (fetch remote URLs and resize/transcode)
         const processedMessages = await this._processImagesInMessages(
             sanitizedMessages,
             modelConfig,
-            request.image_processing  // { resize: 'auto'|'low'|'high'|number, transcode: 'jpg'|'png'|'webp' }
+            effectiveRequest.image_processing
         );
 
         // Apply context compaction if needed
@@ -91,30 +100,31 @@ export class ModelRouter {
             adapter
         );
 
-        const resolvedMaxTokens = this._resolveChatMaxTokens(request, modelConfig, context);
-        const responseContext = this._annotateContext(context, resolvedMaxTokens, request);
+        const resolvedMaxTokens = this._resolveChatMaxTokens(effectiveRequest, modelConfig, context);
+        const responseContext = this._annotateContext(context, resolvedMaxTokens, effectiveRequest);
 
         const finalOpts = {
             ...opts,
             messages,
             maxTokens: resolvedMaxTokens,
-            sessionId: request.sessionId || request.session_id || null
+            sessionId: effectiveRequest.sessionId || effectiveRequest.session_id || null
         };
 
         logger.info('Chat request prepared', {
             model: modelId,
             adapter: modelConfig.adapter,
-            stream: request.stream === true,
+            stream: effectiveRequest.stream === true,
             message_count: messages.length,
             context: responseContext,
-            explicit_max_tokens: (request.max_tokens ?? request.maxTokens) ?? null,
+            explicit_max_tokens: (effectiveRequest.max_tokens ?? effectiveRequest.maxTokens) ?? null,
             resolved_max_tokens: resolvedMaxTokens,
-            temperature: finalOpts.temperature ?? null
+            temperature: finalOpts.temperature ?? null,
+            task: taskInfo?.id || null
         }, 'ModelRouter');
 
         // Route to adapter
         let result;
-        if (request.stream) {
+        if (effectiveRequest.stream) {
             return {
                 stream: true,
                 generator: adapter.streamComplete(modelConfig, finalOpts),
@@ -127,7 +137,7 @@ export class ModelRouter {
 
         // Apply thinking strip if configured or requested
         const globalThinkingConfig = this.registry.getThinkingConfig();
-        const clientStrip = request.strip_thinking === true || request.no_thinking === true;
+        const clientStrip = effectiveRequest.strip_thinking === true || effectiveRequest.no_thinking === true;
         const shouldStripThinking = clientStrip || globalThinkingConfig.enabled;
 
         if (shouldStripThinking && result.choices?.[0]?.message) {
@@ -153,12 +163,19 @@ export class ModelRouter {
             throw new Error('[ModelRouter] Request must be an object');
         }
 
-        const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'embedding');
+        const taskRegistry = this.registry.getTaskRegistry();
+        const { resolvedRequest, taskInfo } = taskRegistry.resolveGenericRequest(request);
+
+        const { id: modelId, config: modelConfig } = this.registry.resolveModel(resolvedRequest.model, 'embedding');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('Routing embedding', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
+        logger.info('Routing embedding', {
+            model: modelId,
+            adapter: modelConfig.adapter,
+            task: taskInfo?.id || null
+        }, 'ModelRouter');
 
-        return adapter.createEmbedding(modelConfig, request);
+        return adapter.createEmbedding(modelConfig, resolvedRequest);
     }
 
     /**
@@ -175,12 +192,19 @@ export class ModelRouter {
             throw err;
         }
 
-        const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'image');
+        const taskRegistry = this.registry.getTaskRegistry();
+        const { resolvedRequest, taskInfo } = taskRegistry.resolveGenericRequest(request);
+
+        const { id: modelId, config: modelConfig } = this.registry.resolveModel(resolvedRequest.model, 'image');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('Routing image generation', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
+        logger.info('Routing image generation', {
+            model: modelId,
+            adapter: modelConfig.adapter,
+            task: taskInfo?.id || null
+        }, 'ModelRouter');
 
-        return adapter.generateImage(modelConfig, request);
+        return adapter.generateImage(modelConfig, resolvedRequest);
     }
 
     /**
@@ -197,12 +221,19 @@ export class ModelRouter {
             throw err;
         }
 
-        const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'audio');
+        const taskRegistry = this.registry.getTaskRegistry();
+        const { resolvedRequest, taskInfo } = taskRegistry.resolveGenericRequest(request);
+
+        const { id: modelId, config: modelConfig } = this.registry.resolveModel(resolvedRequest.model, 'audio');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('Routing audio speech', { model: modelId, adapter: modelConfig.adapter }, 'ModelRouter');
+        logger.info('Routing audio speech', {
+            model: modelId,
+            adapter: modelConfig.adapter,
+            task: taskInfo?.id || null
+        }, 'ModelRouter');
 
-        return adapter.synthesizeSpeech(modelConfig, request);
+        return adapter.synthesizeSpeech(modelConfig, resolvedRequest);
     }
 
     /**

@@ -70,19 +70,6 @@ export function validateModelConfig(modelId, config) {
         throw new Error(`[Config] Model "${modelId}": hardTokenCap must be a positive number`);
     }
 
-    // Validate optional localInference if present
-    if ('localInference' in config) {
-        if (typeof config.localInference !== 'object' || config.localInference === null) {
-            throw new Error(`[Config] Model "${modelId}": localInference must be an object`);
-        }
-        if (config.localInference.enabled !== true && config.localInference.enabled !== false) {
-            throw new Error(`[Config] Model "${modelId}": localInference.enabled must be boolean`);
-        }
-        if (config.localInference.enabled && !config.localInference.modelPath) {
-            throw new Error(`[Config] Model "${modelId}": localInference.modelPath is required when enabled`);
-        }
-    }
-
     return true;
 }
 
@@ -212,6 +199,81 @@ export function validateGlobalConfig(config) {
         }
     }
 
+    // Tasks config
+    if (config.tasks) {
+        if (typeof config.tasks !== 'object' || Array.isArray(config.tasks)) {
+            throw new Error('[Config] tasks must be an object');
+        }
+        for (const [taskId, taskConfig] of Object.entries(config.tasks)) {
+            validateTaskConfig(taskId, taskConfig);
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Validates a task configuration object.
+ */
+function validateTaskConfig(taskId, config) {
+    if (!config || typeof config !== 'object') {
+        throw new Error(`[Config] Task "${taskId}": config must be an object`);
+    }
+
+    if (!config.model || typeof config.model !== 'string') {
+        throw new Error(`[Config] Task "${taskId}": model must be a non-empty string`);
+    }
+
+    const validParams = [
+        'model', 'description', 'systemPrompt', 'maxTokens', 'temperature',
+        'topP', 'topK', 'stripThinking', 'noThinking', 'responseFormat', 'extraBody',
+        'presencePenalty', 'frequencyPenalty', 'seed', 'stop',
+        'max_tokens', 'strip_thinking', 'no_thinking', 'top_p', 'top_k',
+        'presence_penalty', 'frequency_penalty', 'response_format'
+    ];
+
+    for (const key of Object.keys(config)) {
+        if (!validParams.includes(key)) {
+            throw new Error(`[Config] Task "${taskId}": unknown parameter "${key}"`);
+        }
+    }
+
+    if ('description' in config && typeof config.description !== 'string') {
+        throw new Error(`[Config] Task "${taskId}": description must be a string`);
+    }
+
+    if ('systemPrompt' in config && typeof config.systemPrompt !== 'string') {
+        throw new Error(`[Config] Task "${taskId}": systemPrompt must be a string`);
+    }
+
+    if ('maxTokens' in config && (typeof config.maxTokens !== 'number' || config.maxTokens < 1)) {
+        throw new Error(`[Config] Task "${taskId}": maxTokens must be a positive number`);
+    }
+
+    if ('temperature' in config && (typeof config.temperature !== 'number' || config.temperature < 0 || config.temperature > 2)) {
+        throw new Error(`[Config] Task "${taskId}": temperature must be between 0 and 2`);
+    }
+
+    if ('topP' in config && (typeof config.topP !== 'number' || config.topP < 0 || config.topP > 1)) {
+        throw new Error(`[Config] Task "${taskId}": topP must be between 0 and 1`);
+    }
+
+    if ('stripThinking' in config && typeof config.stripThinking !== 'boolean') {
+        throw new Error(`[Config] Task "${taskId}": stripThinking must be a boolean`);
+    }
+
+    if ('responseFormat' in config && typeof config.responseFormat !== 'object') {
+        throw new Error(`[Config] Task "${taskId}": responseFormat must be an object`);
+    }
+
+    if ('extraBody' in config && (typeof config.extraBody !== 'object' || config.extraBody === null || Array.isArray(config.extraBody))) {
+        throw new Error(`[Config] Task "${taskId}": extraBody must be an object`);
+    }
+
+    if ('stop' in config && !Array.isArray(config.stop)) {
+        throw new Error(`[Config] Task "${taskId}": stop must be an array`);
+    }
+
     return true;
 }
 
@@ -241,7 +303,20 @@ export function validateConfig(config) {
         validateRoutingDefaults(config.routing, Object.keys(config.models));
     }
 
+    // Validate that task models reference existing models
+    if (config.tasks) {
+        validateTaskModels(config.tasks, Object.keys(config.models));
+    }
+
     return config;
+}
+
+function validateTaskModels(tasks, availableModels) {
+    for (const [taskId, taskConfig] of Object.entries(tasks)) {
+        if (!availableModels.includes(taskConfig.model)) {
+            throw new Error(`[Config] Task "${taskId}": model "${taskConfig.model}" does not exist in models`);
+        }
+    }
 }
 
 function validateRoutingDefaults(routing, availableModels) {

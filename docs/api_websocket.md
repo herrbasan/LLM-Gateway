@@ -57,18 +57,34 @@ Initiates a new chat completion stream.
 }
 ```
 
+**With Task:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-1",
+  "method": "chat.create",
+  "params": {
+    "task": "query",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "temperature": 0.9
+  }
+}
+```
+
+When `task` is provided, the gateway resolves the task's default model and parameters. Client-supplied params (like `temperature`, `model`, `max_tokens`) override task defaults. If the task defines a `systemPrompt`, it is prepended as the first system message.
+
 > **Thinking Stripper:** When `strip_thinking: true` or `no_thinking: true` is included in the params, any output reasoning tokens (like DeepSeek `<think>` tags or native `reasoning_content`) are automatically stripped from the `chat.delta` stream, yielding only the final cleanly-formatted answer.
 
 **Responses:** Server streams multiple `chat.delta` notifications, followed by `chat.done`.
 
 ```json
 // Server -> Client
-{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "routing"}}
-{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "model_routed", "model": "gemini-2.0-flash", "provider": "gemini"}}
+{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "routing", "task": "query"}}
+{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "model_routed", "model": "minimax-chat", "provider": "anthropic"}}
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context"}}
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context_stats", "context": {"window_size": 1048576, "used_tokens": 2800, "available_tokens": 1045776, "strategy_applied": false, "resolved_max_tokens": 835060, "max_tokens_source": "implicit"}}}
 {"jsonrpc": "2.0", "method": "chat.delta", "params": {"request_id": "req-1", "choices": [{"index": 0, "delta": {"content": "Hello! "}}]}}
-{"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": false, "finish_reason": "stop", "model": "gemini-2.0-flash", "provider": "gemini", "context": {...}, "telemetry": {"time_to_first_token_ms": 120, "total_duration_ms": 340, "chunks_sent": 5, "usage": {"prompt_tokens": 2800, "completion_tokens": 42, "total_tokens": 2842}, "reasoning_produced": false}}}
+{"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": false, "finish_reason": "stop", "model": "minimax-chat", "provider": "anthropic", "context": {...}, "telemetry": {"time_to_first_token_ms": 120, "total_duration_ms": 340, "chunks_sent": 5, "usage": {"prompt_tokens": 2800, "completion_tokens": 42, "total_tokens": 2842}, "reasoning_produced": false}}}
 ```
 
 If `max_tokens` is omitted from `params`, the gateway resolves a safe output budget automatically and reports it in the `chat.progress` `context_stats` payload.
@@ -83,6 +99,19 @@ Efficient incremental context update using a connection-scoped buffer. Appends o
   "method": "chat.append",
   "params": {
     "model": "gemini-flash",
+    "message": {"role": "user", "content": "What's next?"}
+  }
+}
+```
+
+**With Task:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-2",
+  "method": "chat.append",
+  "params": {
+    "task": "query",
     "message": {"role": "user", "content": "What's next?"}
   }
 }

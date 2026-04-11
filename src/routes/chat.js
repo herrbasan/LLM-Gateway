@@ -85,7 +85,7 @@ export function createChatHandler(router, ticketRegistry) {
 
                 setImmediate(async () => {
                     try {
-                        const result = await router.routeChatCompletion(req.body);
+                        const result = await router.routeChatCompletion({ ...req.body, sessionId });
 
                         if (result.stream) {
                             // Stream through ticket

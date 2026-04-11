@@ -9,6 +9,7 @@ A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface wit
 - WebSocket `chat.cancel` aborts the upstream provider request
 - HTTP client disconnects abort in-flight upstream chat generation for supported adapters
 - Local llama.cpp models auto-start on first request and stay loaded in VRAM
+- Task-based query system for semantic routing with preset parameters (`task` param in request body)
 
 ## Quick Start
 
@@ -145,6 +146,35 @@ curl http://localhost:3400/v1/embeddings \
     "model": "embedding-model",
     "input": "Text to embed"
   }'
+```
+
+### Task-Based Queries
+
+Instead of specifying a model, use a named task with preset parameters:
+
+```bash
+curl http://localhost:3400/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "query",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+Tasks define model selection, system prompts, temperature, max tokens, and other defaults. Client parameters override task defaults. List available tasks with `GET /v1/tasks`.
+
+**Task config example:**
+```json
+{
+  "tasks": {
+    "query": {
+      "model": "minimax-chat",
+      "description": "General query and conversation",
+      "maxTokens": 4096,
+      "temperature": 0.7
+    }
+  }
+}
 ```
 
 ## Architecture
