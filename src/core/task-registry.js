@@ -80,7 +80,14 @@ export class TaskRegistry {
         }
 
         const taskDefaults = this._extractChatDefaults(task);
-        const merged = { ...taskDefaults, ...this._stripTaskParams(request) };
+        const cleanedRequest = this._stripTaskParams(request);
+        // Remove undefined values so they don't overwrite task defaults
+        for (const key of Object.keys(cleanedRequest)) {
+            if (cleanedRequest[key] === undefined) {
+                delete cleanedRequest[key];
+            }
+        }
+        const merged = { ...taskDefaults, ...cleanedRequest };
 
         if (task.systemPrompt) {
             merged.messages = this._prependSystemPrompt(merged.messages, task.systemPrompt);
@@ -112,7 +119,14 @@ export class TaskRegistry {
             throw err;
         }
 
-        const merged = { ...this._extractGenericDefaults(task), ...this._stripTaskParams(request) };
+        const taskDefaults = this._extractGenericDefaults(task);
+        const cleanedRequest = this._stripTaskParams(request);
+        for (const key of Object.keys(cleanedRequest)) {
+            if (cleanedRequest[key] === undefined) {
+                delete cleanedRequest[key];
+            }
+        }
+        const merged = { ...taskDefaults, ...cleanedRequest };
 
         const taskInfo = {
             id: taskId,
