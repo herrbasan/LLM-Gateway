@@ -29,18 +29,17 @@
       }
     },
     
-    "_comment_llamacpp": "--- llama.cpp (Auto-Managed Local Inference) ---",
-    "_comment_llamacpp_note": "Place llama-server.exe and CUDA DLLs in inference/ folder",
+    "_comment_llamacpp": "--- llama.cpp (llama-cpp-gateway Manager) ---",
+    "_comment_llamacpp_note": "Start manager first: node D:\\DEV\\llama-cpp-gateway\\src\\manager\\server.js",
     
     "llama-chat": {
       "type": "chat",
       "adapter": "llamacpp",
-      "endpoint": "http://localhost:12346",
-      "adapterModel": "my-chat-model",
+      "endpoint": "http://localhost:4080",
       "maxTokens": 8192,
       "hardTokenCap": 10000,
       "capabilities": {
-        "contextWindow": 8192,
+        "contextWindow": 64000,
         "vision": true,
         "streaming": true,
         "structuredOutput": true
@@ -52,50 +51,19 @@
       },
       "localInference": {
         "enabled": true,
-        "modelPath": "/path/to/your/model.gguf",
-        "contextSize": 8192,
+        "modelPath": "D:/models/chat-model.gguf",
+        "mmproj": "D:/models/mmproj-f16.gguf",
+        "contextSize": 64000,
         "gpuLayers": 99,
-        "flashAttention": "on",
-        "mlock": true,
-        "noClearIdle": true,
-        "sleepIdleSeconds": -1
-      }
-    },
-    
-    "llama-vision": {
-      "type": "chat",
-      "adapter": "llamacpp",
-      "endpoint": "http://localhost:12346",
-      "adapterModel": "my-vision-model",
-      "capabilities": {
-        "contextWindow": 8192,
-        "vision": true,
-        "streaming": true,
-        "structuredOutput": true
-      },
-      "imageInputLimit": {
-        "maxDimension": 2048,
-        "maxFileSize": 52428800,
-        "supportedFormats": ["png", "jpeg", "gif", "webp"]
-      },
-      "localInference": {
-        "enabled": true,
-        "modelPath": "/path/to/your/vision-model.gguf",
-        "mmproj": "/path/to/your/mmproj-file.gguf",
-        "contextSize": 8192,
-        "gpuLayers": 99,
-        "flashAttention": "on",
-        "mlock": true,
-        "noClearIdle": true,
-        "sleepIdleSeconds": -1
+        "flashAttention": true,
+        "mlock": true
       }
     },
     
     "llama-embed": {
       "type": "embedding",
       "adapter": "llamacpp",
-      "endpoint": "http://localhost:12347",
-      "adapterModel": "my-embedding-model",
+      "endpoint": "http://localhost:4080",
       "capabilities": {
         "contextWindow": 512,
         "embedding": true,
@@ -103,15 +71,13 @@
       },
       "localInference": {
         "enabled": true,
-        "modelPath": "/path/to/your/embedding-model.gguf",
+        "modelPath": "D:/models/embedding-model.gguf",
         "contextSize": 512,
         "gpuLayers": 99,
         "embedding": true,
         "pooling": "mean",
         "batchSize": 512,
-        "mlock": true,
-        "noClearIdle": true,
-        "sleepIdleSeconds": -1
+        "mlock": true
       }
     },
     

@@ -14,6 +14,23 @@
 
 import { request as httpRequest } from '../utils/http.js';
 
+function buildModelHeaders(localInference) {
+    if (!localInference || !localInference.enabled) {
+        return {};
+    }
+    const headers = {};
+    if (localInference.modelPath) headers['X-Model-Path'] = localInference.modelPath;
+    if (localInference.contextSize !== undefined) headers['X-Model-CtxSize'] = String(localInference.contextSize);
+    if (localInference.gpuLayers !== undefined) headers['X-Model-GpuLayers'] = String(localInference.gpuLayers);
+    if (localInference.flashAttention !== undefined) headers['X-Model-FlashAttention'] = String(localInference.flashAttention);
+    if (localInference.mmproj) headers['X-Model-Mmproj'] = localInference.mmproj;
+    if (localInference.embedding !== undefined) headers['X-Model-Embedding'] = String(localInference.embedding);
+    if (localInference.pooling) headers['X-Model-Pooling'] = localInference.pooling;
+    if (localInference.batchSize !== undefined) headers['X-Model-BatchSize'] = String(localInference.batchSize);
+    if (localInference.mlock !== undefined) headers['X-Model-Mlock'] = String(localInference.mlock);
+    return headers;
+}
+
 export function createLlamaCppAdapter() {
     return {
         name: 'llamacpp',
@@ -23,8 +40,9 @@ export function createLlamaCppAdapter() {
          */
         async chatComplete(modelConfig, request) {
             
-            const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody } = modelConfig;
+            const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody, localInference } = modelConfig;
             const model = adapterModel || 'unknown';
+            const modelHeaders = buildModelHeaders(localInference);
 
             const payload = {
                 model,
@@ -59,7 +77,10 @@ export function createLlamaCppAdapter() {
 
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...modelHeaders
+                },
                 signal: request.signal,
                 body: JSON.stringify(payload)
             });
@@ -77,8 +98,9 @@ export function createLlamaCppAdapter() {
          */
         async *streamComplete(modelConfig, request) {
             
-            const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody, hardTokenCap } = modelConfig;
+            const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody, hardTokenCap, localInference } = modelConfig;
             const model = adapterModel || 'unknown';
+            const modelHeaders = buildModelHeaders(localInference);
 
             const payload = {
                 model,
@@ -113,7 +135,8 @@ export function createLlamaCppAdapter() {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Accept': 'text/event-stream' 
+                    'Accept': 'text/event-stream',
+                    ...modelHeaders
                 },
                 signal: request.signal,
                 body: JSON.stringify(payload)
@@ -249,8 +272,9 @@ export function createLlamaCppAdapter() {
          * Create embeddings.
          */
         async createEmbedding(modelConfig, request) {
-            const { endpoint, adapterModel } = modelConfig;
+            const { endpoint, adapterModel, localInference } = modelConfig;
             const model = adapterModel || 'unknown';
+            const modelHeaders = buildModelHeaders(localInference);
 
             const payload = {
                 input: Array.isArray(request.input) ? request.input : [request.input],
@@ -259,7 +283,10 @@ export function createLlamaCppAdapter() {
 
             const res = await httpRequest(`${endpoint}/v1/embeddings`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...modelHeaders
+                },
                 body: JSON.stringify(payload)
             });
 
