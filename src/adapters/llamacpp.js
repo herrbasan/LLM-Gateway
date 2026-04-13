@@ -13,6 +13,9 @@
  */
 
 import { request as httpRequest } from '../utils/http.js';
+import { getLogger } from '../utils/logger.js';
+
+const logger = getLogger();
 
 function buildModelHeaders(localInference) {
     if (!localInference || !localInference.enabled) {
