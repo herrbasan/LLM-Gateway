@@ -87,7 +87,7 @@ describe('Server v2 - Real World', () => {
                 });
             
             expect(res.status).to.equal(400);
-            expect(res.body.error).to.include('type');
+            expect(res.body.error.message).to.include('type');
         });
     });
 
@@ -111,7 +111,7 @@ describe('Server v2 - Real World', () => {
                 .send({});
             
             expect(res.status).to.equal(400);
-            expect(res.body.error).to.include('prompt');
+            expect(res.body.error.message).to.include('prompt');
         });
     });
 
@@ -122,7 +122,7 @@ describe('Server v2 - Real World', () => {
                 .send({ voice: 'alloy' });
             
             expect(res.status).to.equal(400);
-            expect(res.body.error).to.include('input');
+            expect(res.body.error.message).to.include('input');
         });
     });
 });

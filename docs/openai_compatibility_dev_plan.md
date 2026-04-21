@@ -458,11 +458,11 @@ Develop a dedicated endpoint and core router pathways specifically to handle the
 
 When testing OpenAI compatibility:
 
-- [ ] Non-streaming completion returns valid `choices` array
-- [ ] Streaming completion yields proper SSE format
-- [ ] Errors return `{ error: { message, type, code } }`
-- [ ] `response_format: json_schema` produces valid JSON
-- [ ] `stop` sequences halt generation correctly
+- [x] Non-streaming completion returns valid `choices` array
+- [x] Streaming completion yields proper SSE format
+- [x] Errors return `{ error: { message, type, code } }`
+- [ ] `response_format: json_schema` produces valid JSON (requires live API)
+- [ ] `stop` sequences halt generation correctly (requires live API)
 - [ ] `seed` produces deterministic results (same model required)
 - [x] **`tools` array is accepted and `tool_calls` returned in response**
 - [x] **Tool result `role: "tool"` messages accepted in subsequent turns**
@@ -470,8 +470,11 @@ When testing OpenAI compatibility:
 - [x] **`stream_options.include_usage` yields final usage chunk before `[DONE]`**
 - [x] **`max_completion_tokens` treated equivalently to `max_tokens`**
 - [x] **Response messages include `refusal: null` and `function_call: null`**
-- [ ] `frequency_penalty` / `presence_penalty` forwarded to upstream
-- [ ] `logprobs: true` returns log probability data
+- [x] `frequency_penalty` / `presence_penalty` forwarded to upstream
+- [ ] `logprobs: true` returns log probability data (requires live API)
+- [x] **`/v1/responses` returns proper Responses API format (`object: "response"`)**
+- [x] **`/v1/responses` streaming emits typed events (`response.output_text.delta`, etc.)**
+- [x] **`/v1/responses` converts Chat Completions format from non-responses adapters**
 
 ### April 2026 Known Issues / Current Troubles
 - **Adapter schema validation failures**: We encountered aggressive schema validation errors with some strict clients failing on the `[DONE]` marker streaming chunk (`Type validation failed: Value: {"data":"[DONE]","usage":null}`).

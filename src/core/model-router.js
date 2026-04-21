@@ -11,8 +11,50 @@ import { stripThinking } from '../utils/format.js';
 import { getLogger } from '../utils/logger.js';
 import { MediaProcessorClient } from '../utils/media-client.js';
 import { imageFetcher } from '../utils/image-fetcher.js';
+import { chatCompletionsToResponse, convertStreamToResponseEvents } from '../utils/response-format.js';
 
 const logger = getLogger();
+
+function convertInputToMessages(input) {
+    if (!Array.isArray(input)) return [{ role: 'user', content: String(input) }];
+
+    return input.map(item => {
+        if (typeof item === 'string') {
+            return { role: 'user', content: item };
+        }
+
+        if (item.role === 'function_call_output' || item.type === 'function_call_output') {
+            return {
+                role: 'tool',
+                tool_call_id: item.call_id || item.id,
+                content: item.output || item.content || ''
+            };
+        }
+
+        if (item.type === 'function_call') {
+            return {
+                role: 'assistant',
+                tool_calls: [{
+                    id: item.call_id || item.id,
+                    type: 'function',
+                    function: { name: item.name, arguments: item.arguments || '{}' }
+                }],
+                content: null
+            };
+        }
+
+        if (Array.isArray(item.content)) {
+            const content = item.content.map(part => {
+                if (part.type === 'input_text') return { type: 'text', text: part.text };
+                if (part.type === 'input_image') return { type: 'image_url', image_url: { url: part.image_url } };
+                return part;
+            });
+            return { role: item.role || 'user', content };
+        }
+
+        return { role: item.role || 'user', content: item.content || '' };
+    });
+}
 
 export class ModelRouter {
     constructor(config) {
@@ -169,10 +211,57 @@ export class ModelRouter {
         }
 
         const request = rawRequest.input && Array.isArray(rawRequest.input)
-            ? { ...rawRequest, messages: rawRequest.input }
+            ? { ...rawRequest, messages: convertInputToMessages(rawRequest.input) }
             : rawRequest;
 
-        return this.routeChatCompletion(request);
+        const { id: modelId, config: modelConfig } = this.registry.resolveModel(request.model, 'chat');
+
+        if (modelConfig.adapter === 'responses') {
+            return this._routeResponseNative(request, modelConfig, rawRequest);
+        }
+
+        const chatResult = await this.routeChatCompletion(request);
+
+        if (chatResult.stream) {
+            return {
+                stream: true,
+                generator: convertStreamToResponseEvents(chatResult.generator, rawRequest),
+                context: chatResult.context,
+                _format: 'responses'
+            };
+        }
+
+        const response = chatCompletionsToResponse(chatResult, rawRequest);
+        response.context = chatResult.context;
+        return response;
+    }
+
+    async _routeResponseNative(request, modelConfig, rawRequest) {
+        const adapter = this._getAdapter('responses');
+        const opts = this._buildChatOptions(request, modelConfig);
+
+        const sanitizedMessages = this._sanitizeIncomingMessages(opts.messages);
+        const processedMessages = await this._processImagesInMessages(sanitizedMessages, modelConfig, request.image_processing);
+        const { messages, context } = await this._handleContextCompaction(processedMessages, modelConfig, adapter);
+        const resolvedMaxTokens = this._resolveChatMaxTokens(request, modelConfig, context);
+        const responseContext = this._annotateContext(context, resolvedMaxTokens, request);
+
+        const finalOpts = { ...opts, messages, maxTokens: resolvedMaxTokens, signal: request.signal };
+
+        if (request.stream) {
+            const nativeRequest = { ...rawRequest, max_output_tokens: resolvedMaxTokens };
+            return {
+                stream: true,
+                generator: adapter.streamComplete(modelConfig, nativeRequest),
+                context: responseContext,
+                _format: 'responses-native'
+            };
+        }
+
+        const nativeRequest = { ...rawRequest, max_output_tokens: resolvedMaxTokens };
+        const result = await adapter.chatComplete(modelConfig, nativeRequest);
+        result.context = responseContext;
+        return result;
     }
 
     /**
