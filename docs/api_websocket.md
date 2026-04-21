@@ -75,6 +75,8 @@ When `task` is provided, the gateway resolves the task's default model and param
 
 > **Thinking Stripper:** When `strip_thinking: true` or `no_thinking: true` is included in the params, any output reasoning tokens (like DeepSeek `<think>` tags or native `reasoning_content`) are automatically stripped from the `chat.delta` stream, yielding only the final cleanly-formatted answer.
 
+> **Thinking Control:** Use `enable_thinking: false` in params to disable verbose model reasoning at the source. This prevents the model from producing thinking tokens entirely (more efficient than stripping after the fact). See the REST API docs for adapter support matrix.
+
 **Responses:** Server streams multiple `chat.delta` notifications, followed by `chat.done`.
 
 ```json

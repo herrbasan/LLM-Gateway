@@ -96,6 +96,42 @@ The `localInference` block in the Gateway config is the **source of truth** for 
 | `localInference` | ignored by old manager | **source of truth** — adapter forwards as headers |
 | `adapterModel` | GGUF filename | no longer needed (model path comes from `localInference.modelPath`) |
 
+### Thinking Control
+
+llama.cpp models often produce verbose reasoning tokens. Control this per-request or globally:
+
+**Disable thinking globally (config-level):**
+```json
+"my-llama-model": {
+  "adapter": "llamacpp",
+  "extraBody": {
+    "chat_template_kwargs": { "enable_thinking": false }
+  }
+}
+```
+
+**Override per-request (REST):**
+```json
+POST /v1/chat/completions
+{
+  "model": "my-llama-model",
+  "enable_thinking": false,
+  "messages": [...]
+}
+```
+
+**Override per-request (WebSocket):**
+```json
+{ "method": "chat.create", "params": { "model": "my-llama-model", "enable_thinking": false, "messages": [...] } }
+```
+
+**Override per-request (raw kwargs):**
+```json
+{ "chat_template_kwargs": { "enable_thinking": false } }
+```
+
+**Priority:** Request `enable_thinking` > Request `chat_template_kwargs` > Config `extraBody` > Adapter default.
+
 ## Header Mapping
 
 The adapter maps `localInference` fields to headers:

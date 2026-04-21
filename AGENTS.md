@@ -111,7 +111,7 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 
 **Merge behavior:** `finalRequest = { ...taskDefaults, ...clientRequestBody }` — client params always win.
 
-**Supported task parameters:** `model` (required), `description`, `systemPrompt`, `maxTokens`, `temperature`, `topP`, `topK`, `stripThinking`, `noThinking`, `responseFormat`, `extraBody`, `presencePenalty`, `frequencyPenalty`, `seed`, `stop`.
+**Supported task parameters:** `model` (required), `description`, `systemPrompt`, `maxTokens`, `temperature`, `topP`, `topK`, `stripThinking`, `noThinking`, `responseFormat`, `extraBody`, `presencePenalty`, `frequencyPenalty`, `seed`, `stop`, `extra_body`, `enable_thinking`, `chat_template_kwargs`.
 
 **System prompt handling:** Task `systemPrompt` is prepended before all existing messages, regardless of role.
 
@@ -137,6 +137,31 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 - Kimi native token counting uses dedicated Moonshot tokenizer endpoints when available and falls back to estimator logic if token estimation is unavailable
 - `kimi-cli` is no longer part of the active chat path; do not rely on it for current behavior documentation
 - Qwen models support `enable_thinking` toggle via `extraBody.chat_template_kwargs` - set to `false` to disable verbose reasoning
+
+### Thinking Control (Per-Request)
+
+The gateway supports disabling/enabling model reasoning per-request from both REST and WebSocket endpoints.
+
+**Gateway-level param:** `enable_thinking` (boolean) — maps to adapter-native format automatically.
+
+**Adapter mapping:**
+
+| Adapter | Native format |
+|---------|--------------|
+| `openai` | `chat_template_kwargs.enable_thinking` |
+| `llamacpp` | `chat_template_kwargs.enable_thinking` |
+| `lmstudio` | `chat_template_kwargs.enable_thinking` |
+| `alibaba` | `enable_thinking` (top-level) |
+| `ollama` | Via `extra_body` only |
+
+**Usage patterns:**
+- Config-level: `extraBody: { chat_template_kwargs: { enable_thinking: false } }` on the model
+- Task-level: `"enable_thinking": false` in task config
+- Request-level (REST): `"enable_thinking": false` in request body
+- Request-level (WS): `"enable_thinking": false` in `chat.create` / `chat.append` params
+- Direct passthrough: `"chat_template_kwargs": { "enable_thinking": false }` in request body
+
+**Pipeline:** `_buildChatOptions` forwards `enable_thinking`, `chat_template_kwargs`, and `extra_body` to adapters. Each adapter maps to its native format. Request-level overrides config-level.
 
 
 ### Logging
