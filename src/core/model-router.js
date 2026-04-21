@@ -116,7 +116,7 @@ export class ModelRouter {
             stream: effectiveRequest.stream === true,
             message_count: messages.length,
             context: responseContext,
-            explicit_max_tokens: (effectiveRequest.max_tokens ?? effectiveRequest.maxTokens) ?? null,
+            explicit_max_tokens: (effectiveRequest.max_completion_tokens ?? effectiveRequest.max_tokens ?? effectiveRequest.maxTokens) ?? null,
             resolved_max_tokens: resolvedMaxTokens,
             temperature: finalOpts.temperature ?? null,
             task: taskInfo?.id || null
@@ -153,6 +153,26 @@ export class ModelRouter {
         }
 
         return result;
+    }
+
+    /**
+     * Route an incoming Responses API request to the appropriate adapter.
+     * Currently re-uses routeChatCompletion internals since our responses adapter
+     * is just an alternative chat completions provider downstream.
+     *
+     * @param {Object} rawRequest - The incoming Responses API request payload
+     * @returns {Object} Response object
+     */
+    async routeResponse(rawRequest) {
+        if (!rawRequest || typeof rawRequest !== 'object') {
+            throw new Error('[ModelRouter] Request must be an object');
+        }
+
+        const request = rawRequest.input && Array.isArray(rawRequest.input)
+            ? { ...rawRequest, messages: rawRequest.input }
+            : rawRequest;
+
+        return this.routeChatCompletion(request);
     }
 
     /**
@@ -290,11 +310,30 @@ export class ModelRouter {
     _buildChatOptions(request, modelConfig) {
         return {
             messages: request.messages || [],
-            maxTokens: request.max_tokens,
+            maxTokens: request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens,
+            maxCompletionTokens: request.max_completion_tokens,
             signal: request.signal,
             temperature: request.temperature,
             systemPrompt: request.systemPrompt,
-            schema: request.response_format?.json_schema?.schema
+            schema: request.response_format?.json_schema?.schema,
+            // Extended OpenAI features
+            tools: request.tools,
+            tool_choice: request.tool_choice,
+            parallel_tool_calls: request.parallel_tool_calls,
+            functions: request.functions,
+            function_call: request.function_call,
+            response_format: request.response_format,
+            stream_options: request.stream_options,
+            stop: request.stop,
+            seed: request.seed,
+            frequency_penalty: request.frequency_penalty,
+            presence_penalty: request.presence_penalty,
+            logit_bias: request.logit_bias,
+            logprobs: request.logprobs,
+            top_logprobs: request.top_logprobs,
+            user: request.user,
+            n: request.n,
+            top_p: request.top_p
         };
     }
 
@@ -362,7 +401,7 @@ export class ModelRouter {
      */
     _resolveChatMaxTokens(request, modelConfig, context) {
         // Accept both snake_case (max_tokens) and camelCase (maxTokens) from clients
-        const requestedMaxTokens = request.max_tokens ?? request.maxTokens;
+        const requestedMaxTokens = request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens;
         if (requestedMaxTokens != null) {
             return requestedMaxTokens;
         }
@@ -389,14 +428,14 @@ export class ModelRouter {
         if (!context) {
             return {
                 resolved_max_tokens: resolvedMaxTokens,
-                max_tokens_source: request.max_tokens != null ? 'explicit' : 'implicit'
+                max_tokens_source: (request.max_completion_tokens != null || request.max_tokens != null) ? 'explicit' : 'implicit'
             };
         }
 
         return {
             ...context,
             resolved_max_tokens: resolvedMaxTokens,
-            max_tokens_source: request.max_tokens != null ? 'explicit' : 'implicit'
+            max_tokens_source: (request.max_completion_tokens != null || request.max_tokens != null) ? 'explicit' : 'implicit'
         };
     }
 

@@ -22,14 +22,11 @@ export function createOpenAIAdapter() {
                 stream: false
             };
 
-            if (request.maxTokens) payload.max_tokens = request.maxTokens;
-            if (typeof request.temperature === 'number') payload.temperature = request.temperature;
-            if (request.schema && capabilities?.structuredOutput) {
-                payload.response_format = {
-                    type: 'json_schema',
-                    json_schema: { name: 'response', strict: true, schema: request.schema }
-                };
-            }
+            applyTokenParams(payload, request, capabilities);
+            applyStandardParams(payload, request);
+            applyFormatParams(payload, request, capabilities);
+            applyToolParams(payload, request);
+            applyLogprobParams(payload, request);
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
@@ -65,10 +62,13 @@ export function createOpenAIAdapter() {
                 stream: true
             };
 
-            if (request.maxTokens) payload.max_tokens = request.maxTokens;
-            if (typeof request.temperature === 'number') payload.temperature = request.temperature;
-            if (typeof request.topP === 'number') payload.top_p = request.topP;
-            if (request.stop) payload.stop = request.stop;
+            applyTokenParams(payload, request, capabilities);
+            applyStandardParams(payload, request);
+            applyFormatParams(payload, request, capabilities);
+            applyToolParams(payload, request);
+            applyLogprobParams(payload, request);
+
+            if (request.stream_options) payload.stream_options = request.stream_options;
 
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
@@ -310,6 +310,56 @@ export function createOpenAIAdapter() {
                 });
         }
     };
+}
+
+function applyTokenParams(payload, request, capabilities) {
+    const maxOutput = capabilities?.maxOutputTokens;
+
+    if (request.maxCompletionTokens != null) {
+        payload.max_completion_tokens = maxOutput
+            ? Math.min(request.maxCompletionTokens, maxOutput)
+            : request.maxCompletionTokens;
+    } else if (request.maxTokens != null) {
+        payload.max_tokens = maxOutput
+            ? Math.min(request.maxTokens, maxOutput)
+            : request.maxTokens;
+    }
+}
+
+function applyStandardParams(payload, request) {
+    if (typeof request.temperature === 'number') payload.temperature = request.temperature;
+    if (typeof request.top_p === 'number') payload.top_p = request.top_p;
+    if (typeof request.frequency_penalty === 'number') payload.frequency_penalty = request.frequency_penalty;
+    if (typeof request.presence_penalty === 'number') payload.presence_penalty = request.presence_penalty;
+    if (request.stop) payload.stop = request.stop;
+    if (request.seed != null) payload.seed = request.seed;
+    if (request.logit_bias) payload.logit_bias = request.logit_bias;
+    if (request.user) payload.user = request.user;
+    if (request.n != null) payload.n = request.n;
+}
+
+function applyFormatParams(payload, request, capabilities) {
+    if (request.schema && capabilities?.structuredOutput) {
+        payload.response_format = {
+            type: 'json_schema',
+            json_schema: { name: 'response', strict: true, schema: request.schema }
+        };
+    } else if (request.response_format) {
+        payload.response_format = request.response_format;
+    }
+}
+
+function applyToolParams(payload, request) {
+    if (request.tools) payload.tools = request.tools;
+    if (request.tool_choice) payload.tool_choice = request.tool_choice;
+    if (request.parallel_tool_calls != null) payload.parallel_tool_calls = request.parallel_tool_calls;
+    if (request.functions) payload.functions = request.functions;
+    if (request.function_call) payload.function_call = request.function_call;
+}
+
+function applyLogprobParams(payload, request) {
+    if (request.logprobs != null) payload.logprobs = request.logprobs;
+    if (request.top_logprobs != null) payload.top_logprobs = request.top_logprobs;
 }
 
 function buildHeaders(apiKey, extra = {}, custom = {}) {

@@ -65,6 +65,9 @@ export function createLlamaCppAdapter() {
             if (typeof request.frequency_penalty === 'number') payload.frequency_penalty = request.frequency_penalty;
             if (typeof request.presence_penalty === 'number') payload.presence_penalty = request.presence_penalty;
             if (request.stop) payload.stop = request.stop;
+            if (request.tools) payload.tools = request.tools;
+            if (request.tool_choice) payload.tool_choice = request.tool_choice;
+            if (request.response_format) payload.response_format = request.response_format;
 
             // Config-level extraBody (applied to all requests)
             if (extraBody) {
@@ -91,6 +94,38 @@ export function createLlamaCppAdapter() {
             const data = await res.json();
             if (data.error) {
                 throw new Error(`llama.cpp Error: ${data.error.message || JSON.stringify(data.error)}`);
+            }
+
+            // Non-streaming hallucinated tool trap
+            if (request.tools && data.choices && data.choices.length > 0) {
+                let content = data.choices[0].message?.content || '';
+                let toolIdx = content.indexOf('{"name":');
+                if (toolIdx === -1) toolIdx = content.indexOf('```json\n{"name":');
+                
+                if (toolIdx !== -1) {
+                    let toolJsonStr = content.substring(toolIdx);
+                    let firstBrace = toolJsonStr.indexOf('{');
+                    let lastBrace = toolJsonStr.lastIndexOf('}');
+                    if (firstBrace !== -1 && lastBrace !== -1) {
+                        try {
+                            let parsedTool = JSON.parse(toolJsonStr.substring(firstBrace, lastBrace + 1));
+                            if (parsedTool.name) {
+                                data.choices[0].message.content = content.substring(0, toolIdx) || null;
+                                data.choices[0].message.tool_calls = [{
+                                    id: 'call_' + Math.random().toString(36).substring(2, 9),
+                                    type: 'function',
+                                    function: {
+                                        name: parsedTool.name,
+                                        arguments: typeof parsedTool.arguments === 'string' ? parsedTool.arguments : JSON.stringify(parsedTool.arguments || {})
+                                    }
+                                }];
+                                data.choices[0].finish_reason = 'tool_calls';
+                            }
+                        } catch (e) {
+                            logger.debug(`[llamacpp] Failed to parse intercepted tool call hallucination: ${e.message}`);
+                        }
+                    }
+                }
             }
 
             return { ...data, provider: 'llamacpp' };
@@ -123,6 +158,9 @@ export function createLlamaCppAdapter() {
             if (typeof request.frequency_penalty === 'number') payload.frequency_penalty = request.frequency_penalty;
             if (typeof request.presence_penalty === 'number') payload.presence_penalty = request.presence_penalty;
             if (request.stop) payload.stop = request.stop;
+            if (request.tools) payload.tools = request.tools;
+            if (request.tool_choice) payload.tool_choice = request.tool_choice;
+            if (request.response_format) payload.response_format = request.response_format;
 
             // Config-level extraBody (applied to all requests)
             if (extraBody) {
@@ -158,6 +196,12 @@ export function createLlamaCppAdapter() {
             let thinkingBuffer = '';
             let sentReasoning = false;
 
+            // Hallucinated Tool Catching State
+            let responseBuffer = '';
+            let textStreamed = 0;
+            let inToolBlock = false;
+            const fallbackToolCallId = 'call_' + Math.random().toString(36).substring(2, 9);
+
             try {
                 while (true) {
                     const { done, value } = await reader.read();
@@ -173,7 +217,41 @@ export function createLlamaCppAdapter() {
 
                         if (trimmed.startsWith('data: ')) {
                             const data = trimmed.slice(6);
-                            if (data === '[DONE]') return;
+                            if (data === '[DONE]') {
+                                if (inToolBlock && request.tools) {
+                                    let toolJsonStr = responseBuffer.substring(textStreamed);
+                                    let firstBrace = toolJsonStr.indexOf('{');
+                                    let lastBrace = toolJsonStr.lastIndexOf('}');
+                                    if (firstBrace !== -1 && lastBrace !== -1) {
+                                        try {
+                                            let parsedTool = JSON.parse(toolJsonStr.substring(firstBrace, lastBrace + 1));
+                                            if (parsedTool.name) {
+                                                yield {
+                                                    provider: 'llamacpp',
+                                                    choices: [{
+                                                        index: 0,
+                                                        delta: {
+                                                            tool_calls: [{
+                                                                index: 0,
+                                                                id: fallbackToolCallId,
+                                                                type: 'function',
+                                                                function: {
+                                                                    name: parsedTool.name,
+                                                                    arguments: typeof parsedTool.arguments === 'string' ? parsedTool.arguments : JSON.stringify(parsedTool.arguments || {})
+                                                                }
+                                                            }]
+                                                        },
+                                                        finish_reason: 'tool_calls'
+                                                    }]
+                                                };
+                                            }
+                                        } catch (e) {
+                                            logger.debug(`[llamacpp] Failed to parse intercepted tool call hallucination: ${e.message}`);
+                                        }
+                                    }
+                                }
+                                return;
+                            }
                             try {
                                 const parsed = JSON.parse(data);
                                 parsed.provider = 'llamacpp';
@@ -229,8 +307,41 @@ export function createLlamaCppAdapter() {
                                         thinkingBuffer += content;
                                         delta.content = null;
                                     } else if (content) {
-                                        // Normal content (after </think>)
-                                        delta.content = content;
+                                        responseBuffer += content;
+                                        let toolIdx = responseBuffer.indexOf('{"name":');
+                                        if (toolIdx === -1) toolIdx = responseBuffer.indexOf('```json\n{"name":');
+                                        
+                                        if (request.tools && toolIdx !== -1) {
+                                            inToolBlock = true;
+                                            let textBefore = responseBuffer.substring(textStreamed, toolIdx);
+                                            if (textBefore) {
+                                                delta.content = textBefore;
+                                                textStreamed = toolIdx;
+                                            } else {
+                                                delta.content = null;
+                                            }
+                                        } else if (inToolBlock) {
+                                            delta.content = null;
+                                        } else {
+                                            let newText = responseBuffer.substring(textStreamed);
+                                            let lastBrace = newText.lastIndexOf('{');
+                                            let lastTicks = newText.lastIndexOf('`');
+                                            
+                                            // Lookahead holding back possible start of JSON
+                                            if (request.tools && (lastBrace !== -1 || lastTicks !== -1) && (newText.length - Math.max(lastBrace, lastTicks)) < 20) {
+                                                let safeIdx = Math.max(lastBrace, lastTicks);
+                                                let safeText = newText.substring(0, safeIdx);
+                                                if (safeText) {
+                                                    delta.content = safeText;
+                                                    textStreamed += safeText.length;
+                                                } else {
+                                                    delta.content = null;
+                                                }
+                                            } else {
+                                                delta.content = newText;
+                                                textStreamed = responseBuffer.length;
+                                            }
+                                        }
                                     }
                                     
                                     // Remove null/empty content

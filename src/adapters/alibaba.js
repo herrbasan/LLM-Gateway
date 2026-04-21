@@ -59,7 +59,12 @@ function buildChatPayload(modelConfig, request) {
         messages: request.messages || []
     };
 
-    if (request.maxTokens) payload.max_tokens = request.maxTokens;
+    if (request.maxTokens) {
+        const maxOutput = capabilities?.maxOutputTokens;
+        payload.max_tokens = maxOutput
+            ? Math.min(request.maxTokens, maxOutput)
+            : request.maxTokens;
+    }
     if (typeof request.temperature === 'number') payload.temperature = request.temperature;
     if (typeof request.topP === 'number') payload.top_p = request.topP;
     if (request.stop) payload.stop = request.stop;

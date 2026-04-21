@@ -7,6 +7,13 @@
 import { request as httpRequest } from '../utils/http.js';
 
 export function createAnthropicAdapter() {
+    function parseArguments(args) {
+        if (typeof args === 'string') {
+            try { return JSON.parse(args); } catch { return {}; }
+        }
+        return args || {};
+    }
+
     // Helper functions defined at factory scope
     function extractSystemPrompt(messages) {
         if (!messages) return { messages: [], systemPrompt: null };
@@ -21,6 +28,17 @@ export function createAnthropicAdapter() {
     function formatMessages(messages) {
         if (!messages) return [];
         return messages.map(m => {
+            if (m.role === 'tool') {
+                return {
+                    role: 'user',
+                    content: [{
+                        type: 'tool_result',
+                        tool_use_id: m.tool_call_id || m.tool_use_id,
+                        content: m.content || ''
+                    }]
+                };
+            }
+
             if (Array.isArray(m.content)) {
                 const content = m.content.map(part => {
                     if (part.type === 'text') {
@@ -43,14 +61,44 @@ export function createAnthropicAdapter() {
                     }
                     return { type: 'text', text: JSON.stringify(part) };
                 });
-                return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
+            
+            // Format assistant tool_calls to Anthropic format
+            if (m.role === 'assistant' && m.tool_calls) {
+                m.tool_calls.forEach(tc => {
+                    if (tc.type === 'function' && tc.function) {
+                        content.push({
+                            type: 'tool_use',
+                            id: tc.id,
+                            name: tc.function.name,
+                            input: parseArguments(tc.function.arguments)
+                        });
+                    }
+                });
             }
-            return {
-                role: m.role === 'assistant' ? 'assistant' : 'user',
-                content: [{ type: 'text', text: String(m.content || '') }]
-            };
-        });
-    }
+
+            return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
+        }
+
+        const content = [{ type: 'text', text: String(m.content || '') }];
+        if (m.role === 'assistant' && m.tool_calls) {
+            m.tool_calls.forEach(tc => {
+                if (tc.type === 'function' && tc.function) {
+                    content.push({
+                        type: 'tool_use',
+                        id: tc.id,
+                        name: tc.function.name,
+                        input: parseArguments(tc.function.arguments)
+                    });
+                }
+            });
+        }
+        
+        return {
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content
+        };
+    });
+}
 
     function buildHeaders(apiKey) {
         return {
@@ -61,12 +109,32 @@ export function createAnthropicAdapter() {
 
     function normalizeResponse(data, model) {
         let content = '';
+        let tool_calls = null;
+        
         if (data.content && Array.isArray(data.content)) {
             const textBlock = data.content.find(b => b.type === 'text');
             if (textBlock) content = textBlock.text;
+            
+            const toolUseBlocks = data.content.filter(b => b.type === 'tool_use');
+            if (toolUseBlocks.length > 0) {
+                tool_calls = toolUseBlocks.map(block => ({
+                    id: block.id,
+                    type: 'function',
+                    function: {
+                        name: block.name,
+                        arguments: typeof block.input === 'string' ? block.input : JSON.stringify(block.input)
+                    }
+                }));
+            }
         } else if (typeof data.content === 'string') {
             content = data.content;
         }
+
+        const message = { role: 'assistant', content };
+        if (tool_calls) {
+            message.tool_calls = tool_calls;
+        }
+
         return {
             id: data.id || `anthropic-${Date.now()}`,
             object: 'chat.completion',
@@ -75,8 +143,8 @@ export function createAnthropicAdapter() {
             provider: 'anthropic',
             choices: [{
                 index: 0,
-                message: { role: 'assistant', content },
-                finish_reason: data.stop_reason === 'end_turn' ? 'stop' : data.stop_reason
+                message,
+                finish_reason: data.stop_reason === 'end_turn' ? 'stop' : (data.stop_reason === 'tool_use' ? 'tool_calls' : data.stop_reason)
             }],
             usage: {
                 prompt_tokens: data.usage?.input_tokens || 0,
@@ -84,6 +152,36 @@ export function createAnthropicAdapter() {
                 total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
             }
         };
+    }
+
+    function convertToolsFormat(tools, toolChoice) {
+        if (!tools || !Array.isArray(tools)) return {};
+
+        const claudeTools = tools.map(tool => {
+            if (tool.type === 'function' && tool.function) {
+                return {
+                    name: tool.function.name,
+                    description: tool.function.description || '',
+                    input_schema: tool.function.parameters || { type: 'object', properties: {} }
+                };
+            }
+            return tool;
+        });
+
+        let claudeToolChoice = undefined;
+        if (toolChoice) {
+            if (toolChoice === 'auto') {
+                claudeToolChoice = { type: 'auto' };
+            } else if (toolChoice === 'required') {
+                claudeToolChoice = { type: 'any' }; // Map required to any
+            } else if (toolChoice.type === 'function' && toolChoice.function?.name) {
+                claudeToolChoice = { type: 'tool', name: toolChoice.function.name };
+            } else if (typeof toolChoice === 'string' && toolChoice !== 'none') {
+                claudeToolChoice = { type: 'tool', name: toolChoice };
+            }
+        }
+
+        return { claudeTools, claudeToolChoice };
     }
 
     return {
@@ -107,6 +205,16 @@ export function createAnthropicAdapter() {
 
             if (systemPrompt) body.system = systemPrompt;
             if (typeof request.temperature === 'number') body.temperature = request.temperature;
+            
+            // Tools conversion
+            if (request.tools) {
+                const { claudeTools, claudeToolChoice } = convertToolsFormat(request.tools, request.tool_choice);
+                if (claudeTools && claudeTools.length > 0) {
+                    body.tools = claudeTools;
+                    if (claudeToolChoice) body.tool_choice = claudeToolChoice;
+                }
+            }
+
             if (request.schema && capabilities?.structuredOutput) {
                 body.tools = [{
                     name: 'generate_response',
@@ -152,6 +260,15 @@ export function createAnthropicAdapter() {
             if (systemPrompt) body.system = systemPrompt;
             if (typeof request.temperature === 'number') body.temperature = request.temperature;
 
+            // Tools conversion
+            if (request.tools) {
+                const { claudeTools, claudeToolChoice } = convertToolsFormat(request.tools, request.tool_choice);
+                if (claudeTools && claudeTools.length > 0) {
+                    body.tools = claudeTools;
+                    if (claudeToolChoice) body.tool_choice = claudeToolChoice;
+                }
+            }
+
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
                 headers: buildHeaders(apiKey),
@@ -185,6 +302,46 @@ export function createAnthropicAdapter() {
                             if (event.type === 'message_start' && event.message?.usage) {
                                 inputTokens = event.message.usage.input_tokens || 0;
                             }
+                            if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+                                yield {
+                                    id: event.message?.id || processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model,
+                                    provider: 'anthropic',
+                                    choices: [{
+                                        index: 0,
+                                        delta: {
+                                            tool_calls: [{
+                                                index: event.index,
+                                                id: event.content_block.id,
+                                                type: 'function',
+                                                function: { name: event.content_block.name, arguments: '' }
+                                            }]
+                                        },
+                                        finish_reason: null
+                                    }]
+                                };
+                            }
+                            if (event.type === 'content_block_delta' && event.delta?.type === 'input_json_delta') {
+                                yield {
+                                    id: event.message?.id || processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model,
+                                    provider: 'anthropic',
+                                    choices: [{
+                                        index: 0,
+                                        delta: {
+                                            tool_calls: [{
+                                                index: event.index,
+                                                function: { arguments: event.delta.partial_json }
+                                            }]
+                                        },
+                                        finish_reason: null
+                                    }]
+                                };
+                            }
                             if (event.type === 'content_block_delta' && event.delta?.text) {
                                 yield {
                                     id: event.message?.id || processId,
@@ -203,6 +360,10 @@ export function createAnthropicAdapter() {
                                 if (event.usage) {
                                     outputTokens = event.usage.output_tokens || 0;
                                 }
+                                let finishReason = event.delta?.stop_reason;
+                                if (finishReason === 'end_turn') finishReason = 'stop';
+                                else if (finishReason === 'tool_use') finishReason = 'tool_calls';
+
                                 yield {
                                     id: event.message?.id || processId,
                                     object: 'chat.completion.chunk',
@@ -212,7 +373,7 @@ export function createAnthropicAdapter() {
                                     choices: [{
                                         index: 0,
                                         delta: {},
-                                        finish_reason: event.delta?.stop_reason === 'end_turn' ? 'stop' : (event.delta?.stop_reason || 'stop')
+                                        finish_reason: finishReason || 'stop'
                                     }],
                                     usage: {
                                         prompt_tokens: inputTokens,

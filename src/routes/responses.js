@@ -36,7 +36,7 @@ function bindRequestAbortController(req, res) {
     return controller;
 }
 
-export function createChatHandler(router, ticketRegistry) {
+export function createResponsesHandler(router, ticketRegistry) {
     return async (req, res, next) => {
         try {
             const isAsync = String(req.headers['x-async'] || '').toLowerCase() === 'true';
@@ -53,7 +53,7 @@ export function createChatHandler(router, ticketRegistry) {
                 streamHandler.start();
 
                 try {
-                    const result = await router.routeChatCompletion(requestBody);
+                    const result = await router.routeResponse(requestBody);
 
                     if (result?.stream === true && result?.generator) {
                         const globalThinkingConfig = router.registry.getThinkingConfig();
@@ -67,14 +67,14 @@ export function createChatHandler(router, ticketRegistry) {
                             requestBody.stream_options
                         );
                     } else {
-                        const err = new Error('[ChatRoute] Invalid streaming response: expected { stream: true, generator }');
+                        const err = new Error('[ResponsesRoute] Invalid streaming response: expected { stream: true, generator }');
                         err.status = 500;
                         const errorResponse = { error: { message: err.message, type: 'internal_error', code: 'INVALID_RESPONSE' } };
                         streamHandler.end(errorResponse);
                     }
                 } catch (err) {
                     if (isAbortError(err)) {
-                        logger.info('Streaming request aborted by client', {}, 'ChatRoute');
+                        logger.info('Streaming request aborted by client', {}, 'ResponsesRoute');
                         return;
                     }
                     const errorResponse = { error: { message: err.message, type: 'internal_error', code: err.code || 'INTERNAL_ERROR' } };
@@ -83,49 +83,15 @@ export function createChatHandler(router, ticketRegistry) {
                 return;
             }
 
-            // Handle async requests with compaction
-            if (isAsync) {
-                const ticket = ticketRegistry.createTicket(1);
-                ticketRegistry.updateTicketStatus(ticket.id, 'processing');
-
-                setImmediate(async () => {
-                    try {
-                        const result = await router.routeChatCompletion({ ...req.body, sessionId });
-
-                        if (result.stream) {
-                            // Stream through ticket
-                            for await (const chunk of result.generator) {
-                                ticketRegistry.addEvent(ticket.id, { type: 'chunk', data: chunk });
-                            }
-                            ticketRegistry.addEvent(ticket.id, { type: 'done', data: {} });
-                            ticketRegistry.updateTicketStatus(ticket.id, 'complete', {
-                                result: { stream: true, context: result.context }
-                            });
-                        } else {
-                            ticketRegistry.updateTicketStatus(ticket.id, 'complete', { result });
-                        }
-                    } catch (error) {
-                        ticketRegistry.updateTicketStatus(ticket.id, 'failed', { error });
-                    }
-                });
-
-                return res.status(202).json({
-                    object: 'chat.completion.task',
-                    ticket: ticket.id,
-                    status: 'accepted',
-                    stream_url: `/v1/tasks/${ticket.id}/stream`
-                });
-            }
-
             // Regular non-streaming request
-            const result = await router.routeChatCompletion(requestBody);
+            const result = await router.routeResponse(requestBody);
             const { context, ...response } = result;
             const normalized = normalizeResponse(response);
             res.status(200).json(normalized);
 
         } catch (err) {
             if (isAbortError(err)) {
-                logger.info('Request aborted by client', {}, 'ChatRoute');
+                logger.info('Request aborted by client', {}, 'ResponsesRoute');
                 return;
             }
             next(err);

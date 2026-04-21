@@ -65,7 +65,7 @@ describe('Server v2 - Real World', () => {
                 });
             
             expect(res.status).to.equal(404);
-            expect(res.body.error).to.include('Unknown model');
+            expect(res.body.error.message).to.include('Unknown model');
         });
 
         it('returns 400 for wrong model type', async () => {

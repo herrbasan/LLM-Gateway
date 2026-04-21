@@ -42,7 +42,30 @@ export function createGeminiAdapter() {
                 throw err;
             }
 
-            const outText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const candidate = data.candidates?.[0];
+            const parts = candidate?.content?.parts || [];
+            let outText = '';
+            let tool_calls = [];
+
+            parts.forEach(p => {
+                if (p.text) outText += p.text;
+                if (p.functionCall) {
+                    tool_calls.push({
+                        id: `call_${Math.random().toString(36).substring(2, 11)}`,
+                        type: 'function',
+                        function: {
+                            name: p.functionCall.name,
+                            arguments: JSON.stringify(p.functionCall.args || {})
+                        }
+                    });
+                }
+            });
+
+            const message = { role: 'assistant', content: outText || null };
+            if (tool_calls.length > 0) message.tool_calls = tool_calls;
+            
+            let finishReason = candidate?.finishReason === 'STOP' ? 'stop' : candidate?.finishReason?.toLowerCase();
+            if (tool_calls.length > 0 && !finishReason) finishReason = 'tool_calls'; // Map missing to tool calls
 
             return {
                 id: `gemini-${Date.now()}`,
@@ -52,8 +75,8 @@ export function createGeminiAdapter() {
                 provider: 'gemini',
                 choices: [{
                     index: 0,
-                    message: { role: 'assistant', content: outText },
-                    finish_reason: data.candidates?.[0]?.finishReason === 'STOP' ? 'stop' : data.candidates?.[0]?.finishReason?.toLowerCase()
+                    message,
+                    finish_reason: finishReason || 'stop'
                 }],
                 usage: {
                     prompt_tokens: data.usageMetadata?.promptTokenCount || 0,
@@ -88,6 +111,7 @@ export function createGeminiAdapter() {
             const decoder = new TextDecoder();
             const processId = `gemini-${Date.now()}`;
             let buffer = '';
+            let hasEmittedTools = false;
 
             try {
                 while (true) {
@@ -114,30 +138,115 @@ export function createGeminiAdapter() {
 
                         if (!payloadData.candidates || !payloadData.candidates[0]) continue;
 
-                        const textChunk = payloadData.candidates[0].content?.parts?.[0]?.text || '';
+                        const candidate = payloadData.candidates[0];
+                        const parts = candidate.content?.parts || [];
+                        let outText = '';
+                        const toolParts = [];
 
-                        const chunk = {
-                            id: processId,
-                            object: 'chat.completion.chunk',
-                            created: Math.floor(Date.now() / 1000),
-                            model: model,
-                            provider: 'gemini',
-                            choices: [{
-                                index: 0,
-                                delta: { content: textChunk },
-                                finish_reason: payloadData.candidates[0].finishReason === 'STOP' ? 'stop' : null
-                            }]
-                        };
+                        parts.forEach(p => {
+                            if (p.text) outText += p.text;
+                            if (p.functionCall) toolParts.push(p.functionCall);
+                        });
 
-                        if (payloadData.usageMetadata) {
-                            chunk.usage = {
-                                prompt_tokens: payloadData.usageMetadata.promptTokenCount || 0,
-                                completion_tokens: payloadData.usageMetadata.candidatesTokenCount || 0,
-                                total_tokens: payloadData.usageMetadata.totalTokenCount || 0
+                        const usage = payloadData.usageMetadata ? {
+                            prompt_tokens: payloadData.usageMetadata.promptTokenCount || 0,
+                            completion_tokens: payloadData.usageMetadata.candidatesTokenCount || 0,
+                            total_tokens: payloadData.usageMetadata.totalTokenCount || 0
+                        } : undefined;
+
+                        // Emit text Delta (or empty chunk if no text but no tools either)
+                        if (outText || toolParts.length === 0) {
+                            let finishReason = candidate.finishReason === 'STOP' ? 'stop' : candidate.finishReason?.toLowerCase();
+                            if (hasEmittedTools && finishReason === 'stop') {
+                                finishReason = 'tool_calls';
+                            }
+                            
+                            // If we already emitted tools in a prior chunk, and this is just an empty 'stop' closure, 
+                            // suppress emitting another delta entirely unless it has usage telemetry.
+                            if (!outText && toolParts.length === 0 && hasEmittedTools) {
+                                if (usage) {
+                                    yield {
+                                        id: processId,
+                                        object: 'chat.completion.chunk',
+                                        created: Math.floor(Date.now() / 1000),
+                                        model: model,
+                                        provider: 'gemini',
+                                        choices: [],
+                                        usage: usage
+                                    };
+                                }
+                                continue;
+                            }
+
+                            const chunk = {
+                                id: processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model: model,
+                                provider: 'gemini',
+                                choices: [{
+                                    index: 0,
+                                    delta: { content: outText || null },
+                                    finish_reason: (toolParts.length === 0) ? (finishReason || null) : null
+                                }]
                             };
+                            if (usage) chunk.usage = usage;
+                            yield chunk;
                         }
 
-                        yield chunk;
+                        // Emit tool Parts strictly as OpenAI expects: id+name first, then arguments
+                        if (toolParts.length > 0) {
+                            hasEmittedTools = true;
+                            let finishReason = candidate.finishReason === 'STOP' ? 'tool_calls' : candidate.finishReason?.toLowerCase();
+                            if (!finishReason) finishReason = 'tool_calls';
+
+                            for (let i = 0; i < toolParts.length; i++) {
+                                const callId = `call_${Math.random().toString(36).substring(2, 11)}`;
+                                const f = toolParts[i];
+                                
+                                // Chunk 1: Initialize tool call with id, type, name (no arguments)
+                                yield {
+                                    id: processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model: model,
+                                    provider: 'gemini',
+                                    choices: [{
+                                        index: 0,
+                                        delta: {
+                                            tool_calls: [{
+                                                index: i,
+                                                id: callId,
+                                                type: 'function',
+                                                function: { name: f.name, arguments: '' }
+                                            }]
+                                        },
+                                        finish_reason: null
+                                    }]
+                                };
+
+                                // Chunk 2: Send arguments, attach finish_reason to the last one
+                                const chunkArgs = {
+                                    id: processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model: model,
+                                    provider: 'gemini',
+                                    choices: [{
+                                        index: 0,
+                                        delta: {
+                                            tool_calls: [{
+                                                index: i,
+                                                function: { arguments: JSON.stringify(f.args || {}) }
+                                            }]
+                                        },
+                                        finish_reason: (i === toolParts.length - 1) ? finishReason : null
+                                    }]
+                                };
+                                if (usage && i === toolParts.length - 1) chunkArgs.usage = usage;
+                                yield chunkArgs;
+                            }
+                        }
                     }
                 }
             } finally {
@@ -410,6 +519,43 @@ function mapSizeToAspectRatio(size) {
 
 // Helper functions
 
+function buildGeminiTools(openAiTools) {
+    if (!openAiTools || !openAiTools.length) return undefined;
+    
+    const functionDeclarations = openAiTools
+        .filter(t => t.type === 'function' && t.function)
+        .map(t => {
+            const f = t.function;
+            const decl = {
+                name: f.name,
+                description: f.description || ''
+            };
+            if (f.parameters) {
+                decl.parameters = f.parameters;
+            }
+            return decl;
+        });
+
+    return functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined;
+}
+
+function buildGeminiToolConfig(toolChoice) {
+    if (!toolChoice) return undefined;
+    if (typeof toolChoice === 'string') {
+        if (toolChoice === 'none') return { functionCallingConfig: { mode: 'NONE' } };
+        if (toolChoice === 'auto') return { functionCallingConfig: { mode: 'AUTO' } };
+        if (toolChoice === 'required') return { functionCallingConfig: { mode: 'ANY' } };
+    } else if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
+        return {
+            functionCallingConfig: {
+                mode: 'ANY',
+                allowedFunctionNames: [toolChoice.function.name]
+            }
+        };
+    }
+    return undefined;
+}
+
 function buildChatPayload(request, capabilities) {
     const messages = request.messages || [];
     const systemMsg = messages.find(m => m.role === 'system');
@@ -429,6 +575,20 @@ function buildChatPayload(request, capabilities) {
         };
     }
 
+    if (request.tools) {
+        const mappedTools = buildGeminiTools(request.tools);
+        if (mappedTools) {
+            payload.tools = mappedTools;
+        }
+    }
+
+    if (request.tool_choice) {
+        const mappedToolConfig = buildGeminiToolConfig(request.tool_choice);
+        if (mappedToolConfig) {
+            payload.toolConfig = mappedToolConfig;
+        }
+    }
+
     if (request.maxTokens) {
         payload.generationConfig.maxOutputTokens = request.maxTokens;
     }
@@ -446,27 +606,68 @@ function buildChatPayload(request, capabilities) {
 }
 
 function buildMessageParts(message) {
-    if (Array.isArray(message.content)) {
-        return message.content.map(part => {
-            if (part.type === 'text') {
-                return { text: part.text };
+    const parts = [];
+
+    if (message.role === 'tool') {
+        let responseObj;
+        try {
+            responseObj = JSON.parse(message.content);
+            if (typeof responseObj !== 'object' || responseObj === null) {
+                responseObj = { value: responseObj };
             }
-            if (part.type === 'image_url') {
+        } catch {
+            responseObj = { result: String(message.content || '') };
+        }
+        parts.push({
+            functionResponse: {
+                name: message.name || 'unknown_tool',
+                response: responseObj
+            }
+        });
+        return parts; // tool messages strictly carry functionResponse
+    }
+
+    if (message.role === 'assistant' && message.tool_calls) {
+        message.tool_calls.forEach(tc => {
+            if (tc.type === 'function' && tc.function) {
+                let args = {};
+                if (tc.function.arguments) {
+                    try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
+                }
+                parts.push({
+                    functionCall: {
+                        name: tc.function.name,
+                        args
+                    }
+                });
+            }
+        });
+    }
+
+    if (Array.isArray(message.content)) {
+        message.content.forEach(part => {
+            if (part.type === 'text') {
+                parts.push({ text: part.text });
+            } else if (part.type === 'image_url') {
                 const url = part.image_url?.url || '';
                 const match = url.match(/^data:([^;]+);base64,(.+)$/);
                 if (match) {
-                    return {
+                    parts.push({
                         inlineData: {
                             mimeType: match[1],
                             data: match[2]
                         }
-                    };
+                    });
+                } else {
+                    parts.push({ text: '[Image: remote URL not supported]' });
                 }
-                return { text: '[Image: remote URL not supported]' };
+            } else {
+                parts.push({ text: String(part) });
             }
-            return { text: String(part) };
-        }).filter(Boolean);
+        });
+    } else if (message.content) {
+        parts.push({ text: String(message.content) });
     }
 
-    return [{ text: String(message.content || '') }];
+    return parts.length > 0 ? parts : [{ text: '' }];
 }

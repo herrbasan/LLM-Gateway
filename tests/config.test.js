@@ -74,13 +74,16 @@ describe('Configuration Manager', () => {
       expect(modelConfig).to.have.property('type');
       expect(modelConfig).to.have.property('adapter');
       expect(modelConfig).to.have.property('capabilities');
-      expect(modelConfig.capabilities).to.have.property('contextWindow');
+      
+      if (modelConfig.type === 'chat' || modelConfig.type === 'embedding') {
+        expect(modelConfig.capabilities).to.have.property('contextWindow');
+      }
       
       // Verify type is valid
       expect(['chat', 'embedding', 'image', 'audio', 'video']).to.include(modelConfig.type);
       
       // Verify adapter is valid
-      expect(['gemini', 'openai', 'ollama', 'lmstudio', 'minimax', 'kimi-cli']).to.include(modelConfig.adapter);
+      expect(['gemini', 'openai', 'ollama', 'lmstudio', 'minimax', 'kimi-cli', 'anthropic', 'alibaba', 'dashscope', 'responses', 'kimi', 'llamacpp']).to.include(modelConfig.adapter);
     }
   });
 });

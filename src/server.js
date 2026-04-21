@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createHealthHandler } from './routes/health.js';
 import { createChatHandler } from './routes/chat.js';
+import { createResponsesHandler } from './routes/responses.js';
 import { createEmbeddingsHandler } from './routes/embeddings.js';
 import { createModelsHandler } from './routes/models.js';
 import { createTaskListHandler, createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
@@ -147,6 +148,9 @@ export function createServer(config) {
   // Chat completions endpoint
   app.post('/v1/chat/completions', createChatHandler(router, ticketRegistry));
 
+  // Responses API endpoint
+  app.post('/v1/responses', createResponsesHandler(router, ticketRegistry));
+
   // Embeddings endpoint
   app.post('/v1/embeddings', createEmbeddingsHandler(router));
 
@@ -211,7 +215,13 @@ export function createServer(config) {
       else if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT')) status = 502;
     }
 
-    res.status(status).json({ error: err.message || 'Internal Server Error' });
+    res.status(status).json({
+      error: {
+        message: err.message || 'Internal Server Error',
+        type: err.type || (status >= 500 ? 'internal_error' : 'invalid_request_error'),
+        code: err.code || null
+      }
+    });
   });
 
   return app;

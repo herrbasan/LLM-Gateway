@@ -266,6 +266,22 @@
       }
     },
     
+    "_comment_dashscope_compat": "--- DashScope via OpenAI-compatible endpoint ---",
+    "dashscope-kimi": {
+      "type": "chat",
+      "adapter": "openai",
+      "endpoint": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "apiKey": "your-dashscope-api-key",
+      "adapterModel": "kimi-k2.5",
+      "capabilities": {
+        "contextWindow": 256000,
+        "maxOutputTokens": 98304,
+        "vision": true,
+        "structuredOutput": true,
+        "streaming": true
+      }
+    },
+    
     "_comment_disabled": "--- Disabled Model Example ---",
     "disabled-model": {
       "type": "chat",

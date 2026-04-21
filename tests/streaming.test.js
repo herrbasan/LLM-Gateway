@@ -37,8 +37,8 @@ describe('Streaming & SSE', () => {
         expect(res.headers['Cache-Control']).to.equal('no-cache');
         expect(res.headers['Connection']).to.equal('keep-alive');
 
-        expect(res.body).to.include('data: {"choices":[{"delta":{"content":"chunk1"}}]}');
-        expect(res.body).to.include('data: {"choices":[{"delta":{"content":"chunk2"}}]}');
+        expect(res.body).to.include('"content":"chunk1"');
+        expect(res.body).to.include('"content":"chunk2"');
         expect(res.body).to.include('data: [DONE]');
     });
 

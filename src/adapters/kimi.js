@@ -56,6 +56,11 @@ export function createKimiAdapter() {
                 payload.max_completion_tokens = request.maxTokens;
             }
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
+            
+            // Tools
+            if (request.tools) payload.tools = request.tools;
+            if (request.tool_choice) payload.tool_choice = request.tool_choice;
+
             if (request.schema && capabilities?.structuredOutput) {
                 payload.response_format = {
                     type: 'json_schema',
@@ -133,6 +138,10 @@ export function createKimiAdapter() {
                 payload.max_completion_tokens = request.maxTokens;
             }
             if (typeof request.temperature === 'number') payload.temperature = request.temperature;
+            
+            // Tools
+            if (request.tools) payload.tools = request.tools;
+            if (request.tool_choice) payload.tool_choice = request.tool_choice;
 
             logger.info('Sending streaming chat request', {
                 endpoint,
@@ -215,11 +224,12 @@ export function createKimiAdapter() {
                                     last_finish_reason: lastFinishReason,
                                     usage: finalUsage
                                 }, 'KimiAdapter');
-                                yield { data: '[DONE]' };
+                                // DO NOT yield { data: '[DONE]' } as it fails schema validation
                                 return;
                             }
                             try {
                                 const parsed = JSON.parse(data);
+                                
                                 chunkCount++;
                                 const delta = parsed.choices?.[0]?.delta;
                                 const finishReason = parsed.choices?.[0]?.finish_reason;
@@ -237,9 +247,9 @@ export function createKimiAdapter() {
                                         continue; // Don't yield reasoning chunks yet
                                     }
                                     
-                                    // When we get content, first flush reasoning if any
-                                    if (delta.content && reasoningBuffer && !sentReasoning) {
-                                        delta.content = `<think>${reasoningBuffer}</think>${delta.content}`;
+                                    // When we get content or tools, first flush reasoning if any
+                                    if ((delta.content || delta.tool_calls) && reasoningBuffer && !sentReasoning) {
+                                        delta.content = `<think>${reasoningBuffer}</think>\n\n${delta.content || ''}`;
                                         sentReasoning = true;
                                     } else if (delta.content && !reasoningBuffer) {
                                         // No reasoning, just content
@@ -249,7 +259,7 @@ export function createKimiAdapter() {
                                     }
                                     
                                     // Skip empty deltas
-                                    if (!delta.content && !delta.role) continue;
+                                    if (!delta.content && !delta.role && !delta.tool_calls && !parsed.choices?.[0]?.finish_reason) continue;
                                 }
                                 
                                 parsed.provider = 'kimi';
