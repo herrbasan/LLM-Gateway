@@ -235,7 +235,8 @@ function validateTaskConfig(taskId, config) {
         'topP', 'topK', 'stripThinking', 'noThinking', 'responseFormat', 'extraBody',
         'presencePenalty', 'frequencyPenalty', 'seed', 'stop',
         'max_tokens', 'strip_thinking', 'no_thinking', 'top_p', 'top_k',
-        'presence_penalty', 'frequency_penalty', 'response_format'
+        'presence_penalty', 'frequency_penalty', 'response_format',
+        'extra_body', 'enable_thinking', 'chat_template_kwargs'
     ];
 
     for (const key of Object.keys(config)) {

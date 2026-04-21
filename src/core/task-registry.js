@@ -13,7 +13,8 @@ const TASK_CHAT_PARAMS = new Set([
     'stripThinking', 'noThinking', 'responseFormat', 'extraBody',
     'presencePenalty', 'frequencyPenalty', 'seed', 'stop',
     'max_tokens', 'strip_thinking', 'no_thinking', 'top_p', 'top_k',
-    'presence_penalty', 'frequency_penalty', 'response_format'
+    'presence_penalty', 'frequency_penalty', 'response_format',
+    'extra_body', 'enable_thinking', 'chat_template_kwargs'
 ]);
 
 const PARAM_NORMALIZATION = {
@@ -33,7 +34,9 @@ const PARAM_NORMALIZATION = {
     frequencyPenalty: 'frequency_penalty',
     frequency_penalty: 'frequency_penalty',
     responseFormat: 'response_format',
-    response_format: 'response_format'
+    response_format: 'response_format',
+    extraBody: 'extra_body',
+    extra_body: 'extra_body'
 };
 
 export class TaskRegistry {

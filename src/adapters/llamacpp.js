@@ -79,6 +79,17 @@ export function createLlamaCppAdapter() {
                 Object.assign(payload, request.extra_body);
             }
 
+            // Direct thinking control
+            if (request.chat_template_kwargs) {
+                payload.chat_template_kwargs = request.chat_template_kwargs;
+            }
+            if (request.enable_thinking != null) {
+                payload.chat_template_kwargs = {
+                    ...payload.chat_template_kwargs,
+                    enable_thinking: request.enable_thinking
+                };
+            }
+
             logger.debug(`[llamacpp] Payload: ${JSON.stringify(payload).substring(0, 500)}`);
 
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
@@ -170,6 +181,17 @@ export function createLlamaCppAdapter() {
             // Request-level extra_body (overrides config)
             if (request.extra_body) {
                 Object.assign(payload, request.extra_body);
+            }
+
+            // Direct thinking control
+            if (request.chat_template_kwargs) {
+                payload.chat_template_kwargs = request.chat_template_kwargs;
+            }
+            if (request.enable_thinking != null) {
+                payload.chat_template_kwargs = {
+                    ...payload.chat_template_kwargs,
+                    enable_thinking: request.enable_thinking
+                };
             }
 
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {

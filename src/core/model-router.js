@@ -333,7 +333,10 @@ export class ModelRouter {
             top_logprobs: request.top_logprobs,
             user: request.user,
             n: request.n,
-            top_p: request.top_p
+            top_p: request.top_p,
+            extra_body: request.extra_body,
+            enable_thinking: request.enable_thinking,
+            chat_template_kwargs: request.chat_template_kwargs
         };
     }
 
