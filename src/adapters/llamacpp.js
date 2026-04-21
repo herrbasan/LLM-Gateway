@@ -79,10 +79,7 @@ export function createLlamaCppAdapter() {
                 Object.assign(payload, request.extra_body);
             }
 
-            // Direct thinking control
-            if (request.chat_template_kwargs) {
-                payload.chat_template_kwargs = request.chat_template_kwargs;
-            }
+            // Thinking control (overrides extraBody/extra_body)
             if (request.enable_thinking != null) {
                 payload.chat_template_kwargs = {
                     ...payload.chat_template_kwargs,
@@ -183,10 +180,7 @@ export function createLlamaCppAdapter() {
                 Object.assign(payload, request.extra_body);
             }
 
-            // Direct thinking control
-            if (request.chat_template_kwargs) {
-                payload.chat_template_kwargs = request.chat_template_kwargs;
-            }
+            // Thinking control (overrides extraBody/extra_body)
             if (request.enable_thinking != null) {
                 payload.chat_template_kwargs = {
                     ...payload.chat_template_kwargs,

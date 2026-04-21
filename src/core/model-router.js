@@ -308,6 +308,8 @@ export class ModelRouter {
      * Build chat options from request.
      */
     _buildChatOptions(request, modelConfig) {
+        const thinking = this._resolveThinking(request, modelConfig);
+
         return {
             messages: request.messages || [],
             maxTokens: request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens,
@@ -335,8 +337,32 @@ export class ModelRouter {
             n: request.n,
             top_p: request.top_p,
             extra_body: request.extra_body,
-            enable_thinking: request.enable_thinking,
-            chat_template_kwargs: request.chat_template_kwargs
+            // Normalized thinking control
+            enable_thinking: thinking.enable_thinking,
+            chat_template_kwargs: thinking.chat_template_kwargs
+        };
+    }
+
+    _resolveThinking(request, modelConfig) {
+        const configExtra = modelConfig.extraBody || {};
+        const configKwargs = configExtra.chat_template_kwargs || {};
+        const configThinking = configKwargs.enable_thinking;
+
+        const requestKwargs = request.chat_template_kwargs || {};
+        const extraBodyKwargs = (request.extra_body || {}).chat_template_kwargs || {};
+
+        const enable_thinking = request.enable_thinking ?? extraBodyKwargs.enable_thinking ?? requestKwargs.enable_thinking ?? configThinking;
+
+        if (enable_thinking == null) {
+            return {
+                enable_thinking: undefined,
+                chat_template_kwargs: Object.keys(requestKwargs).length > 0 ? requestKwargs : undefined
+            };
+        }
+
+        return {
+            enable_thinking,
+            chat_template_kwargs: undefined
         };
     }
 

@@ -98,9 +98,9 @@ The `localInference` block in the Gateway config is the **source of truth** for 
 
 ### Thinking Control
 
-llama.cpp models often produce verbose reasoning tokens. Control this per-request or globally:
+llama.cpp models often produce verbose reasoning tokens. The gateway centralizes thinking control — all sources resolve to a single `enable_thinking` value before reaching the adapter.
 
-**Disable thinking globally (config-level):**
+**Disable thinking globally (config-level, applies when no request param is given):**
 ```json
 "my-llama-model": {
   "adapter": "llamacpp",
@@ -110,27 +110,27 @@ llama.cpp models often produce verbose reasoning tokens. Control this per-reques
 }
 ```
 
-**Override per-request (REST):**
+**Override per-request via REST (OpenAI-compliant):**
 ```json
 POST /v1/chat/completions
 {
   "model": "my-llama-model",
-  "enable_thinking": false,
+  "extra_body": { "chat_template_kwargs": { "enable_thinking": false } },
   "messages": [...]
 }
 ```
 
-**Override per-request (WebSocket):**
+**Override per-request via REST (gateway convenience):**
+```json
+{ "model": "my-llama-model", "enable_thinking": false, "messages": [...] }
+```
+
+**Override per-request via WebSocket:**
 ```json
 { "method": "chat.create", "params": { "model": "my-llama-model", "enable_thinking": false, "messages": [...] } }
 ```
 
-**Override per-request (raw kwargs):**
-```json
-{ "chat_template_kwargs": { "enable_thinking": false } }
-```
-
-**Priority:** Request `enable_thinking` > Request `chat_template_kwargs` > Config `extraBody` > Adapter default.
+**Resolution priority:** Request `enable_thinking` > Request `extra_body.chat_template_kwargs` > Config `extraBody` > Adapter default.
 
 ## Header Mapping
 

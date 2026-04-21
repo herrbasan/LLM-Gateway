@@ -140,28 +140,45 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 
 ### Thinking Control (Per-Request)
 
-The gateway supports disabling/enabling model reasoning per-request from both REST and WebSocket endpoints.
+The gateway supports disabling/enabling model reasoning per-request from both REST and WebSocket endpoints. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.
 
-**Gateway-level param:** `enable_thinking` (boolean) — maps to adapter-native format automatically.
+**Resolution priority** (highest wins):
+1. Request-level `enable_thinking` (REST body or WS params)
+2. Request-level `extra_body.chat_template_kwargs.enable_thinking` (REST)
+3. Request-level `chat_template_kwargs.enable_thinking` (REST)
+4. Config-level `extraBody.chat_template_kwargs.enable_thinking` (model config)
+5. Adapter default (no param sent — model decides)
 
-**Adapter mapping:**
+**REST usage (OpenAI-compliant):**
+```json
+{ "extra_body": { "chat_template_kwargs": { "enable_thinking": false } } }
+```
 
-| Adapter | Native format |
-|---------|--------------|
+**REST usage (gateway convenience):**
+```json
+{ "enable_thinking": false }
+```
+
+**WebSocket usage (gateway-native):**
+```json
+{ "enable_thinking": false }
+```
+
+**Config default:**
+```json
+"my-model": { "extraBody": { "chat_template_kwargs": { "enable_thinking": false } } }
+```
+
+**Adapter translation:**
+
+| Adapter | `enable_thinking` becomes |
+|---------|--------------------------|
 | `openai` | `chat_template_kwargs.enable_thinking` |
 | `llamacpp` | `chat_template_kwargs.enable_thinking` |
 | `lmstudio` | `chat_template_kwargs.enable_thinking` |
 | `alibaba` | `enable_thinking` (top-level) |
-| `ollama` | Via `extra_body` only |
 
-**Usage patterns:**
-- Config-level: `extraBody: { chat_template_kwargs: { enable_thinking: false } }` on the model
-- Task-level: `"enable_thinking": false` in task config
-- Request-level (REST): `"enable_thinking": false` in request body
-- Request-level (WS): `"enable_thinking": false` in `chat.create` / `chat.append` params
-- Direct passthrough: `"chat_template_kwargs": { "enable_thinking": false }` in request body
-
-**Pipeline:** `_buildChatOptions` forwards `enable_thinking`, `chat_template_kwargs`, and `extra_body` to adapters. Each adapter maps to its native format. Request-level overrides config-level.
+**Pipeline:** `_buildChatOptions` calls `_resolveThinking()` which merges all sources into a single `enable_thinking` value. Each adapter translates this to its native format. Config `extraBody` is applied first, then `extra_body`, then `enable_thinking` overrides both.
 
 
 ### Logging

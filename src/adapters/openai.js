@@ -365,9 +365,6 @@ function applyLogprobParams(payload, request) {
 }
 
 function applyThinkingControl(payload, request) {
-    if (request.chat_template_kwargs) {
-        payload.chat_template_kwargs = request.chat_template_kwargs;
-    }
     if (request.enable_thinking != null) {
         payload.chat_template_kwargs = {
             ...payload.chat_template_kwargs,

@@ -789,9 +789,26 @@ data: {"ticket":"tkt_abc123","status":"complete"}
 
 ### Thinking Control
 
-Control whether models produce verbose reasoning/thinking output. Works per-request from both REST and WebSocket endpoints.
+Control whether models produce verbose reasoning/thinking output. Works per-request from both REST and WebSocket endpoints. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.
 
-**Per-request (REST):**
+**Resolution priority** (highest wins):
+1. Request-level `enable_thinking`
+2. Request-level `extra_body.chat_template_kwargs.enable_thinking`
+3. Request-level `chat_template_kwargs.enable_thinking`
+4. Config-level `extraBody.chat_template_kwargs.enable_thinking`
+5. Adapter default (model decides)
+
+**REST usage (OpenAI-compliant — via extra_body):**
+```json
+POST /v1/chat/completions
+{
+  "model": "my-llama-model",
+  "extra_body": { "chat_template_kwargs": { "enable_thinking": false } },
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+```
+
+**REST usage (gateway convenience):**
 ```json
 POST /v1/chat/completions
 {
@@ -801,22 +818,12 @@ POST /v1/chat/completions
 }
 ```
 
-**Per-request (WebSocket):**
+**WebSocket usage:**
 ```json
 { "method": "chat.create", "params": { "model": "my-llama-model", "enable_thinking": false, "messages": [...] } }
 ```
 
-**Task-level:**
-```json
-"tasks": {
-  "fast": {
-    "model": "my-llama-model",
-    "enable_thinking": false
-  }
-}
-```
-
-**Config-level (applies to all requests):**
+**Config default (applies when no request-level param is given):**
 ```json
 "my-llama-model": {
   "adapter": "llamacpp",
@@ -824,20 +831,24 @@ POST /v1/chat/completions
 }
 ```
 
-**Adapter support:**
+**Task default:**
+```json
+"tasks": {
+  "fast": { "model": "my-llama-model", "enable_thinking": false }
+}
+```
 
-| Adapter | Native format | Per-request |
-|---------|--------------|-------------|
-| `openai` | `chat_template_kwargs.enable_thinking` | Yes |
-| `llamacpp` | `chat_template_kwargs.enable_thinking` | Yes |
-| `lmstudio` | `chat_template_kwargs.enable_thinking` | Yes |
-| `alibaba` | `enable_thinking` (top-level) | Yes |
-| `ollama` | — (native API) | Via `extra_body` |
-| `anthropic` | — (different mechanism) | No |
-| `gemini` | — (different mechanism) | No |
-| `kimi` | — (different mechanism) | No |
+**Adapter translation:**
 
-**Priority:** Request-level `enable_thinking` > Task-level `enable_thinking` > Config-level `extraBody` > Adapter default.
+| Adapter | `enable_thinking` becomes |
+|---------|--------------------------|
+| `openai` | `chat_template_kwargs.enable_thinking` |
+| `llamacpp` | `chat_template_kwargs.enable_thinking` |
+| `lmstudio` | `chat_template_kwargs.enable_thinking` |
+| `alibaba` | `enable_thinking` (top-level) |
+| `ollama` | Not supported (native API) |
+| `anthropic` | Not supported (different mechanism) |
+| `gemini` | Not supported (different mechanism) |
 
 ### Vision (Image Input)
 
