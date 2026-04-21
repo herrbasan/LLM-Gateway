@@ -27,6 +27,7 @@ export function createOpenAIAdapter() {
             applyFormatParams(payload, request, capabilities);
             applyToolParams(payload, request);
             applyLogprobParams(payload, request);
+            applyThinkingControl(payload, request);
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
@@ -67,6 +68,7 @@ export function createOpenAIAdapter() {
             applyFormatParams(payload, request, capabilities);
             applyToolParams(payload, request);
             applyLogprobParams(payload, request);
+            applyThinkingControl(payload, request);
 
             if (request.stream_options) payload.stream_options = request.stream_options;
 
@@ -360,6 +362,18 @@ function applyToolParams(payload, request) {
 function applyLogprobParams(payload, request) {
     if (request.logprobs != null) payload.logprobs = request.logprobs;
     if (request.top_logprobs != null) payload.top_logprobs = request.top_logprobs;
+}
+
+function applyThinkingControl(payload, request) {
+    if (request.chat_template_kwargs) {
+        payload.chat_template_kwargs = request.chat_template_kwargs;
+    }
+    if (request.enable_thinking != null) {
+        payload.chat_template_kwargs = {
+            ...payload.chat_template_kwargs,
+            enable_thinking: request.enable_thinking
+        };
+    }
 }
 
 function buildHeaders(apiKey, extra = {}, custom = {}) {

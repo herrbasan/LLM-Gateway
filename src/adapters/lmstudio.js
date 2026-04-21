@@ -47,6 +47,17 @@ export function createLmStudioAdapter() {
                 Object.assign(payload, request.extra_body);
             }
 
+            // Thinking control
+            if (request.chat_template_kwargs) {
+                payload.chat_template_kwargs = request.chat_template_kwargs;
+            }
+            if (request.enable_thinking != null) {
+                payload.chat_template_kwargs = {
+                    ...payload.chat_template_kwargs,
+                    enable_thinking: request.enable_thinking
+                };
+            }
+
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
                 signal: request.signal,
@@ -91,6 +102,17 @@ export function createLmStudioAdapter() {
             // Request-level extra_body (overrides config)
             if (request.extra_body) {
                 Object.assign(payload, request.extra_body);
+            }
+
+            // Thinking control
+            if (request.chat_template_kwargs) {
+                payload.chat_template_kwargs = request.chat_template_kwargs;
+            }
+            if (request.enable_thinking != null) {
+                payload.chat_template_kwargs = {
+                    ...payload.chat_template_kwargs,
+                    enable_thinking: request.enable_thinking
+                };
             }
 
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
