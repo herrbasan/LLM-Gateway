@@ -933,6 +933,113 @@ POST /v1/chat/completions
 | Async image/video | Planned — will use `202 + ticket` pattern |
 | Provider mismatch | Router enforces capability flags (type must match) |
 
+### Tool Use / Function Calling
+
+The gateway supports OpenAI-spec compliant tool use (function calling) across both REST and streaming endpoints. This enables coding assistants, agents, and other tool-calling clients to work through the gateway transparently.
+
+**Request with tools:**
+
+```json
+POST /v1/chat/completions
+{
+  "model": "gemini-flash",
+  "messages": [{"role": "user", "content": "List files in the project"}],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "bash",
+        "description": "Execute a bash command",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": { "type": "string", "description": "The command to run" }
+          },
+          "required": ["command"]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": true
+}
+```
+
+**Non-streaming response with tool calls:**
+
+```json
+{
+  "id": "chatcmpl-xxx",
+  "object": "chat.completion",
+  "model": "gemini-flash",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": null,
+      "refusal": null,
+      "tool_calls": [{
+        "id": "call_abc123",
+        "type": "function",
+        "function": {
+          "name": "bash",
+          "arguments": "{\"command\":\"ls -la\"}"
+        }
+      }]
+    },
+    "finish_reason": "tool_calls"
+  }],
+  "system_fingerprint": null,
+  "usage": { "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120 }
+}
+```
+
+**Streaming tool calls** are emitted as incremental `delta.tool_calls` chunks following the OpenAI SSE format:
+
+```
+data: {"id":"...","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"bash","arguments":""}}]},"finish_reason":null}]}
+data: {"id":"...","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":\"ls -la\"}"}}]},"finish_reason":"tool_calls"}]}
+data: [DONE]
+```
+
+**Returning tool results** for the next turn:
+
+```json
+POST /v1/chat/completions
+{
+  "model": "gemini-flash",
+  "messages": [
+    {"role": "user", "content": "List files in the project"},
+    {"role": "assistant", "content": null, "tool_calls": [{"id": "call_abc123", "type": "function", "function": {"name": "bash", "arguments": "{\"command\":\"ls -la\"}"}}]},
+    {"role": "tool", "tool_call_id": "call_abc123", "content": "file1.txt\nfile2.txt\nREADME.md"}
+  ]
+}
+```
+
+**Supported parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `tools` | array | Tool definitions (OpenAI format) |
+| `tool_choice` | string/object | `"auto"`, `"none"`, `"required"`, or `{ type: "function", function: { name: "..." } }` |
+| `parallel_tool_calls` | boolean | Allow multiple tool calls in one response |
+| `functions` | array | Legacy function calling (deprecated, forwarded as-is) |
+| `function_call` | string/object | Legacy function call control (deprecated, forwarded as-is) |
+
+**Adapter support:**
+
+| Adapter | Tool Support | Notes |
+|---------|-------------|-------|
+| `openai` | Direct passthrough | OpenAI, xAI, and compatible providers |
+| `anthropic` | Format conversion | OpenAI tools ↔ Claude tool_use |
+| `gemini` | Format conversion | OpenAI tools ↔ Gemini functionDeclarations |
+| `kimi` | Direct passthrough | OpenAI-compatible API |
+| `ollama` | Direct passthrough | Model-dependent |
+| `lmstudio` | Direct passthrough | OpenAI-compatible |
+| `llamacpp` | Variable | Model/build dependent |
+
+**Response normalization:** All non-streaming tool-call responses include `refusal: null`, `function_call: null`, `tool_calls: null` (when absent), `annotations: []`, and `system_fingerprint: null` for strict client compatibility (OpenAI SDK, VS Code extensions).
+
 ---
 
 ## Error Handling

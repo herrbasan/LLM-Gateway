@@ -31,6 +31,7 @@ The gateway runs on `http://localhost:3400` by default.
 LLM Gateway provides a unified interface to multiple LLM providers:
 
 - **OpenAI-compatible API** - Drop-in replacement for OpenAI client libraries
+- **Tool Use / Function Calling** - OpenAI-spec compliant `tools`, `tool_choice`, `parallel_tool_calls` across all adapters
 - **Multi-provider** - Gemini, OpenAI, Anthropic, Ollama, LM Studio, llama.cpp, MiniMax, Kimi, Alibaba
 - **Local Inference** - Auto-managed llama.cpp servers for running GGUF models locally
 - **Stateless** - No server-side session management

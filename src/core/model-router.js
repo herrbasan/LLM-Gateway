@@ -486,7 +486,9 @@ export class ModelRouter {
     _sanitizeAssistantMessage(message, stripConfig) {
         if (typeof message.content === 'string') {
             const content = stripThinking(message.content, stripConfig);
-            return content ? { ...message, content } : null;
+            if (content) return { ...message, content };
+            if (message.tool_calls) return { ...message, content: null };
+            return null;
         }
 
         if (Array.isArray(message.content)) {
@@ -501,7 +503,9 @@ export class ModelRouter {
                 })
                 .filter(Boolean);
 
-            return content.length > 0 ? { ...message, content } : null;
+            if (content.length > 0) return { ...message, content };
+            if (message.tool_calls) return { ...message, content: null };
+            return null;
         }
 
         return message;

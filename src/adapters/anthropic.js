@@ -130,7 +130,7 @@ export function createAnthropicAdapter() {
             content = data.content;
         }
 
-        const message = { role: 'assistant', content };
+        const message = { role: 'assistant', content: content || null };
         if (tool_calls) {
             message.tool_calls = tool_calls;
         }

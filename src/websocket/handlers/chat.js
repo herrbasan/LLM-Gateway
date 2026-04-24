@@ -259,6 +259,7 @@ export class ChatHandler {
 
       let finalUsage = null;
       let fullAssistantResponse = '';
+      const accumulatedToolCalls = {};
 
       const globalThinkingConfig = this.modelRouter.registry.getThinkingConfig();
       const clientStrip = requestObject.strip_thinking === true || requestObject.no_thinking === true;
@@ -346,6 +347,22 @@ export class ChatHandler {
             fullAssistantResponse += content;
           }
 
+          if (chunk.choices?.[0]?.delta?.tool_calls) {
+            for (const tc of chunk.choices[0].delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              if (!accumulatedToolCalls[idx]) {
+                accumulatedToolCalls[idx] = {
+                  id: tc.id || '',
+                  type: tc.type || 'function',
+                  function: { name: tc.function?.name || '', arguments: '' }
+                };
+              }
+              if (tc.id) accumulatedToolCalls[idx].id = tc.id;
+              if (tc.function?.name) accumulatedToolCalls[idx].function.name = tc.function.name;
+              if (tc.function?.arguments) accumulatedToolCalls[idx].function.arguments += tc.function.arguments;
+            }
+          }
+
           this._sendWsMessage(connection, formatNotification('chat.delta', {
             request_id: id,
             choices: chunkChoices
@@ -390,6 +407,14 @@ export class ChatHandler {
         if (result?.choices?.[0]?.finish_reason) requestContext.finishReason = result.choices[0].finish_reason;
         
         fullAssistantResponse = content;
+
+        const msgToolCalls = result?.choices?.[0]?.message?.tool_calls;
+        if (msgToolCalls) {
+          msgToolCalls.forEach((tc, idx) => {
+            accumulatedToolCalls[idx] = { ...tc };
+          });
+        }
+
         this._sendWsMessage(connection, formatNotification('chat.delta', {
           request_id: id,
           choices: [{
@@ -409,8 +434,14 @@ export class ChatHandler {
       }
 
       if (requestContext.state !== RequestState.CANCELLED) {
-        if (fullAssistantResponse) {
-          connection.conversationBuffer.push({ role: 'assistant', content: fullAssistantResponse });
+        const toolCallsArray = Object.keys(accumulatedToolCalls).length > 0
+          ? Object.keys(accumulatedToolCalls).sort((a, b) => Number(a) - Number(b)).map(k => accumulatedToolCalls[k])
+          : null;
+
+        if (fullAssistantResponse || toolCallsArray) {
+          const assistantMsg = { role: 'assistant', content: fullAssistantResponse || null };
+          if (toolCallsArray) assistantMsg.tool_calls = toolCallsArray;
+          connection.conversationBuffer.push(assistantMsg);
         }
 
         requestContext.transition(RequestState.COMPLETED);
@@ -433,6 +464,8 @@ export class ChatHandler {
           cancelled: false,
           context: initialContext,
           finish_reason: requestContext.finishReason,
+          content: fullAssistantResponse || null,
+          tool_calls: toolCallsArray,
           model: requestContext.adapterModel,
           provider: requestContext.adapterProvider,
           telemetry: {

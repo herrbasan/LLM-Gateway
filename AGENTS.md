@@ -23,6 +23,7 @@
 - **Implicit max token budget**: Omitted `max_tokens` values are resolved centrally from remaining context and surfaced in response context metadata
 - **WebSocket context telemetry**: `chat.progress` context stats are kept authoritative during streaming and `chat.done` now carries final context metadata
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
+- **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST and WebSocket with adapter-specific format conversion (✅ **COMPLETE**)
 
 ## Documentation
 

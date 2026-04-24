@@ -64,8 +64,12 @@ export function createGeminiAdapter() {
             const message = { role: 'assistant', content: outText || null };
             if (tool_calls.length > 0) message.tool_calls = tool_calls;
             
-            let finishReason = candidate?.finishReason === 'STOP' ? 'stop' : candidate?.finishReason?.toLowerCase();
-            if (tool_calls.length > 0 && !finishReason) finishReason = 'tool_calls'; // Map missing to tool calls
+            let finishReason;
+            if (tool_calls.length > 0) {
+                finishReason = 'tool_calls';
+            } else {
+                finishReason = candidate?.finishReason === 'STOP' ? 'stop' : (candidate?.finishReason?.toLowerCase() || 'stop');
+            }
 
             return {
                 id: `gemini-${Date.now()}`,

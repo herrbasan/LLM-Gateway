@@ -53,12 +53,16 @@ function normalizeMessage(message) {
 
     const normalized = {
         ...message,
-        refusal: message.refusal ?? null
+        refusal: message.refusal ?? null,
+        annotations: message.annotations ?? []
     };
-    
-    // Legacy function_call
+
     if (normalized.function_call === undefined) {
         normalized.function_call = null;
+    }
+
+    if (normalized.tool_calls === undefined) {
+        normalized.tool_calls = null;
     }
 
     return normalized;

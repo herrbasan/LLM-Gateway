@@ -405,10 +405,12 @@ Clients strictly trying to build agents via the Responses API will hit `404 Not 
 For coding assistants like Kilo Code, function calling is essential. The implementation needs:
 
 1. **✅ Request parsing** - Accept `tools`, `tool_choice`, `parallel_tool_calls` in chat handler
-2. **🔄 Adapter support** - Pass tools to providers that support them (✅ OpenAI, ✅ Anthropic, ✅ Kimi, ✅ Gemini)
+2. **✅ Adapter support** - Pass tools to providers that support them (✅ OpenAI, ✅ Anthropic, ✅ Kimi, ✅ Gemini)
 3. **✅ Response normalization** - Convert provider-specific tool call formats to OpenAI format
 4. **✅ Streaming support** - Handle partial tool calls in stream deltas (`delta.tool_calls[{index, function: {name, arguments}}]`)
 5. **✅ Tool result messages** - Ensure `role: "tool"` messages survive sanitization and context compaction
+6. **✅ WebSocket tool aggregation** - Accumulate tool_calls from deltas, store in conversationBuffer, surface in `chat.done`
+7. **✅ Response spec compliance** - `content: null` when only tool_calls, `tool_calls: null`/`function_call: null`/`refusal: null`/`annotations: []`/`system_fingerprint: null` on all responses, `finish_reason: "tool_calls"` when tool_calls present
 
 ### ✅ Priority 2: `max_completion_tokens`
 
