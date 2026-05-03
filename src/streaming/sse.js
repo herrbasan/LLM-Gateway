@@ -1,4 +1,4 @@
-import { createThinkingStripper } from '../utils/format.js';
+import { createThinkingExtractor } from '../utils/format.js';
 import { isAbortError } from '../utils/http.js';
 import { normalizeStreamChunk } from '../utils/response-normalizer.js';
 
@@ -55,12 +55,12 @@ export class StreamHandler {
     async process(chunkGenerator, contextPayload = null, stripThinking = false, thinkingConfig = undefined, streamOptions = undefined) {
         this.start();
 
-        // Create thinking stripper if enabled
-        const thinkingStripper = stripThinking ? createThinkingStripper(thinkingConfig) : null;
-        
+        const thinkingExtractor = createThinkingExtractor();
+
         let finalId = null;
         let finalModel = null;
         let finalProvider = null;
+        let capturedUsage = null;
 
         try {
             for await (let chunk of chunkGenerator) {
@@ -70,26 +70,75 @@ export class StreamHandler {
                 finalModel = chunk.model;
                 finalProvider = chunk.provider;
 
+                if (chunk.usage && (chunk.usage.prompt_tokens || chunk.usage.completion_tokens)) {
+                    capturedUsage = chunk.usage;
+                }
+
                 chunk = normalizeStreamChunk(chunk);
-                const delta = chunk.choices?.[0]?.delta;
+                const choice = chunk.choices?.[0];
+                const delta = choice?.delta;
+                const originalFinishReason = choice?.finish_reason;
+                const originalToolCalls = delta?.tool_calls;
+
                 if (delta) {
                     if (delta.content === null) delete delta.content;
-                    if (delta.content && thinkingStripper) {
-                        delta.content = thinkingStripper.process(delta.content);
+
+                    if (delta.content) {
+                        const emissions = thinkingExtractor.process(delta.content);
+
+                        if (emissions.length === 0) {
+                            delete delta.content;
+                        } else if (emissions.length === 1) {
+                            if (emissions[0].content !== undefined) {
+                                delta.content = emissions[0].content || undefined;
+                            } else {
+                                delete delta.content;
+                            }
+                            if (emissions[0].reasoning_content !== undefined) {
+                                delta.reasoning_content = emissions[0].reasoning_content;
+                            }
+                        } else {
+                            for (let i = 0; i < emissions.length - 1; i++) {
+                                const preDelta = {};
+                                if (emissions[i].content !== undefined) preDelta.content = emissions[i].content;
+                                if (emissions[i].reasoning_content !== undefined) preDelta.reasoning_content = emissions[i].reasoning_content;
+                                if (delta.role) preDelta.role = delta.role;
+                                if (delta.function_call) preDelta.function_call = delta.function_call;
+
+                                const preChunk = {
+                                    ...chunk,
+                                    choices: [{
+                                        ...choice,
+                                        delta: preDelta,
+                                        finish_reason: null
+                                    }]
+                                };
+                                this.res.write(`data: ${JSON.stringify(preChunk)}\n\n`);
+                            }
+
+                            const last = emissions[emissions.length - 1];
+                            if (last.content !== undefined) {
+                                delta.content = last.content || undefined;
+                            } else {
+                                delete delta.content;
+                            }
+                            if (last.reasoning_content !== undefined) {
+                                delta.reasoning_content = last.reasoning_content;
+                            }
+                        }
                     }
+
                     if (stripThinking && delta.reasoning_content !== undefined) {
                         delete delta.reasoning_content;
                     }
                 }
 
-                // If stream_options.include_usage is true, provide null usage on all chunks except the last one
                 if (streamOptions?.include_usage === true) {
                     chunk.usage = null;
                 }
 
                 const payloadStr = `data: ${JSON.stringify(chunk)}\n\n`;
 
-                // Handle backpressure
                 const canContinue = this.res.write(payloadStr);
                 if (!canContinue) {
                     await new Promise(resolve => {
@@ -108,17 +157,20 @@ export class StreamHandler {
                 }
             }
 
-            // Flush any remaining content from stripper buffer
-            if (thinkingStripper) {
-                const remaining = thinkingStripper.flush();
-                if (remaining) {
+            const flushEmissions = thinkingExtractor.flush();
+            for (const emission of flushEmissions) {
+                const flushDelta = {};
+                if (emission.content !== undefined) flushDelta.content = emission.content;
+                if (emission.reasoning_content !== undefined) flushDelta.reasoning_content = emission.reasoning_content;
+
+                if (flushDelta.content || flushDelta.reasoning_content) {
                     const extraChunk = {
                         id: finalId || `chatcmpl-${Date.now()}`,
                         object: 'chat.completion.chunk',
                         created: Math.floor(Date.now() / 1000),
                         model: finalModel || 'unknown',
                         provider: finalProvider || 'unknown',
-                        choices: [{ delta: { content: remaining } }]
+                        choices: [{ delta: flushDelta }]
                     };
                     if (streamOptions?.include_usage === true) {
                         extraChunk.usage = null;
@@ -128,22 +180,22 @@ export class StreamHandler {
             }
 
             if (this.isActive) {
-                if (streamOptions?.include_usage === true) {
-                    const finalUsageChunk = {
-                        id: finalId || `chatcmpl-${Date.now()}`,
-                        object: 'chat.completion.chunk',
-                        created: Math.floor(Date.now() / 1000),
-                        model: finalModel || 'unknown',
-                        provider: finalProvider || 'unknown',
-                        choices: [],
-                        usage: {
-                            prompt_tokens: contextPayload?.promptTokens || contextPayload?.prompt_tokens || 0,
-                            completion_tokens: contextPayload?.completionTokens || contextPayload?.completion_tokens || 0,
-                            total_tokens: contextPayload?.totalTokens || contextPayload?.total_tokens || 0
-                        }
-                    };
-                    this.res.write(`data: ${JSON.stringify(finalUsageChunk)}\n\n`);
-                }
+                const usage = capturedUsage || {
+                    prompt_tokens: contextPayload?.promptTokens || contextPayload?.prompt_tokens || 0,
+                    completion_tokens: contextPayload?.completionTokens || contextPayload?.completion_tokens || 0,
+                    total_tokens: contextPayload?.totalTokens || contextPayload?.total_tokens || 0
+                };
+
+                const finalUsageChunk = {
+                    id: finalId || `chatcmpl-${Date.now()}`,
+                    object: 'chat.completion.chunk',
+                    created: Math.floor(Date.now() / 1000),
+                    model: finalModel || 'unknown',
+                    provider: finalProvider || 'unknown',
+                    choices: [],
+                    usage
+                };
+                this.res.write(`data: ${JSON.stringify(finalUsageChunk)}\n\n`);
 
                 this.res.write('data: [DONE]\n\n');
             }

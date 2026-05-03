@@ -188,6 +188,8 @@ export function createLlamaCppAdapter() {
                 };
             }
 
+            payload.stream_options = { ...request.stream_options, include_usage: true };
+
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
                 headers: { 
@@ -207,10 +209,8 @@ export function createLlamaCppAdapter() {
             let generatedTokens = 0;
             const tokenCap = hardTokenCap || configMaxTokens;
             
-            // Thinking normalization - track if we're inside think tags
+            // Track thinking mode to suppress tool detection during reasoning
             let inThinkingMode = false;
-            let thinkingBuffer = '';
-            let sentReasoning = false;
 
             // Hallucinated Tool Catching State
             let responseBuffer = '';
@@ -272,61 +272,25 @@ export function createLlamaCppAdapter() {
                                 const parsed = JSON.parse(data);
                                 parsed.provider = 'llamacpp';
                                 
-                                // Normalize thinking content from <think> tags
+                                // Pass content through; central extractor handles <think> tags
                                 const delta = parsed.choices?.[0]?.delta;
                                 if (delta?.content !== undefined) {
                                     let content = delta.content || '';
-                                    
-                                    // Check for <think> tag start
+
                                     if (content.includes('<think>')) {
-                                        const thinkIndex = content.indexOf('<think>');
-                                        if (thinkIndex > 0) {
-                                            // Content before <think> - send as normal content
-                                            delta.content = content.substring(0, thinkIndex);
-                                        } else {
-                                            delta.content = null;
-                                        }
-                                        // Extract content after <think> for processing
-                                        content = content.substring(thinkIndex + 7);
                                         inThinkingMode = true;
                                     }
-                                    
-                                    // Check for </think> tag end
                                     if (inThinkingMode && content.includes('</think>')) {
-                                        const endIndex = content.indexOf('</think>');
-                                        // Add thinking content before </think>
-                                        thinkingBuffer += content.substring(0, endIndex);
-                                        // Content after </think> is the actual response
-                                        content = content.substring(endIndex + 8);
                                         inThinkingMode = false;
-                                        
-                                        // Send reasoning_content first if we have it
-                                        if (thinkingBuffer && !sentReasoning) {
-                                            yield {
-                                                provider: 'llamacpp',
-                                                choices: [{
-                                                    index: 0,
-                                                    delta: {
-                                                        reasoning_content: thinkingBuffer,
-                                                        content: content || null
-                                                    }
-                                                }]
-                                            };
-                                            sentReasoning = true;
-                                            continue; // Skip the normal yield
-                                        }
                                     }
-                                    
-                                    // Handle content based on mode
+
                                     if (inThinkingMode) {
-                                        // Accumulate thinking content
-                                        thinkingBuffer += content;
-                                        delta.content = null;
+                                        // Pass through for central extractor; suppress tool detection
                                     } else if (content) {
                                         responseBuffer += content;
                                         let toolIdx = responseBuffer.indexOf('{"name":');
                                         if (toolIdx === -1) toolIdx = responseBuffer.indexOf('```json\n{"name":');
-                                        
+
                                         if (request.tools && toolIdx !== -1) {
                                             inToolBlock = true;
                                             let textBefore = responseBuffer.substring(textStreamed, toolIdx);
@@ -342,7 +306,7 @@ export function createLlamaCppAdapter() {
                                             let newText = responseBuffer.substring(textStreamed);
                                             let lastBrace = newText.lastIndexOf('{');
                                             let lastTicks = newText.lastIndexOf('`');
-                                            
+
                                             // Lookahead holding back possible start of JSON
                                             if (request.tools && (lastBrace !== -1 || lastTicks !== -1) && (newText.length - Math.max(lastBrace, lastTicks)) < 20) {
                                                 let safeIdx = Math.max(lastBrace, lastTicks);
@@ -359,8 +323,7 @@ export function createLlamaCppAdapter() {
                                             }
                                         }
                                     }
-                                    
-                                    // Remove null/empty content
+
                                     if (delta.content === null || delta.content === '') {
                                         delete delta.content;
                                     }
@@ -402,7 +365,7 @@ export function createLlamaCppAdapter() {
          * Create embeddings.
          */
         async createEmbedding(modelConfig, request) {
-            const { endpoint, adapterModel, localInference } = modelConfig;
+            const { endpoint, adapterModel, capabilities, localInference } = modelConfig;
             const model = adapterModel || 'unknown';
             const modelHeaders = buildModelHeaders(localInference);
 
@@ -410,6 +373,12 @@ export function createLlamaCppAdapter() {
                 input: Array.isArray(request.input) ? request.input : [request.input],
                 model
             };
+
+            if (request.dimensions) {
+                payload.dimensions = request.dimensions;
+            } else if (capabilities?.dimensions) {
+                payload.dimensions = capabilities.dimensions;
+            }
 
             const res = await httpRequest(`${endpoint}/v1/embeddings`, {
                 method: 'POST',

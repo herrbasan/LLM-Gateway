@@ -247,3 +247,188 @@ export function stripThinking(text, config = {}) {
 }
 
 export { createThinkingStripper };
+
+// ============================================================================
+// Thinking Content Extractor
+// ============================================================================
+
+/**
+ * Create a streaming thinking extractor that converts <think> tags in content
+ * into reasoning_content emissions. Runs always; stripThinking controls deletion.
+ */
+export function createThinkingExtractor() {
+    const tags = DEFAULT_THINKING_TAGS;
+    const maxTagLen = Math.max(...tags.map(t => t.length));
+    const maxCloseLen = maxTagLen + 3;
+
+    let buffer = '';
+    let inThinking = false;
+    let currentTag = null;
+
+    const findOpenTag = (text) => {
+        const lower = text.toLowerCase();
+        let bestIdx = -1;
+        let bestTag = null;
+
+        for (const tag of tags) {
+            const tagLower = tag.toLowerCase();
+            const needle = `<${tagLower}`;
+            let idx = lower.indexOf(needle);
+            while (idx !== -1) {
+                const afterIdx = idx + needle.length;
+                const after = lower[afterIdx];
+                if (after === '>' || after === ' ' || after === '\t' || after === '\r' || after === '\n' || after === '/' || after === undefined) {
+                    if (bestIdx === -1 || idx < bestIdx) {
+                        bestIdx = idx;
+                        bestTag = tagLower;
+                    }
+                    break;
+                }
+                idx = lower.indexOf(needle, idx + 1);
+            }
+        }
+
+        return bestIdx === -1 ? null : { idx: bestIdx, tag: bestTag };
+    };
+
+    const findCloseTag = (text, tagName) => {
+        const lower = text.toLowerCase();
+        let bestIdx = -1;
+        let bestTag = null;
+
+        for (const tag of tags) {
+            const tagLower = tag.toLowerCase();
+            if (tagName && tagLower !== tagName) continue;
+            const needle = `</${tagLower}>`;
+            const idx = lower.indexOf(needle);
+            if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
+                bestIdx = idx;
+                bestTag = tagLower;
+            }
+        }
+
+        return bestIdx === -1 ? null : { idx: bestIdx, tag: bestTag, length: `</${bestTag}>`.length };
+    };
+
+    return {
+        process(text) {
+            if (!text) return [];
+            buffer += String(text);
+
+            const emissions = [];
+
+            while (true) {
+                if (inThinking) {
+                    const closeMatch = findCloseTag(buffer, currentTag);
+                    if (!closeMatch) {
+                        const keepLen = maxCloseLen;
+                        if (buffer.length > keepLen) {
+                            const emitLen = buffer.length - keepLen;
+                            emissions.push({ reasoning_content: buffer.slice(0, emitLen) });
+                            buffer = buffer.slice(emitLen);
+                        }
+                        break;
+                    }
+
+                    if (closeMatch.idx > 0) {
+                        emissions.push({ reasoning_content: buffer.slice(0, closeMatch.idx) });
+                    }
+
+                    buffer = buffer.slice(closeMatch.idx + closeMatch.length);
+                    inThinking = false;
+                    currentTag = null;
+                    continue;
+                }
+
+                const openMatch = findOpenTag(buffer);
+                if (!openMatch) {
+                    const lastLt = buffer.lastIndexOf('<');
+                    if (lastLt !== -1) {
+                        const afterLt = buffer.slice(lastLt + 1);
+                        const isClose = afterLt.startsWith('/');
+                        const checkText = isClose ? afterLt.slice(1) : afterLt;
+                        const couldBePrefix = tags.some(tag => tag.toLowerCase().startsWith(checkText.toLowerCase()));
+
+                        if (couldBePrefix || checkText === '') {
+                            if (lastLt > 0) {
+                                emissions.push({ content: buffer.slice(0, lastLt) });
+                            }
+                            buffer = buffer.slice(lastLt);
+                            break;
+                        }
+                    }
+
+                    if (buffer) {
+                        emissions.push({ content: buffer });
+                        buffer = '';
+                    }
+                    break;
+                }
+
+                if (openMatch.idx > 0) {
+                    emissions.push({ content: buffer.slice(0, openMatch.idx) });
+                }
+
+                const afterOpen = buffer.slice(openMatch.idx);
+                const gtIndex = afterOpen.indexOf('>');
+                if (gtIndex === -1) {
+                    buffer = afterOpen;
+                    break;
+                }
+
+                buffer = afterOpen.slice(gtIndex + 1);
+                inThinking = true;
+                currentTag = openMatch.tag;
+            }
+
+            return emissions;
+        },
+
+        flush() {
+            const emissions = [];
+            if (buffer) {
+                if (inThinking) {
+                    emissions.push({ reasoning_content: buffer });
+                } else {
+                    const openMatch = findOpenTag(buffer);
+                    if (openMatch && openMatch.idx === 0) {
+                        const afterTagName = buffer.slice(openMatch.tag.length + 1);
+                        if (afterTagName) {
+                            emissions.push({ reasoning_content: afterTagName });
+                        }
+                    } else {
+                        emissions.push({ content: buffer });
+                    }
+                }
+                buffer = '';
+            }
+            inThinking = false;
+            currentTag = null;
+            return emissions;
+        }
+    };
+}
+
+/**
+ * Extract thinking content from full text (non-streaming).
+ * Returns { content, reasoning_content } with reasoning_content only if present.
+ */
+export function extractThinking(text) {
+    if (!text || typeof text !== 'string') return { content: text };
+
+    const extractor = createThinkingExtractor();
+    const emissions = [...extractor.process(text), ...extractor.flush()];
+
+    let content = '';
+    let reasoningContent = '';
+
+    for (const emission of emissions) {
+        if (emission.content) content += emission.content;
+        if (emission.reasoning_content) reasoningContent += emission.reasoning_content;
+    }
+
+    const result = {};
+    if (content) result.content = content;
+    if (reasoningContent) result.reasoning_content = reasoningContent;
+    return result;
+}

@@ -66,8 +66,7 @@
       "endpoint": "http://localhost:4080",
       "capabilities": {
         "contextWindow": 512,
-        "embedding": true,
-        "embeddingDimensions": 1024
+        "dimensions": 1024
       },
       "localInference": {
         "enabled": true,

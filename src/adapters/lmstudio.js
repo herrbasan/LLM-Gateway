@@ -109,6 +109,8 @@ export function createLmStudioAdapter() {
                 };
             }
 
+            payload.stream_options = { ...request.stream_options, include_usage: true };
+
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
                 headers: { 'Accept': 'text/event-stream' },

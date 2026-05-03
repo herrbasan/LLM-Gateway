@@ -3,7 +3,7 @@ import { RequestContext, RequestState } from '../request-state.js';
 import { getLogger } from '../../utils/logger.js';
 import { wsMetrics } from '../metrics.js';
 import { isAbortError } from '../../utils/http.js';
-import { createThinkingStripper } from '../../utils/format.js';
+import { createThinkingExtractor } from '../../utils/format.js';
 
 const logger = getLogger();
 
@@ -261,10 +261,8 @@ export class ChatHandler {
       let fullAssistantResponse = '';
       const accumulatedToolCalls = {};
 
-      const globalThinkingConfig = this.modelRouter.registry.getThinkingConfig();
       const clientStrip = requestObject.strip_thinking === true || requestObject.no_thinking === true;
-      const shouldStripThinking = clientStrip || globalThinkingConfig.enabled;
-      const thinkingStripper = shouldStripThinking ? createThinkingStripper(globalThinkingConfig) : null;
+      const thinkingExtractor = createThinkingExtractor();
 
       if (result && typeof result.generator !== 'undefined') {
         for await (const chunk of result.generator) {
@@ -309,10 +307,58 @@ export class ChatHandler {
               
               if (delta) {
                 if (delta.content === null) delete delta.content;
-                if (delta.content && thinkingStripper) {
-                  delta.content = thinkingStripper.process(delta.content);
+
+                if (delta.content) {
+                  const emissions = thinkingExtractor.process(delta.content);
+
+                  if (emissions.length === 0) {
+                    delete delta.content;
+                  } else if (emissions.length === 1) {
+                    if (emissions[0].content !== undefined) {
+                      delta.content = emissions[0].content || undefined;
+                    } else {
+                      delete delta.content;
+                    }
+                    if (emissions[0].reasoning_content !== undefined) {
+                      delta.reasoning_content = emissions[0].reasoning_content;
+                    }
+                  } else {
+                    for (let i = 0; i < emissions.length - 1; i++) {
+                      const preDelta = {};
+                      if (emissions[i].content !== undefined) preDelta.content = emissions[i].content;
+                      if (emissions[i].reasoning_content !== undefined) preDelta.reasoning_content = emissions[i].reasoning_content;
+                      if (delta.role) preDelta.role = delta.role;
+                      if (delta.function_call) preDelta.function_call = delta.function_call;
+
+                      this._sendWsMessage(connection, formatNotification('chat.delta', {
+                        request_id: id,
+                        choices: [{ index: 0, delta: preDelta, finish_reason: null }]
+                      }), {
+                        requestId: id,
+                        event: 'chat.delta',
+                        details: {
+                          chunkIndex: requestContext.chunksSent + 1,
+                          contentChars: preDelta.content?.length || 0,
+                          accumulatedChars: fullAssistantResponse.length,
+                          choices: 1
+                        }
+                      });
+                      requestContext.chunksSent++;
+                    }
+
+                    const last = emissions[emissions.length - 1];
+                    if (last.content !== undefined) {
+                      delta.content = last.content || undefined;
+                    } else {
+                      delete delta.content;
+                    }
+                    if (last.reasoning_content !== undefined) {
+                      delta.reasoning_content = last.reasoning_content;
+                    }
+                  }
                 }
-                if (shouldStripThinking && delta.reasoning_content !== undefined) {
+
+                if (clientStrip && delta.reasoning_content !== undefined) {
                   delete delta.reasoning_content;
                 }
               }
@@ -379,24 +425,30 @@ export class ChatHandler {
           requestContext.chunksSent++;
         }
 
-        if (thinkingStripper && requestContext.state !== RequestState.CANCELLED) {
-          const remaining = thinkingStripper.flush();
-          if (remaining) {
-            fullAssistantResponse += remaining;
-            this._sendWsMessage(connection, formatNotification('chat.delta', {
-              request_id: id,
-              choices: [{ index: 0, delta: { content: remaining } }]
-            }), {
-              requestId: id,
-              event: 'chat.delta',
-              details: {
-                chunkIndex: requestContext.chunksSent + 1,
-                contentChars: remaining.length,
-                accumulatedChars: fullAssistantResponse.length,
-                choices: 1
-              }
-            });
-            requestContext.chunksSent++;
+        if (requestContext.state !== RequestState.CANCELLED) {
+          const flushEmissions = thinkingExtractor.flush();
+          for (const emission of flushEmissions) {
+            const flushDelta = {};
+            if (emission.content !== undefined) flushDelta.content = emission.content;
+            if (emission.reasoning_content !== undefined) flushDelta.reasoning_content = emission.reasoning_content;
+
+            if (flushDelta.content || flushDelta.reasoning_content) {
+              fullAssistantResponse += flushDelta.content || '';
+              this._sendWsMessage(connection, formatNotification('chat.delta', {
+                request_id: id,
+                choices: [{ index: 0, delta: flushDelta }]
+              }), {
+                requestId: id,
+                event: 'chat.delta',
+                details: {
+                  chunkIndex: requestContext.chunksSent + 1,
+                  contentChars: flushDelta.content?.length || 0,
+                  accumulatedChars: fullAssistantResponse.length,
+                  choices: 1
+                }
+              });
+              requestContext.chunksSent++;
+            }
           }
         }
       } else {

@@ -70,7 +70,7 @@ export function createOpenAIAdapter() {
             applyLogprobParams(payload, request);
             applyThinkingControl(payload, request);
 
-            if (request.stream_options) payload.stream_options = request.stream_options;
+            payload.stream_options = { ...request.stream_options, include_usage: true };
 
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {

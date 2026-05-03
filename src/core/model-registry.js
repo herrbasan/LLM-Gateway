@@ -143,11 +143,16 @@ export class ModelRegistry {
             if (type && config.type !== type) {
                 continue;
             }
+            const contextWindow = config.capabilities?.contextWindow || 0;
+            const maxOutput = config.capabilities?.maxOutputTokens || 0;
             data.push({
                 id,
                 object: 'model',
                 owned_by: config.adapter,
                 type: config.type,
+                context_length: contextWindow || undefined,
+                max_output_tokens: maxOutput || undefined,
+                limit: contextWindow ? { context: contextWindow, output: maxOutput || contextWindow } : undefined,
                 capabilities: {
                         ...config.capabilities,
                         ...(config.imageInputLimit && { imageInputLimit: config.imageInputLimit })
@@ -176,10 +181,15 @@ export class ModelRegistry {
             if (!includeDisabled && config.disabled) {
                 continue;
             }
+            const contextWindow = config.capabilities?.contextWindow || 0;
+            const maxOutput = config.capabilities?.maxOutputTokens || 0;
             const modelInfo = {
                 id,
                 object: 'model',
                 owned_by: config.adapter,
+                context_length: contextWindow || undefined,
+                max_output_tokens: maxOutput || undefined,
+                limit: contextWindow ? { context: contextWindow, output: maxOutput || contextWindow } : undefined,
                 capabilities: {
                         ...config.capabilities,
                         ...(config.imageInputLimit && { imageInputLimit: config.imageInputLimit })

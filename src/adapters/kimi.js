@@ -94,24 +94,11 @@ export function createKimiAdapter() {
                 throw err;
             }
 
-            // Transform reasoning_content to <think> wrapped format for consistent handling
-            const message = data.choices?.[0]?.message;
-            if (message?.reasoning_content) {
-                if (message.content) {
-                    // Both exist - wrap reasoning in think tags before content
-                    message.content = `<think>${message.reasoning_content}</think>${message.content}`;
-                } else {
-                    // Only reasoning - wrap in think tags
-                    message.content = `<think>${message.reasoning_content}</think>`;
-                }
-                delete message.reasoning_content;
-            }
-
             logger.info('Received chat completion response', {
                 model,
                 finish_reason: data?.choices?.[0]?.finish_reason ?? null,
                 usage: data?.usage ?? null,
-                content_chars: message?.content?.length ?? 0
+                content_chars: data?.choices?.[0]?.message?.content?.length ?? 0
             }, 'KimiAdapter');
 
             return {
@@ -211,10 +198,11 @@ export function createKimiAdapter() {
                                         provider: 'kimi',
                                         choices: [{
                                             index: 0,
-                                            delta: { content: `<think>${reasoningBuffer}</think>` },
+                                            delta: { reasoning_content: reasoningBuffer },
                                             finish_reason: null
                                         }]
                                     };
+                                    sentReasoning = true;
                                 }
                                 logger.info('Stream received DONE marker', {
                                     model,
@@ -244,20 +232,30 @@ export function createKimiAdapter() {
                                     // Handle reasoning_content accumulation
                                     if (delta.reasoning_content !== undefined) {
                                         reasoningBuffer += delta.reasoning_content;
-                                        continue; // Don't yield reasoning chunks yet
+                                        continue;
                                     }
-                                    
-                                    // When we get content or tools, first flush reasoning if any
+
+                                    // When we get content or tools, first yield accumulated reasoning
                                     if ((delta.content || delta.tool_calls) && reasoningBuffer && !sentReasoning) {
-                                        delta.content = `<think>${reasoningBuffer}</think>\n\n${delta.content || ''}`;
+                                        yield {
+                                            id: parsed.id || `kimi-${Date.now()}`,
+                                            object: 'chat.completion.chunk',
+                                            created: parsed.created || Math.floor(Date.now() / 1000),
+                                            model,
+                                            provider: 'kimi',
+                                            choices: [{
+                                                index: 0,
+                                                delta: { reasoning_content: reasoningBuffer },
+                                                finish_reason: null
+                                            }]
+                                        };
                                         sentReasoning = true;
-                                    } else if (delta.content && !reasoningBuffer) {
-                                        // No reasoning, just content
                                     }
+
                                     if (delta.content) {
                                         contentChars += delta.content.length;
                                     }
-                                    
+
                                     // Skip empty deltas
                                     if (!delta.content && !delta.role && !delta.tool_calls && !parsed.choices?.[0]?.finish_reason) continue;
                                 }

@@ -56,14 +56,12 @@ export function createChatHandler(router, ticketRegistry) {
                     const result = await router.routeChatCompletion(requestBody);
 
                     if (result?.stream === true && result?.generator) {
-                        const globalThinkingConfig = router.registry.getThinkingConfig();
                         const clientStrip = requestBody.strip_thinking === true || requestBody.no_thinking === true;
-                        const shouldStripThinking = clientStrip || globalThinkingConfig.enabled;
                         await streamHandler.process(
                             result.generator,
                             result.context,
-                            shouldStripThinking,
-                            globalThinkingConfig,
+                            clientStrip,
+                            undefined,
                             requestBody.stream_options
                         );
                     } else {

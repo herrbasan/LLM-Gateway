@@ -7,7 +7,7 @@ import { ModelRegistry } from './model-registry.js';
 import { createAdapters } from './adapters.js';
 import { TokenEstimator } from '../context/estimator.js';
 import { ContextManager } from '../context/strategy.js';
-import { stripThinking } from '../utils/format.js';
+import { stripThinking, extractThinking } from '../utils/format.js';
 import { getLogger } from '../utils/logger.js';
 import { MediaProcessorClient } from '../utils/media-client.js';
 import { imageFetcher } from '../utils/image-fetcher.js';
@@ -177,21 +177,20 @@ export class ModelRouter {
             result.context = responseContext;
         }
 
-        // Apply thinking strip if configured or requested
-        const globalThinkingConfig = this.registry.getThinkingConfig();
+        // Extract thinking tags from non-streaming content; strip if client requested
         const clientStrip = effectiveRequest.strip_thinking === true || effectiveRequest.no_thinking === true;
-        const shouldStripThinking = clientStrip || globalThinkingConfig.enabled;
+        const message = result.choices?.[0]?.message;
 
-        if (shouldStripThinking && result.choices?.[0]?.message) {
-            if (result.choices[0].message.content) {
-                result.choices[0].message.content = stripThinking(
-                    result.choices[0].message.content,
-                    this._getThinkingStripConfig(globalThinkingConfig)
-                );
+        if (message?.content) {
+            const extracted = extractThinking(message.content);
+            message.content = extracted.content;
+            if (extracted.reasoning_content) {
+                message.reasoning_content = extracted.reasoning_content;
             }
-            if (result.choices[0].message.reasoning_content !== undefined) {
-                delete result.choices[0].message.reasoning_content;
-            }
+        }
+
+        if (clientStrip && message?.reasoning_content !== undefined) {
+            delete message.reasoning_content;
         }
 
         return result;
