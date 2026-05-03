@@ -6,6 +6,7 @@ config.json*
 *.log
 logs/
 .env
+.kilo/
 
 # Reference projects (submodules for local dev only)
 Reference/
