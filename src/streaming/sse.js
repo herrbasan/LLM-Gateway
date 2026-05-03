@@ -1,6 +1,9 @@
 import { createThinkingExtractor } from '../utils/format.js';
 import { isAbortError } from '../utils/http.js';
+import { getLogger } from '../utils/logger.js';
 import { normalizeStreamChunk } from '../utils/response-normalizer.js';
+
+const logger = getLogger();
 
 export class StreamHandler {
     constructor(res, options = {}) {
@@ -201,7 +204,7 @@ export class StreamHandler {
             }
         } catch (err) {
             if (!isAbortError(err)) {
-                console.error('[StreamHandler] Streaming error:', err);
+                logger.error('Streaming error', { error: err.message, stack: err.stack }, 'StreamHandler');
             }
         } finally {
             this.cleanup();
@@ -223,7 +226,7 @@ export class StreamHandler {
     }
 
     error(err) {
-        console.error('[StreamHandler] Error:', err);
+        logger.error('Stream error', { error: err.message, stack: err.stack }, 'StreamHandler');
         this.cleanup();
         if (!this.res.writableEnded) {
             this.res.end();

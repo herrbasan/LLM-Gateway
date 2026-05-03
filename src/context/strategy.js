@@ -1,3 +1,7 @@
+import { getLogger } from '../utils/logger.js';
+
+const logger = getLogger();
+
 export class ContextManager {
     constructor(config) {
         this.config = config.compaction || {};
@@ -34,7 +38,7 @@ export class ContextManager {
      */
     async truncate(messages, availableTokens, estimator, adapter, strategyConfig = {}, onProgress = null) {
         const config = { ...this.config, ...strategyConfig };
-        console.log(`[Truncate Strategy] Starting with ${messages.length} messages, available=${availableTokens}`);
+        logger.info(`Truncate: starting with ${messages.length} messages, available=${availableTokens}`, null, 'ContextStrategy');
         
         let systemPromptMsg = null;
         let otherMessages = [];
@@ -72,7 +76,7 @@ export class ContextManager {
             }
 
             if (numTokens <= targetTokensForMessages) {
-                console.log(`[Truncate Strategy] Keeping last ${nToKeep} messages, tokens=${numTokens}`);
+                logger.info(`Truncate: keeping last ${nToKeep} messages, tokens=${numTokens}`, null, 'ContextStrategy');
                 break; // Fits!
             }
             // If it doesn't fit, we drop the oldest by reducing nToKeep.
@@ -100,14 +104,14 @@ export class ContextManager {
             }
 
             keptMessages = [{ ...lastMsg, content: truncatedContent }];
-            console.log(`[Truncate Strategy] Truncated single message to fit`);
+            logger.info('Truncate: truncated single message to fit', null, 'ContextStrategy');
         }
 
         const finalMessages = [];
         if (systemPromptMsg) finalMessages.push(systemPromptMsg);
         finalMessages.push(...keptMessages);
 
-        console.log(`[Truncate Strategy] Returning ${finalMessages.length} messages`);
+        logger.info(`Truncate: returning ${finalMessages.length} messages`, null, 'ContextStrategy');
         return finalMessages;
     }
 
@@ -168,7 +172,7 @@ export class ContextManager {
      */
     async rolling(messages, availableTokens, estimator, adapter, strategyConfig = {}, onProgress = null) {
         const config = { ...this.config, ...strategyConfig };
-        console.log(`[Rolling Strategy] Starting with ${messages.length} messages, available=${availableTokens}`);
+        logger.info(`Rolling: starting with ${messages.length} messages, available=${availableTokens}`, null, 'ContextStrategy');
         
         // Implement chained summaries
         const systemMsg = messages[0]?.role === 'system' ? messages[0] : null;
@@ -178,11 +182,11 @@ export class ContextManager {
         // Pop last user message to preserve it, UNLESS it's the ONLY message
         if (msgsToCompress.length > 1 && msgsToCompress[msgsToCompress.length - 1].role === 'user') {
             lastUserMsg = msgsToCompress.pop();
-            console.log(`[Rolling Strategy] Preserving last user message, compressing ${msgsToCompress.length} messages`);
+            logger.info(`Rolling: preserving last user message, compressing ${msgsToCompress.length} messages`, null, 'ContextStrategy');
         }
 
         const combinedText = msgsToCompress.map(m => `${m.role.toUpperCase()}: ${this._stringifyMessageContent(m.content)}`).join('\n\n');
-        console.log(`[Rolling Strategy] Combined text length: ${combinedText.length} chars`);
+        logger.info(`Rolling: combined text length: ${combinedText.length} chars`, null, 'ContextStrategy');
         
         // Calculate dynamic chunk size based on available context
         // We need to fit: previous_summary + chunk + prompt overhead within available tokens
@@ -194,18 +198,18 @@ export class ContextManager {
         const chunkTokens = Math.max(1000, availableTokens - summaryReserve - promptOverhead);
         const chunkSizeChars = Math.floor(chunkTokens * charsPerToken * 0.8); // 80% safety margin
         
-        console.log(`[Rolling Strategy] Dynamic chunk size: ${chunkSizeChars} chars (~${chunkTokens} tokens)`);
+        logger.info(`Rolling: dynamic chunk size: ${chunkSizeChars} chars (~${chunkTokens} tokens)`, null, 'ContextStrategy');
         
         const chunks = [];
         for (let i = 0; i < combinedText.length; i += chunkSizeChars) {
             chunks.push(combinedText.substring(i, i + chunkSizeChars));
         }
-        console.log(`[Rolling Strategy] Split into ${chunks.length} chunks`);
+        logger.info(`Rolling: split into ${chunks.length} chunks`, null, 'ContextStrategy');
 
         // If too many chunks, fall back to truncate
         const maxChunks = 20;
         if (chunks.length > maxChunks) {
-            console.log(`[Rolling Strategy] Too many chunks (${chunks.length} > ${maxChunks}), falling back to truncate`);
+            logger.info(`Rolling: too many chunks (${chunks.length} > ${maxChunks}), falling back to truncate`, null, 'ContextStrategy');
             return this.truncate(messages, availableTokens, estimator, adapter, strategyConfig, onProgress);
         }
 
@@ -234,14 +238,13 @@ export class ContextManager {
             };
 
             try {
-                console.log(`[Rolling Strategy] Summarizing chunk ${chunkIndex + 1}/${chunks.length}, prompt length=${prompt.length}`);
+                logger.info(`Rolling: summarizing chunk ${chunkIndex + 1}/${chunks.length}, prompt length=${prompt.length}`, null, 'ContextStrategy');
                 const response = await adapter.predict(summaryOpts);
                 previousSummary = typeof response === 'string' ? response : (response.choices?.[0]?.message?.content || response);
-                console.log(`[Rolling Strategy] Chunk ${chunkIndex + 1} summary length: ${previousSummary.length}`);
+                logger.info(`Rolling: chunk ${chunkIndex + 1} summary length: ${previousSummary.length}`, null, 'ContextStrategy');
             } catch (err) {
-                console.error(`[Rolling Strategy] Failed to summarize chunk ${chunkIndex + 1}: ${err.message}`);
-                // Fall back to truncate on any error
-                console.log(`[Rolling Strategy] Falling back to truncate due to error`);
+                logger.error(`Rolling: failed to summarize chunk ${chunkIndex + 1}: ${err.message}`, null, 'ContextStrategy');
+                logger.info('Rolling: falling back to truncate due to error', null, 'ContextStrategy');
                 return this.truncate(messages, availableTokens, estimator, adapter, strategyConfig, onProgress);
             }
         }
@@ -257,7 +260,7 @@ export class ContextManager {
         }
         if (lastUserMsg) newMessages.push(lastUserMsg);
 
-        console.log(`[Rolling Strategy] Complete: ${newMessages.length} messages`);
+        logger.info(`Rolling: complete: ${newMessages.length} messages`, null, 'ContextStrategy');
         return newMessages;
     }
 }

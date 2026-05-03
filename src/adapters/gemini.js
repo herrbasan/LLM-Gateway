@@ -4,6 +4,9 @@
  */
 
 import { request as httpRequest } from '../utils/http.js';
+import { getLogger } from '../utils/logger.js';
+
+const logger = getLogger();
 
 /**
  * Creates a Gemini adapter instance.
@@ -337,7 +340,7 @@ export function createGeminiAdapter() {
             const images = predictions.map((pred, index) => {
                 const b64 = pred.bytesBase64Encoded || pred.base64Encoded || pred.base64;
                 if (!b64) {
-                    console.warn('[GeminiAdapter] No base64 data in prediction:', Object.keys(pred));
+                    logger.warn('No base64 data in prediction', { keys: Object.keys(pred) }, 'GeminiAdapter');
                 }
                 return {
                     b64_json: b64,

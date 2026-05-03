@@ -1,3 +1,7 @@
+import { getLogger } from './logger.js';
+
+const logger = getLogger();
+
 export function snakeToCamel(obj) {
     if (obj === null || typeof obj !== 'object') {
         return obj;
@@ -138,7 +142,7 @@ function createThinkingStripper(config = {}) {
             thinkingContentSize += size;
             if (!thinkingExceeded && thinkingContentSize > maxThinkingContent) {
                 thinkingExceeded = true;
-                console.warn(`[ThinkingStripper] Thinking content exceeded ${maxThinkingContent} chars (${thinkingContentSize} chars, ~${Math.floor(thinkingContentSize / 4)} tokens)`);
+                logger.warn(`Thinking content exceeded ${maxThinkingContent} chars (${thinkingContentSize} chars, ~${Math.floor(thinkingContentSize / 4)} tokens)`, null, 'ThinkingStripper');
             }
         }
     };
@@ -202,7 +206,7 @@ function createThinkingStripper(config = {}) {
                 const reason = thinkingExceeded
                     ? `excessive thinking (${thinkingContentSize} chars, ~${thinkingTokens} tokens)`
                     : `unclosed <${inTag}> tag (${thinkingContentSize} chars, ~${thinkingTokens} tokens)`;
-                console.warn(`[ThinkingStripper] Flush with ${reason} — thinking content discarded`);
+                logger.warn(`Flush with ${reason} — thinking content discarded`, null, 'ThinkingStripper');
                 buffer = '';
                 inTag = null;
                 thinkingContentSize = 0;
