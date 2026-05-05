@@ -5,6 +5,7 @@
 
 import { ModelRegistry } from './model-registry.js';
 import { createAdapters } from './adapters.js';
+import { EmbeddingBatcher } from './embedding-batcher.js';
 import { TokenEstimator } from '../context/estimator.js';
 import { ContextManager } from '../context/strategy.js';
 import { stripThinking, extractThinking } from '../utils/format.js';
@@ -68,6 +69,9 @@ export class ModelRouter {
         // Create adapters (simplified - no config needed at factory level)
         this.adapters = createAdapters();
 
+        this.embeddingBatchers = new Map();
+        this.embeddingBatchDefaults = config.embeddingBatch || {};
+
         // Context management components
         this.tokenEstimator = new TokenEstimator(config);
         this.contextManager = new ContextManager(config);
@@ -94,6 +98,8 @@ export class ModelRouter {
         this.tokenEstimator = new TokenEstimator(newConfig);
         this.contextManager = new ContextManager(newConfig);
         this.mediaProcessor = new MediaProcessorClient(newConfig);
+        this.embeddingBatchers = new Map();
+        this.embeddingBatchDefaults = newConfig.embeddingBatch || {};
         
         logger.info('Configuration reloaded', {
             models: this.registry.getModelIds().length,
@@ -283,7 +289,21 @@ export class ModelRouter {
             task: taskInfo?.id || null
         }, 'ModelRouter');
 
-        return adapter.createEmbedding(modelConfig, resolvedRequest);
+        const batchConfig = modelConfig.embeddingBatch !== undefined
+            ? modelConfig.embeddingBatch
+            : this.embeddingBatchDefaults;
+
+        if (batchConfig === false) {
+            return adapter.createEmbedding(modelConfig, resolvedRequest);
+        }
+
+        let batcher = this.embeddingBatchers.get(modelId);
+        if (!batcher) {
+            batcher = new EmbeddingBatcher(batchConfig);
+            this.embeddingBatchers.set(modelId, batcher);
+        }
+
+        return batcher.submit(adapter, modelConfig, resolvedRequest);
     }
 
     /**
