@@ -65,43 +65,87 @@ export function createAnthropicAdapter() {
 
     function formatMessages(messages) {
         if (!messages) return [];
-        return messages.map(m => {
+
+        function mapContentParts(contentArray) {
+            return contentArray.map(part => {
+                if (part.type === 'thinking') {
+                    return { type: 'thinking', thinking: part.thinking || '', ...(part.signature ? { signature: part.signature } : {}) };
+                }
+                if (part.type === 'text') {
+                    return { type: 'text', text: part.text };
+                }
+                if (part.type === 'image_url') {
+                    const url = part.image_url.url;
+                    const match = url.match(/^data:([^;]+);base64,(.+)$/);
+                    if (match) {
+                        return {
+                            type: 'image',
+                            source: {
+                                type: 'base64',
+                                media_type: match[1] || 'image/jpeg',
+                                data: match[2]
+                            }
+                        };
+                    }
+                    return { type: 'image', source: { type: 'url', url } };
+                }
+                return { type: 'text', text: JSON.stringify(part) };
+            });
+        }
+
+        const result = [];
+        for (const m of messages) {
             if (m.role === 'tool') {
-                return {
-                    role: 'user',
-                    content: [{
-                        type: 'tool_result',
-                        tool_use_id: m.tool_call_id || m.tool_use_id,
-                        content: m.content || ''
-                    }]
+                const toolResult = {
+                    type: 'tool_result',
+                    tool_use_id: m.tool_call_id || m.tool_use_id,
+                    content: Array.isArray(m.content) ? mapContentParts(m.content) : (m.content || '')
                 };
+                const lastMsg = result[result.length - 1];
+                if (lastMsg && lastMsg.role === 'user' && Array.isArray(lastMsg.content) && lastMsg.content.some(c => c.type === 'tool_result')) {
+                    lastMsg.content.push(toolResult);
+                } else {
+                    result.push({
+                        role: 'user',
+                        content: [toolResult]
+                    });
+                }
+                continue;
             }
 
             if (Array.isArray(m.content)) {
-                const content = m.content.map(part => {
-                    if (part.type === 'thinking') {
-                        return { type: 'thinking', thinking: part.thinking || '', ...(part.signature ? { signature: part.signature } : {}) };
-                    }
-                    if (part.type === 'text') {
-                        return { type: 'text', text: part.text };
-                    }
-                    if (part.type === 'image_url') {
-                        const url = part.image_url.url;
-                        const match = url.match(/^data:([^;]+);base64,(.+)$/);
-                        if (match) {
-                            return {
-                                type: 'image',
-                                source: {
-                                    type: 'base64',
-                                    media_type: match[1] || 'image/jpeg',
-                                    data: match[2]
-                                }
-                            };
+                const content = mapContentParts(m.content);
+
+                if (m.role === 'assistant' && m.tool_calls) {
+                    m.tool_calls.forEach(tc => {
+                        if (tc.type === 'function' && tc.function) {
+                            content.push({
+                                type: 'tool_use',
+                                id: tc.id,
+                                name: tc.function.name,
+                                input: parseArguments(tc.function.arguments)
+                            });
                         }
-                        return { type: 'image', source: { type: 'url', url } };
-                    }
-                    return { type: 'text', text: JSON.stringify(part) };
-                });
+                    });
+                }
+
+                result.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content });
+                continue;
+            }
+
+            const content = [];
+
+            if (m.role === 'assistant' && m.thinking_blocks) {
+                for (const block of m.thinking_blocks) {
+                    content.push({ type: 'thinking', thinking: block.thinking || '', ...(block.signature ? { signature: block.signature } : {}) });
+                }
+            } else if (m.role === 'assistant' && m.reasoning_content) {
+                content.push({ type: 'thinking', thinking: m.reasoning_content });
+            }
+
+            if (m.content) {
+                content.push({ type: 'text', text: String(m.content) });
+            }
 
             if (m.role === 'assistant' && m.tool_calls) {
                 m.tool_calls.forEach(tc => {
@@ -115,43 +159,14 @@ export function createAnthropicAdapter() {
                     }
                 });
             }
-
-            return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
-        }
-
-        const content = [];
-
-        if (m.role === 'assistant' && m.thinking_blocks) {
-            for (const block of m.thinking_blocks) {
-                content.push({ type: 'thinking', thinking: block.thinking || '', ...(block.signature ? { signature: block.signature } : {}) });
-            }
-        } else if (m.role === 'assistant' && m.reasoning_content) {
-            content.push({ type: 'thinking', thinking: m.reasoning_content });
-        }
-
-        if (m.content) {
-            content.push({ type: 'text', text: String(m.content) });
-        }
-
-        if (m.role === 'assistant' && m.tool_calls) {
-            m.tool_calls.forEach(tc => {
-                if (tc.type === 'function' && tc.function) {
-                    content.push({
-                        type: 'tool_use',
-                        id: tc.id,
-                        name: tc.function.name,
-                        input: parseArguments(tc.function.arguments)
-                    });
-                }
+            
+            result.push({
+                role: m.role === 'assistant' ? 'assistant' : 'user',
+                content: content.length > 0 ? content : [{ type: 'text', text: '' }]
             });
         }
-        
-        return {
-            role: m.role === 'assistant' ? 'assistant' : 'user',
-            content: content.length > 0 ? content : [{ type: 'text', text: '' }]
-        };
-    });
-}
+        return result;
+    }
 
     function buildThinkingConfig(maxTokens) {
         const budget = Math.min(Math.max(Math.floor((maxTokens ?? 4096) * 0.8), 1024), 32000);
