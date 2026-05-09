@@ -5,8 +5,10 @@
  */
 
 import { request as httpRequest } from '../utils/http.js';
+import { getLogger } from '../utils/logger.js';
 
 export function createAnthropicAdapter() {
+    const logger = getLogger('AnthropicAdapter');
     function parseArguments(args) {
         if (typeof args === 'string') {
             try { return JSON.parse(args); } catch { return {}; }
@@ -25,6 +27,42 @@ export function createAnthropicAdapter() {
         };
     }
 
+    function normalizeMessages(messages) {
+        if (!messages || messages.length === 0) return [];
+
+        const result = [];
+        for (const msg of messages) {
+            const prev = result[result.length - 1];
+
+            if (prev?.role === 'assistant' && msg.role === 'assistant') {
+                if (msg.tool_calls && !prev.tool_calls) {
+                    prev.tool_calls = msg.tool_calls;
+                }
+                if (msg.reasoning_content && !prev.reasoning_content) {
+                    prev.reasoning_content = msg.reasoning_content;
+                }
+                if (msg.thinking_blocks && !prev.thinking_blocks) {
+                    prev.thinking_blocks = msg.thinking_blocks;
+                }
+                if (msg.thinking_signature && !prev.thinking_signature) {
+                    prev.thinking_signature = msg.thinking_signature;
+                }
+                if (typeof msg.content === 'string' && msg.content) {
+                    if (typeof prev.content === 'string' && prev.content) {
+                        prev.content += '\n' + msg.content;
+                    } else {
+                        prev.content = msg.content;
+                    }
+                }
+                continue;
+            }
+
+            result.push({ ...msg });
+        }
+
+        return result;
+    }
+
     function formatMessages(messages) {
         if (!messages) return [];
         return messages.map(m => {
@@ -41,6 +79,9 @@ export function createAnthropicAdapter() {
 
             if (Array.isArray(m.content)) {
                 const content = m.content.map(part => {
+                    if (part.type === 'thinking') {
+                        return { type: 'thinking', thinking: part.thinking || '', ...(part.signature ? { signature: part.signature } : {}) };
+                    }
                     if (part.type === 'text') {
                         return { type: 'text', text: part.text };
                     }
@@ -61,8 +102,7 @@ export function createAnthropicAdapter() {
                     }
                     return { type: 'text', text: JSON.stringify(part) };
                 });
-            
-            // Format assistant tool_calls to Anthropic format
+
             if (m.role === 'assistant' && m.tool_calls) {
                 m.tool_calls.forEach(tc => {
                     if (tc.type === 'function' && tc.function) {
@@ -79,7 +119,20 @@ export function createAnthropicAdapter() {
             return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
         }
 
-        const content = [{ type: 'text', text: String(m.content || '') }];
+        const content = [];
+
+        if (m.role === 'assistant' && m.thinking_blocks) {
+            for (const block of m.thinking_blocks) {
+                content.push({ type: 'thinking', thinking: block.thinking || '', ...(block.signature ? { signature: block.signature } : {}) });
+            }
+        } else if (m.role === 'assistant' && m.reasoning_content) {
+            content.push({ type: 'thinking', thinking: m.reasoning_content });
+        }
+
+        if (m.content) {
+            content.push({ type: 'text', text: String(m.content) });
+        }
+
         if (m.role === 'assistant' && m.tool_calls) {
             m.tool_calls.forEach(tc => {
                 if (tc.type === 'function' && tc.function) {
@@ -95,10 +148,23 @@ export function createAnthropicAdapter() {
         
         return {
             role: m.role === 'assistant' ? 'assistant' : 'user',
-            content
+            content: content.length > 0 ? content : [{ type: 'text', text: '' }]
         };
     });
 }
+
+    function buildThinkingConfig(maxTokens) {
+        const budget = Math.min(Math.max(Math.floor((maxTokens ?? 4096) * 0.8), 1024), 32000);
+        return { type: 'enabled', budget_tokens: budget };
+    }
+
+    function hasThinkingInHistory(messages) {
+        return messages.some(m =>
+            m.role === 'assistant' &&
+            (m.reasoning_content ||
+             (Array.isArray(m.content) && m.content.some(p => p.type === 'thinking')))
+        );
+    }
 
     function buildHeaders(apiKey) {
         return {
@@ -109,9 +175,21 @@ export function createAnthropicAdapter() {
 
     function normalizeResponse(data, model) {
         let content = '';
+        let reasoning_content = null;
+        let thinking_blocks = null;
         let tool_calls = null;
         
         if (data.content && Array.isArray(data.content)) {
+            const thinkingBlocks = data.content.filter(b => b.type === 'thinking');
+            if (thinkingBlocks.length > 0) {
+                reasoning_content = thinkingBlocks.map(b => b.thinking || '').join('');
+                thinking_blocks = thinkingBlocks.map(b => ({
+                    type: 'thinking',
+                    thinking: b.thinking || '',
+                    ...(b.signature ? { signature: b.signature } : {})
+                }));
+            }
+            
             const textBlock = data.content.find(b => b.type === 'text');
             if (textBlock) content = textBlock.text;
             
@@ -133,6 +211,12 @@ export function createAnthropicAdapter() {
         const message = { role: 'assistant', content: content || null };
         if (tool_calls) {
             message.tool_calls = tool_calls;
+        }
+        if (reasoning_content) {
+            message.reasoning_content = reasoning_content;
+        }
+        if (thinking_blocks) {
+            message.thinking_blocks = thinking_blocks;
         }
 
         return {
@@ -195,13 +279,21 @@ export function createAnthropicAdapter() {
                 throw new Error('[AnthropicAdapter] apiKey is required in modelConfig');
             }
 
-            const { messages, systemPrompt } = extractSystemPrompt(request.messages);
+            const { messages: rawMessages, systemPrompt } = extractSystemPrompt(request.messages);
+
+            const messages = normalizeMessages(rawMessages);
+            const formattedMessages = formatMessages(messages);
+            const thinkingInHistory = hasThinkingInHistory(messages);
 
             const body = {
                 model,
-                messages: formatMessages(messages),
+                messages: formattedMessages,
                 max_tokens: request.maxTokens ?? 4096
             };
+
+            if (thinkingInHistory) {
+                body.thinking = buildThinkingConfig(request.maxTokens);
+            }
 
             if (systemPrompt) body.system = systemPrompt;
             if (typeof request.temperature === 'number') body.temperature = request.temperature;
@@ -223,6 +315,21 @@ export function createAnthropicAdapter() {
                 }];
                 body.tool_choice = { type: 'tool', name: 'generate_response' };
             }
+
+            logger.info('Non-stream request', {
+                inputMessageCount: rawMessages.length,
+                normalizedCount: messages.length,
+                merged: rawMessages.length - messages.length,
+                thinkingInHistory,
+                thinkingConfig: body.thinking,
+                assistantMessages: messages.filter(m => m.role === 'assistant').map(m => ({
+                    hasReasoningContent: !!m.reasoning_content,
+                    reasoningContentLength: m.reasoning_content?.length || 0,
+                    hasToolCalls: !!m.tool_calls,
+                    toolCallCount: m.tool_calls?.length || 0,
+                    contentPreview: typeof m.content === 'string' ? m.content?.substring(0, 80) : '[array]'
+                }))
+            });
 
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
@@ -248,14 +355,22 @@ export function createAnthropicAdapter() {
                 throw new Error('[AnthropicAdapter] apiKey is required in modelConfig');
             }
 
-            const { messages, systemPrompt } = extractSystemPrompt(request.messages);
+            const { messages: rawMessages, systemPrompt } = extractSystemPrompt(request.messages);
+
+            const messages = normalizeMessages(rawMessages);
+            const formattedMessages = formatMessages(messages);
+            const thinkingInHistory = hasThinkingInHistory(messages);
 
             const body = {
                 model,
-                messages: formatMessages(messages),
+                messages: formattedMessages,
                 max_tokens: request.maxTokens ?? 4096,
                 stream: true
             };
+
+            if (thinkingInHistory) {
+                body.thinking = buildThinkingConfig(request.maxTokens);
+            }
 
             if (systemPrompt) body.system = systemPrompt;
             if (typeof request.temperature === 'number') body.temperature = request.temperature;
@@ -268,6 +383,28 @@ export function createAnthropicAdapter() {
                     if (claudeToolChoice) body.tool_choice = claudeToolChoice;
                 }
             }
+
+            logger.info('Stream request', {
+                inputMessageCount: rawMessages.length,
+                normalizedCount: messages.length,
+                merged: rawMessages.length - messages.length,
+                thinkingInHistory,
+                thinkingConfig: body.thinking,
+                assistantMessages: messages.filter(m => m.role === 'assistant').map(m => ({
+                    hasReasoningContent: !!m.reasoning_content,
+                    hasThinkingBlocks: !!m.thinking_blocks,
+                    thinkingBlockSignatures: m.thinking_blocks?.map(b => b.signature?.substring(0, 30) || 'NONE'),
+                    reasoningContentLength: m.reasoning_content?.length || 0,
+                    hasContentArray: Array.isArray(m.content),
+                    hasToolCalls: !!m.tool_calls,
+                    toolCallCount: m.tool_calls?.length || 0,
+                    contentPreview: typeof m.content === 'string' ? m.content?.substring(0, 80) : null
+                })),
+                formattedAssistantMessages: formattedMessages.filter(m => m.role === 'assistant').map(m => ({
+                    contentBlockTypes: Array.isArray(m.content) ? m.content.map(b => b.type) : null,
+                    thinkingSignatures: Array.isArray(m.content) ? m.content.filter(b => b.type === 'thinking').map(b => b.signature?.substring(0, 30) || 'NONE') : null
+                }))
+            });
 
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
@@ -282,6 +419,9 @@ export function createAnthropicAdapter() {
             const processId = `msg_${Date.now()}`;
             let inputTokens = 0;
             let outputTokens = 0;
+            let thinkingSignature = null;
+            let thinkingText = '';
+            let loggedBlockStart = false;
 
             try {
                 while (true) {
@@ -301,6 +441,66 @@ export function createAnthropicAdapter() {
                             const event = JSON.parse(data);
                             if (event.type === 'message_start' && event.message?.usage) {
                                 inputTokens = event.message.usage.input_tokens || 0;
+                                if (event.message.content) {
+                                    logger.info('Message start content blocks', {
+                                        blockCount: event.message.content.length,
+                                        blockTypes: event.message.content.map(b => b.type),
+                                        thinkingSignature: event.message.content.find(b => b.type === 'thinking')?.signature?.substring(0, 40)
+                                    });
+                                }
+                            }
+                            if (event.type === 'content_block_stop') {
+                                if (event.content_block?.type === 'thinking') {
+                                    logger.info('Thinking block stop event', {
+                                        hasContentBlock: !!event.content_block,
+                                        signature: event.content_block?.signature?.substring(0, 40) || 'MISSING',
+                                        thinkingLength: event.content_block?.thinking?.length || 0,
+                                        allKeys: Object.keys(event.content_block || {})
+                                    });
+                                    if (event.content_block?.signature) {
+                                        thinkingSignature = event.content_block.signature;
+                                    }
+                                }
+                            }
+                            if (event.type === 'content_block_start' && event.content_block?.type === 'thinking') {
+                                if (!loggedBlockStart) {
+                                    logger.info('Thinking block start event', {
+                                        contentBlockKeys: Object.keys(event.content_block || {}),
+                                        hasSignature: !!event.content_block?.signature,
+                                        signaturePreview: event.content_block?.signature?.substring(0, 40),
+                                        fullBlock: JSON.stringify(event.content_block).substring(0, 200)
+                                    });
+                                    loggedBlockStart = true;
+                                }
+                                if (event.content_block?.signature) {
+                                    thinkingSignature = event.content_block.signature;
+                                }
+                                yield {
+                                    id: event.message?.id || processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model,
+                                    provider: 'anthropic',
+                                    choices: [{
+                                        index: 0,
+                                        delta: { reasoning_content: '' },
+                                        finish_reason: null
+                                    }]
+                                };
+                            }
+                            if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+                                yield {
+                                    id: event.message?.id || processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model,
+                                    provider: 'anthropic',
+                                    choices: [{
+                                        index: 0,
+                                        delta: { reasoning_content: event.delta.thinking || '' },
+                                        finish_reason: null
+                                    }]
+                                };
                             }
                             if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
                                 yield {
@@ -364,7 +564,7 @@ export function createAnthropicAdapter() {
                                 if (finishReason === 'end_turn') finishReason = 'stop';
                                 else if (finishReason === 'tool_use') finishReason = 'tool_calls';
 
-                                yield {
+                                const chunk = {
                                     id: event.message?.id || processId,
                                     object: 'chat.completion.chunk',
                                     created: Math.floor(Date.now() / 1000),
@@ -381,6 +581,10 @@ export function createAnthropicAdapter() {
                                         total_tokens: inputTokens + outputTokens
                                     }
                                 };
+                                if (thinkingSignature) {
+                                    chunk._thinking_signature = thinkingSignature;
+                                }
+                                yield chunk;
                             }
                         } catch {
                             // Ignore parse errors

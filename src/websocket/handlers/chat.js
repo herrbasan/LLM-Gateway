@@ -40,8 +40,23 @@ export class ChatHandler {
       return;
     }
 
+    const previousBuffer = connection.conversationBuffer || [];
+
     // Reset buffer to provided messages
     connection.conversationBuffer = [...messages];
+
+    for (let i = 0; i < connection.conversationBuffer.length && i < previousBuffer.length; i++) {
+      const bufMsg = connection.conversationBuffer[i];
+      const prevMsg = previousBuffer[i];
+      if (bufMsg.role === 'assistant' && prevMsg.role === 'assistant') {
+        if (!bufMsg.thinking_blocks && prevMsg.thinking_blocks) {
+          bufMsg.thinking_blocks = prevMsg.thinking_blocks;
+        }
+        if (!bufMsg.reasoning_content && prevMsg.reasoning_content) {
+          bufMsg.reasoning_content = prevMsg.reasoning_content;
+        }
+      }
+    }
 
     return this._handleChatCompletion(connection, id, params, connection.conversationBuffer, model);
   }
@@ -259,6 +274,8 @@ export class ChatHandler {
 
       let finalUsage = null;
       let fullAssistantResponse = '';
+      let fullReasoningContent = '';
+      let thinkingSignature = null;
       const accumulatedToolCalls = {};
 
       const clientStrip = requestObject.strip_thinking === true || requestObject.no_thinking === true;
@@ -387,10 +404,18 @@ export class ChatHandler {
             if (chunk.usage) {
               finalUsage = chunk.usage;
             }
+            if (chunk._thinking_signature) {
+              thinkingSignature = chunk._thinking_signature;
+            }
           }
 
           if (content) {
             fullAssistantResponse += content;
+          }
+
+          const reasoning = chunk.choices?.[0]?.delta?.reasoning_content;
+          if (reasoning) {
+            fullReasoningContent += reasoning;
           }
 
           if (chunk.choices?.[0]?.delta?.tool_calls) {
@@ -490,9 +515,15 @@ export class ChatHandler {
           ? Object.keys(accumulatedToolCalls).sort((a, b) => Number(a) - Number(b)).map(k => accumulatedToolCalls[k])
           : null;
 
-        if (fullAssistantResponse || toolCallsArray) {
+        if (fullAssistantResponse || toolCallsArray || fullReasoningContent) {
           const assistantMsg = { role: 'assistant', content: fullAssistantResponse || null };
           if (toolCallsArray) assistantMsg.tool_calls = toolCallsArray;
+          if (fullReasoningContent) {
+            assistantMsg.reasoning_content = fullReasoningContent;
+            const thinkingBlock = { type: 'thinking', thinking: fullReasoningContent };
+            if (thinkingSignature) thinkingBlock.signature = thinkingSignature;
+            assistantMsg.thinking_blocks = [thinkingBlock];
+          }
           connection.conversationBuffer.push(assistantMsg);
         }
 
@@ -517,6 +548,7 @@ export class ChatHandler {
           context: initialContext,
           finish_reason: requestContext.finishReason,
           content: fullAssistantResponse || null,
+          reasoning_content: fullReasoningContent || null,
           tool_calls: toolCallsArray,
           model: requestContext.adapterModel,
           provider: requestContext.adapterProvider,
