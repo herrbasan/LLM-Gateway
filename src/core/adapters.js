@@ -31,6 +31,21 @@ const ADAPTER_FACTORIES = {
 };
 
 /**
+ * Default circuit breaker configs per workload type.
+ * Embedding workloads are more lenient because:
+ * - Large batch operations have higher absolute failure counts at low percentages
+ * - 500s from downstream servers are not tripped (connection failures only)
+ */
+const BREAKER_DEFAULTS = {
+    chat: { threshold: 3, resetTimeoutMs: 30000 },
+    stream: { threshold: 3, resetTimeoutMs: 30000 },
+    embed: { threshold: 10, resetTimeoutMs: 60000 },
+    image: { threshold: 5, resetTimeoutMs: 30000 },
+    audio: { threshold: 5, resetTimeoutMs: 30000 },
+    list: { threshold: 5, resetTimeoutMs: 30000 }
+};
+
+/**
  * Creates circuit-breaker wrapped adapters.
  * Adapters are stateless - model config is passed per-request.
  */
@@ -38,12 +53,8 @@ export function createAdapters() {
     const registry = new Map();
 
     for (const [type, factory] of Object.entries(ADAPTER_FACTORIES)) {
-        // Create adapter - no config needed at factory time
         const adapter = factory();
-        
-        // Wrap with circuit breaker
         const wrapped = wrapWithCircuitBreaker(type, adapter);
-        
         registry.set(type, wrapped);
     }
 
@@ -51,34 +62,41 @@ export function createAdapters() {
 }
 
 function wrapWithCircuitBreaker(adapterType, adapter) {
-    const breaker = new CircuitBreaker(adapterType);
+    const breakers = {
+        chat: new CircuitBreaker(`${adapterType}:chat`, BREAKER_DEFAULTS.chat.threshold, BREAKER_DEFAULTS.chat.resetTimeoutMs),
+        stream: new CircuitBreaker(`${adapterType}:stream`, BREAKER_DEFAULTS.stream.threshold, BREAKER_DEFAULTS.stream.resetTimeoutMs),
+        embed: new CircuitBreaker(`${adapterType}:embed`, BREAKER_DEFAULTS.embed.threshold, BREAKER_DEFAULTS.embed.resetTimeoutMs),
+        image: new CircuitBreaker(`${adapterType}:image`, BREAKER_DEFAULTS.image.threshold, BREAKER_DEFAULTS.image.resetTimeoutMs),
+        audio: new CircuitBreaker(`${adapterType}:audio`, BREAKER_DEFAULTS.audio.threshold, BREAKER_DEFAULTS.audio.resetTimeoutMs),
+        list: new CircuitBreaker(`${adapterType}:list`, BREAKER_DEFAULTS.list.threshold, BREAKER_DEFAULTS.list.resetTimeoutMs)
+    };
 
-    // Methods to wrap with circuit breaker
-    const methodsToWrap = [
-        'chatComplete',
-        'createEmbedding', 
-        'generateImage',
-        'synthesizeSpeech',
-        'listModels'
-    ];
+    const methodMap = {
+        chatComplete: breakers.chat,
+        createEmbedding: breakers.embed,
+        generateImage: breakers.image,
+        synthesizeSpeech: breakers.audio,
+        listModels: breakers.list
+    };
 
-    const streamMethodsToWrap = ['streamComplete'];
+    const streamMethodMap = {
+        streamComplete: breakers.stream
+    };
 
     const wrapped = Object.create(adapter);
 
-    // Attach breaker for metrics
-    wrapped.circuitBreaker = breaker;
+    wrapped.circuitBreakers = breakers;
 
-    for (const method of methodsToWrap) {
+    for (const [method, breaker] of Object.entries(methodMap)) {
         if (typeof adapter[method] === 'function') {
-            wrapped[method] = (modelConfig, ...args) => 
+            wrapped[method] = (modelConfig, ...args) =>
                 breaker.fire(() => adapter[method].call(adapter, modelConfig, ...args));
         }
     }
 
-    for (const method of streamMethodsToWrap) {
+    for (const [method, breaker] of Object.entries(streamMethodMap)) {
         if (typeof adapter[method] === 'function') {
-            wrapped[method] = (modelConfig, ...args) => 
+            wrapped[method] = (modelConfig, ...args) =>
                 breaker.fireStream(() => adapter[method].call(adapter, modelConfig, ...args));
         }
     }

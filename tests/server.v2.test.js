@@ -36,7 +36,8 @@ describe('Server v2 - Real World', () => {
             expect(res.status).to.equal(200);
             expect(res.body.object).to.equal('list');
             expect(res.body.data).to.be.an('array');
-            expect(res.body.data.length).to.equal(Object.keys(config.models).length);
+            const expectedCount = Object.values(config.models).filter(m => !m.disabled).length;
+            expect(res.body.data.length).to.equal(expectedCount);
             
             // Verify structure
             const model = res.body.data[0];

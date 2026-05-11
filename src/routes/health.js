@@ -4,7 +4,14 @@ export function createHealthHandler(config, router) {
     const adapterStats = {};
     if (router && router.adapters) {
        for (const [name, adapter] of router.adapters.entries()) {
-           if (adapter.circuitBreaker) {
+           if (adapter.circuitBreakers) {
+               const breakerStats = {};
+               for (const [method, breaker] of Object.entries(adapter.circuitBreakers)) {
+                   breakerStats[method] = breaker.getStats();
+               }
+               adapterStats[name] = breakerStats;
+           } else if (adapter.circuitBreaker) {
+               // Backwards compatibility for single breaker
                adapterStats[name] = adapter.circuitBreaker.getStats();
            } else {
                adapterStats[name] = { state: 'UNKNOWN' };

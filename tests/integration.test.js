@@ -124,8 +124,8 @@ async function probeProviders() {
     } catch { /* provider down */ }
 
     // If default didn't work, try each provider individually
-    if (!defaultProviderWorks && data?.providers) {
-        for (const name of Object.keys(data.providers)) {
+    if (!defaultProviderWorks && data?.adapters) {
+        for (const name of Object.keys(data.adapters)) {
             try {
                 const probe = await gw('POST', '/v1/chat/completions', {
                     model: 'auto',
@@ -207,18 +207,20 @@ describe('Integration Tests (live gateway)', function () {
     //  1. HEALTH
     // ==================================================================
     describe('GET /health', () => {
-        it('should return status ok and provider list', async () => {
+        it('should return status ok and adapter list', async () => {
             const { status, data } = await gw('GET', '/health');
             expect(status).to.equal(200);
             expect(data).to.have.property('status', 'ok');
-            expect(data).to.have.property('providers');
-            expect(Object.keys(data.providers).length).to.be.greaterThan(0);
+            expect(data).to.have.property('adapters');
+            expect(Object.keys(data.adapters).length).to.be.greaterThan(0);
         });
 
-        it('should report circuit-breaker state for each provider', async () => {
+        it('should report circuit-breaker state for each adapter', async () => {
             const { data } = await gw('GET', '/health');
-            for (const [, stats] of Object.entries(data.providers)) {
-                expect(stats).to.have.property('state');
+            for (const [, breakers] of Object.entries(data.adapters)) {
+                for (const [, stats] of Object.entries(breakers)) {
+                    expect(stats).to.have.property('state');
+                }
             }
         });
     });

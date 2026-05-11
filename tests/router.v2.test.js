@@ -65,7 +65,8 @@ describe('ModelRouter v2 - Real World', () => {
             
             expect(result.object).to.equal('list');
             expect(result.data).to.be.an('array');
-            expect(result.data.length).to.equal(Object.keys(config.models).length);
+            const expectedCount = Object.values(config.models).filter(m => !m.disabled).length;
+            expect(result.data.length).to.equal(expectedCount);
         });
 
         it('includes correct structure for each model', async () => {
@@ -87,9 +88,11 @@ describe('ModelRouter v2 - Real World', () => {
             }
         });
 
-        it('each adapter has circuit breaker', () => {
+        it('each adapter has circuit breakers', () => {
             for (const [name, adapter] of router.adapters.entries()) {
-                expect(adapter.circuitBreaker, `Adapter ${name} missing circuit breaker`).to.exist;
+                expect(adapter.circuitBreakers, `Adapter ${name} missing circuit breakers`).to.exist;
+                expect(adapter.circuitBreakers.chat, `Adapter ${name} missing chat breaker`).to.exist;
+                expect(adapter.circuitBreakers.embed, `Adapter ${name} missing embed breaker`).to.exist;
             }
         });
     });

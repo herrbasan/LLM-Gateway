@@ -91,13 +91,15 @@ export class CircuitBreaker {
     }
 
     isTrippableError(error) {
-        // Only trip on network failures, timeouts, and 5xx errors
-        if (error.code === 'ECONNREFUSED' || error.code === 'FETCH_ERROR') return true;
-        if (error.status && error.status >= 500) return true;
-        
-        // Don't trip for 4xx standard client errors
+        // Trip on connection failures and transport errors
+        if (error.code === 'ECONNREFUSED' || error.code === 'FETCH_ERROR' || error.code === 'ETIMEDOUT' || error.code === 'ECONNRESET') return true;
+
+        // Don't trip for 5xx errors from downstream servers - those are upstream issues, not connection failures
+        // (A 500 from the LLM provider doesn't mean the provider is down, just that this request failed)
+
+        // Don't trip for standard 4xx client errors
         if (error.status && error.status >= 400 && error.status < 500 && error.status !== 429) return false;
-        
+
         // Trip for 429s as it indicates overload
         if (error.status === 429) return true;
 

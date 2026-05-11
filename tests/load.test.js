@@ -9,12 +9,12 @@ describe('Phase 9: Load Testing & Memory Bounds', function () {
     let app;
     let server;
     let config;
-    const PORT = 3500;
+    let port;
 
     // We will start a fake upstream provider that streams extremely fast and large chunks
     // to simulate a heavy workload, so we can reliably trigger backpressure.
     let fakeUpstreamServer;
-    const UPSTREAM_PORT = 3501;
+    let upstreamPort;
 
     before(async () => {
         // 1. Setup Fake Upstream Provider to blast data
@@ -64,21 +64,27 @@ describe('Phase 9: Load Testing & Memory Bounds', function () {
                 res.end();
             }
         });
-        await new Promise(resolve => fakeUpstreamServer.listen(UPSTREAM_PORT, resolve));
+        await new Promise(resolve => fakeUpstreamServer.listen(0, resolve));
+        upstreamPort = fakeUpstreamServer.address().port;
 
-        // 2. Setup Gateway Config with Fake Provider
+        // 2. Setup Gateway Config with Fake Model
         config = await loadConfig();
-        config.providers.load_tester = {
-            type: 'openai',
-            endpoint: `http://localhost:${UPSTREAM_PORT}`,
+        config.models['load-tester'] = {
+            type: 'chat',
+            adapter: 'openai',
+            endpoint: `http://localhost:${upstreamPort}`,
             apiKey: 'fake-key',
-            model: 'fake-model',
+            adapterModel: 'fake-model',
             capabilities: {
-                embeddings: false,
-                structuredOutput: false,
-                streaming: true
+                contextWindow: 8192,
+                streaming: true,
+                structuredOutput: false
             }
         };
+
+        // Ensure routing default points to our load-tester model
+        config.routing = config.routing || {};
+        config.routing.defaultChatModel = 'load-tester';
 
         // Increase threshold to avoid circuit breaker tripping during heavy load
         config.concurrency = config.concurrency || {};
@@ -87,7 +93,8 @@ describe('Phase 9: Load Testing & Memory Bounds', function () {
 
         app = createServer(config);
         server = http.createServer(app);
-        await new Promise(resolve => server.listen(PORT, resolve));
+        await new Promise(resolve => server.listen(0, resolve));
+        port = server.address().port;
     });
 
     after(() => {
@@ -106,12 +113,11 @@ describe('Phase 9: Load Testing & Memory Bounds', function () {
             return new Promise((resolve, reject) => {
                 const req = http.request({
                     hostname: 'localhost',
-                    port: PORT,
+                    port: port,
                     path: '/v1/chat/completions',
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'x-provider': 'load_tester'
+                        'Content-Type': 'application/json'
                     }
                 }, async (res) => {
                     let totalDeliveredBytes = 0;
@@ -140,7 +146,7 @@ describe('Phase 9: Load Testing & Memory Bounds', function () {
                 req.on('error', reject);
                 
                 req.write(JSON.stringify({
-                    model: 'fake-model',
+                    model: 'load-tester',
                     messages: [{ role: 'user', content: 'test load' }],
                     stream: true
                 }));
