@@ -181,13 +181,18 @@ export function createLmStudioAdapter() {
          * Create embeddings.
          */
         async createEmbedding(modelConfig, request) {
-            const { endpoint, adapterModel } = modelConfig;
+            const { endpoint, adapterModel, capabilities } = modelConfig;
             const model = adapterModel || 'text-embedding';
 
             const payload = {
                 input: Array.isArray(request.input) ? request.input : [request.input],
                 model
             };
+
+            const dimensions = request.dimensions ?? modelConfig.dimensions ?? capabilities?.dimensions;
+            if (typeof dimensions === 'number') {
+                payload.dimensions = dimensions;
+            }
 
             const res = await httpRequest(`${endpoint}/v1/embeddings`, {
                 method: 'POST',

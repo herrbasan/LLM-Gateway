@@ -122,13 +122,18 @@ export function createOpenAIAdapter() {
          * Create embeddings.
          */
         async createEmbedding(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel, headers: customHeaders } = modelConfig;
+            const { endpoint, apiKey, adapterModel, headers: customHeaders, capabilities } = modelConfig;
             const model = adapterModel || 'text-embedding-3-small';
 
             const payload = {
                 input: Array.isArray(request.input) ? request.input : [request.input],
                 model
             };
+
+            const dimensions = request.dimensions ?? modelConfig.dimensions ?? capabilities?.dimensions;
+            if (typeof dimensions === 'number') {
+                payload.dimensions = dimensions;
+            }
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/embeddings`, {
