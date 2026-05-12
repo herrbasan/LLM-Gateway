@@ -135,8 +135,6 @@ export function createOpenAIAdapter() {
                 payload.dimensions = dimensions;
             }
 
-            console.log('[OpenAIAdapter] createEmbedding payload:', JSON.stringify(payload));
-
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/embeddings`, {
                 method: 'POST',
