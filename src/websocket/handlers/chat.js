@@ -549,6 +549,7 @@ export class ChatHandler {
           finish_reason: requestContext.finishReason,
           content: fullAssistantResponse || null,
           reasoning_content: fullReasoningContent || null,
+          thinking_signature: thinkingSignature || null,
           tool_calls: toolCallsArray,
           model: requestContext.adapterModel,
           provider: requestContext.adapterProvider,
