@@ -69,8 +69,7 @@ export function createAnthropicAdapter() {
         function mapContentParts(contentArray) {
             return contentArray.map(part => {
                 if (part.type === 'thinking') {
-                    if (!part.signature) return null;
-                    return { type: 'thinking', thinking: part.thinking || '', signature: part.signature };
+                    return { type: 'thinking', thinking: part.thinking || '', ...(part.signature ? { signature: part.signature } : {}) };
                 }
                 if (part.type === 'text') {
                     return { type: 'text', text: part.text };
@@ -138,12 +137,10 @@ export function createAnthropicAdapter() {
 
             if (m.role === 'assistant' && m.thinking_blocks) {
                 for (const block of m.thinking_blocks) {
-                    if (block.signature) {
-                        content.push({ type: 'thinking', thinking: block.thinking || '', signature: block.signature });
-                    }
+                    content.push({ type: 'thinking', thinking: block.thinking || '', ...(block.signature ? { signature: block.signature } : {}) });
                 }
-            } else if (m.role === 'assistant' && m.reasoning_content && m.thinking_signature) {
-                content.push({ type: 'thinking', thinking: m.reasoning_content, signature: m.thinking_signature });
+            } else if (m.role === 'assistant' && m.reasoning_content) {
+                content.push({ type: 'thinking', thinking: m.reasoning_content, ...(m.thinking_signature ? { signature: m.thinking_signature } : {}) });
             }
 
             if (m.content) {
@@ -179,9 +176,9 @@ export function createAnthropicAdapter() {
     function hasThinkingInHistory(messages) {
         return messages.some(m =>
             m.role === 'assistant' &&
-            ((m.thinking_blocks && m.thinking_blocks.some(b => b.signature)) ||
-             (m.reasoning_content && m.thinking_signature) ||
-             (Array.isArray(m.content) && m.content.some(p => p.type === 'thinking' && p.signature)))
+            (m.reasoning_content ||
+             m.thinking_blocks ||
+             (Array.isArray(m.content) && m.content.some(p => p.type === 'thinking')))
         );
     }
 

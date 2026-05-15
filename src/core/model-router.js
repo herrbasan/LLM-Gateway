@@ -141,9 +141,12 @@ export class ModelRouter {
             effectiveRequest.image_processing
         );
 
+        // Replace image blocks with descriptive text for non-vision models
+        const visionPreparedMessages = this._prepareImagesForModel(processedMessages, modelConfig);
+
         // Apply context compaction if needed
         const { messages, context } = await this._handleContextCompaction(
-            processedMessages,
+            visionPreparedMessages,
             modelConfig,
             adapter
         );
@@ -247,7 +250,8 @@ export class ModelRouter {
 
         const sanitizedMessages = this._sanitizeIncomingMessages(opts.messages);
         const processedMessages = await this._processImagesInMessages(sanitizedMessages, modelConfig, request.image_processing);
-        const { messages, context } = await this._handleContextCompaction(processedMessages, modelConfig, adapter);
+        const visionPreparedMessages = this._prepareImagesForModel(processedMessages, modelConfig);
+        const { messages, context } = await this._handleContextCompaction(visionPreparedMessages, modelConfig, adapter);
         const resolvedMaxTokens = this._resolveChatMaxTokens(request, modelConfig, context);
         const responseContext = this._annotateContext(context, resolvedMaxTokens, request);
 
@@ -861,6 +865,46 @@ export class ModelRouter {
         }
 
         return processedMessages;
+    }
+
+    /**
+     * Replace image_url blocks with descriptive text for non-vision models.
+     * If the model supports vision, pass images through unchanged.
+     */
+    _prepareImagesForModel(messages, modelConfig) {
+        const visionSupported = modelConfig.capabilities?.vision === true;
+        if (visionSupported) {
+            return messages;
+        }
+
+        const preparedMessages = [];
+        for (const message of messages) {
+            if (!Array.isArray(message.content)) {
+                preparedMessages.push(message);
+                continue;
+            }
+
+            const preparedContent = [];
+            for (const part of message.content) {
+                if (part.type === 'image_url') {
+                    const imageUrl = part.image_url?.url || '';
+                    const fileName = imageUrl.split('/').pop()?.split('?')[0] || 'image';
+                    preparedContent.push({
+                        type: 'text',
+                        text: `[Image attached: ${fileName} — vision analysis has been performed and is shown above]`
+                    });
+                    continue;
+                }
+                preparedContent.push(part);
+            }
+
+            preparedMessages.push({
+                ...message,
+                content: preparedContent
+            });
+        }
+
+        return preparedMessages;
     }
 
     /**
