@@ -69,7 +69,8 @@ export function createAnthropicAdapter() {
         function mapContentParts(contentArray) {
             return contentArray.map(part => {
                 if (part.type === 'thinking') {
-                    return { type: 'thinking', thinking: part.thinking || '', ...(part.signature ? { signature: part.signature } : {}) };
+                    if (!part.signature) return null;
+                    return { type: 'thinking', thinking: part.thinking || '', signature: part.signature };
                 }
                 if (part.type === 'text') {
                     return { type: 'text', text: part.text };
@@ -99,7 +100,7 @@ export function createAnthropicAdapter() {
                 const toolResult = {
                     type: 'tool_result',
                     tool_use_id: m.tool_call_id || m.tool_use_id,
-                    content: Array.isArray(m.content) ? mapContentParts(m.content) : (m.content || '')
+                    content: Array.isArray(m.content) ? mapContentParts(m.content).filter(Boolean) : (m.content || '')
                 };
                 const lastMsg = result[result.length - 1];
                 if (lastMsg && lastMsg.role === 'user' && Array.isArray(lastMsg.content) && lastMsg.content.some(c => c.type === 'tool_result')) {
@@ -114,7 +115,7 @@ export function createAnthropicAdapter() {
             }
 
             if (Array.isArray(m.content)) {
-                const content = mapContentParts(m.content);
+                const content = mapContentParts(m.content).filter(Boolean);
 
                 if (m.role === 'assistant' && m.tool_calls) {
                     m.tool_calls.forEach(tc => {
@@ -137,10 +138,12 @@ export function createAnthropicAdapter() {
 
             if (m.role === 'assistant' && m.thinking_blocks) {
                 for (const block of m.thinking_blocks) {
-                    content.push({ type: 'thinking', thinking: block.thinking || '', ...(block.signature ? { signature: block.signature } : {}) });
+                    if (block.signature) {
+                        content.push({ type: 'thinking', thinking: block.thinking || '', signature: block.signature });
+                    }
                 }
-            } else if (m.role === 'assistant' && m.reasoning_content) {
-                content.push({ type: 'thinking', thinking: m.reasoning_content });
+            } else if (m.role === 'assistant' && m.reasoning_content && m.thinking_signature) {
+                content.push({ type: 'thinking', thinking: m.reasoning_content, signature: m.thinking_signature });
             }
 
             if (m.content) {
@@ -176,8 +179,9 @@ export function createAnthropicAdapter() {
     function hasThinkingInHistory(messages) {
         return messages.some(m =>
             m.role === 'assistant' &&
-            (m.reasoning_content ||
-             (Array.isArray(m.content) && m.content.some(p => p.type === 'thinking')))
+            ((m.thinking_blocks && m.thinking_blocks.some(b => b.signature)) ||
+             (m.reasoning_content && m.thinking_signature) ||
+             (Array.isArray(m.content) && m.content.some(p => p.type === 'thinking' && p.signature)))
         );
     }
 
