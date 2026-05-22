@@ -172,6 +172,7 @@ export function createServer(config) {
   // Logs endpoint
   app.get('/logs', createLogsHandler());
 
+
   // Media generation endpoints
   app.post('/v1/images/generations', createImagesHandler(router));
   app.post('/v1/audio/speech', createAudioSpeechHandler(router));
