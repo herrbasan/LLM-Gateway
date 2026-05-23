@@ -48,7 +48,7 @@ describe('Configuration Manager', () => {
       // Modify actual config for this test case
       const parsedConfig = JSON.parse(existingConfigData);
       // Update a model's API key to use env var
-      const modelKey = Object.keys(parsedConfig.models)[0];
+      const modelKey = Object.keys(parsedConfig.models).find(k => !k.startsWith('_comment'));
       parsedConfig.models[modelKey].apiKey = '${TEST_DYNAMIC_KEY}';
       await fs.writeFile(tempConfigPath, JSON.stringify(parsedConfig, null, 2), 'utf8');
 
@@ -71,6 +71,7 @@ describe('Configuration Manager', () => {
     const config = await loadConfig();
     
     for (const [modelId, modelConfig] of Object.entries(config.models)) {
+      if (modelId.startsWith('_comment')) continue;
       expect(modelConfig).to.have.property('type');
       expect(modelConfig).to.have.property('adapter');
       expect(modelConfig).to.have.property('capabilities');

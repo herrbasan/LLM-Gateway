@@ -10,9 +10,9 @@ const logger = getLogger();
 
 const TASK_CHAT_PARAMS = new Set([
     'model', 'systemPrompt', 'maxTokens', 'temperature', 'topP', 'topK',
-    'stripThinking', 'noThinking', 'responseFormat', 'extraBody',
+    'responseFormat', 'extraBody',
     'presencePenalty', 'frequencyPenalty', 'seed', 'stop',
-    'max_tokens', 'strip_thinking', 'no_thinking', 'top_p', 'top_k',
+    'max_tokens', 'top_p', 'top_k',
     'presence_penalty', 'frequency_penalty', 'response_format',
     'extra_body', 'enable_thinking', 'chat_template_kwargs'
 ]);
@@ -21,10 +21,6 @@ const PARAM_NORMALIZATION = {
     maxTokens: 'max_tokens',
     max_tokens: 'max_tokens',
     systemPrompt: null,
-    stripThinking: 'strip_thinking',
-    strip_thinking: 'strip_thinking',
-    noThinking: 'no_thinking',
-    no_thinking: 'no_thinking',
     topP: 'top_p',
     top_p: 'top_p',
     topK: 'top_k',
@@ -43,6 +39,7 @@ export class TaskRegistry {
     constructor(tasks = {}) {
         this.tasks = new Map();
         for (const [id, config] of Object.entries(tasks)) {
+            if (id.startsWith('_comment')) continue;
             this.tasks.set(id, Object.freeze({ ...config }));
         }
         logger.info('Initialized', { taskCount: this.tasks.size, tasks: Array.from(this.tasks.keys()) }, 'TaskRegistry');

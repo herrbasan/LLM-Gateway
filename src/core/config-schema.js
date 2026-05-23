@@ -211,6 +211,7 @@ export function validateGlobalConfig(config) {
             throw new Error('[Config] tasks must be an object');
         }
         for (const [taskId, taskConfig] of Object.entries(config.tasks)) {
+            if (taskId.startsWith('_comment')) continue;
             validateTaskConfig(taskId, taskConfig);
         }
     }
@@ -232,9 +233,9 @@ function validateTaskConfig(taskId, config) {
 
     const validParams = [
         'model', 'description', 'systemPrompt', 'maxTokens', 'temperature',
-        'topP', 'topK', 'stripThinking', 'noThinking', 'responseFormat', 'extraBody',
+        'topP', 'topK', 'responseFormat', 'extraBody',
         'presencePenalty', 'frequencyPenalty', 'seed', 'stop',
-        'max_tokens', 'strip_thinking', 'no_thinking', 'top_p', 'top_k',
+        'max_tokens', 'top_p', 'top_k',
         'presence_penalty', 'frequency_penalty', 'response_format',
         'extra_body', 'enable_thinking', 'chat_template_kwargs'
     ];
@@ -263,10 +264,6 @@ function validateTaskConfig(taskId, config) {
 
     if ('topP' in config && (typeof config.topP !== 'number' || config.topP < 0 || config.topP > 1)) {
         throw new Error(`[Config] Task "${taskId}": topP must be between 0 and 1`);
-    }
-
-    if ('stripThinking' in config && typeof config.stripThinking !== 'boolean') {
-        throw new Error(`[Config] Task "${taskId}": stripThinking must be a boolean`);
     }
 
     if ('responseFormat' in config && typeof config.responseFormat !== 'object') {
@@ -299,6 +296,7 @@ export function validateConfig(config) {
     }
 
     for (const [modelId, modelConfig] of Object.entries(config.models)) {
+        if (modelId.startsWith('_comment')) continue;
         validateModelConfig(modelId, modelConfig);
     }
 
@@ -320,6 +318,7 @@ export function validateConfig(config) {
 
 function validateTaskModels(tasks, availableModels) {
     for (const [taskId, taskConfig] of Object.entries(tasks)) {
+        if (taskId.startsWith('_comment')) continue;
         if (!availableModels.includes(taskConfig.model)) {
             throw new Error(`[Config] Task "${taskId}": model "${taskConfig.model}" does not exist in models`);
         }

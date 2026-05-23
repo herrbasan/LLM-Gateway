@@ -36,7 +36,7 @@ describe('Server v2 - Real World', () => {
             expect(res.status).to.equal(200);
             expect(res.body.object).to.equal('list');
             expect(res.body.data).to.be.an('array');
-            const expectedCount = Object.values(config.models).filter(m => !m.disabled).length;
+            const expectedCount = Object.entries(config.models).filter(([k, m]) => !m.disabled && !k.startsWith('_comment')).length;
             expect(res.body.data.length).to.equal(expectedCount);
             
             // Verify structure

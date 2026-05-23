@@ -24,6 +24,7 @@ export class ModelRegistry {
         // Build immutable model map
         this.models = new Map();
         for (const [modelId, modelConfig] of Object.entries(resolvedConfig.models)) {
+            if (modelId.startsWith('_comment')) continue;
             // Freeze each model config to prevent mutations
             this.models.set(modelId, Object.freeze({ ...modelConfig }));
         }

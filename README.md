@@ -8,8 +8,13 @@ A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface wit
 - Chat responses expose `context.resolved_max_tokens` and `context.max_tokens_source`
 - WebSocket `chat.cancel` aborts the upstream provider request
 - HTTP client disconnects abort in-flight upstream chat generation for supported adapters
-- Local llama.cpp models auto-start on first request and stay loaded in VRAM
 - Task-based query system for semantic routing with preset parameters (`task` param in request body)
+- Three context compaction strategies: `truncate` (default), `compress`, and `rolling`
+- OpenAI Responses API support via `POST /v1/responses`
+- Video generation via `POST /v1/videos/generations`
+- Binary media uploads over WebSocket with `gateway-media://` URL scheme
+- Admin endpoints for config management with hot-reload (`GET /config`, `POST /config/store`)
+- Queryable structured logs via `GET /logs`
 
 ## Quick Start
 
@@ -31,13 +36,15 @@ The gateway runs on `http://localhost:3400` by default.
 LLM Gateway provides a unified interface to multiple LLM providers:
 
 - **OpenAI-compatible API** - Drop-in replacement for OpenAI client libraries
+- **OpenAI Responses API** - Proxy support for the newer Responses API format
 - **Tool Use / Function Calling** - OpenAI-spec compliant `tools`, `tool_choice`, `parallel_tool_calls` across all adapters
-- **Multi-provider** - Gemini, OpenAI, Anthropic, Ollama, LM Studio, llama.cpp, MiniMax, Kimi, Alibaba
-- **Local Inference** - Auto-managed llama.cpp servers for running GGUF models locally
+- **Multi-provider** - Gemini, OpenAI, Anthropic, Ollama, LM Studio, llama.cpp, Kimi, Alibaba Cloud
 - **Stateless** - No server-side session management
 - **Model-centric config** - Each model configured independently
-- **Context compaction** - Automatic context window management
+- **Context compaction** - Three strategies: truncate, compress, rolling summarization
 - **Generation cancellation** - WebSocket cancellation and HTTP disconnect abort propagation
+- **Media processing** - Image fetching with SSRF protection, optional resize/transcode
+- **Binary WebSocket** - Media uploads and audio streaming over WebSocket
 
 ## Configuration
 
@@ -62,7 +69,7 @@ Define models in `config.json`:
     "local-llama": {
       "type": "chat",
       "adapter": "llamacpp",
-      "endpoint": "http://localhost:12346",
+      "endpoint": "http://localhost:4080",
       "adapterModel": "my-local-model",
       "capabilities": {
         "contextWindow": 8192,
@@ -75,10 +82,8 @@ Define models in `config.json`:
         "mmproj": "/path/to/mmproj.gguf",
         "contextSize": 8192,
         "gpuLayers": 99,
-        "flashAttention": "on",
-        "mlock": true,
-        "noClearIdle": true,
-        "sleepIdleSeconds": -1
+        "flashAttention": true,
+        "mlock": true
       }
     }
   },
@@ -96,6 +101,39 @@ Define models in `config.json`:
 | `hardTokenCap` | Safety limit - forcibly stops generation after N tokens |
 | `extraBody` | Config-level provider-specific parameters applied to all requests |
 | `extra_body` | Request-level provider-specific parameters (per-request override) |
+| `imageInputLimit` | Per-model image dimension and size limits |
+| `localInference` | llama.cpp server configuration (model path, GPU layers, etc.) |
+
+### Model Types
+
+| Type | Description |
+|------|-------------|
+| `chat` | Chat completion models |
+| `embedding` | Text embedding models |
+| `image` | Image generation models |
+| `audio` | Audio/speech synthesis models |
+| `video` | Video generation models |
+
+### Context Compaction
+
+| Strategy | Description |
+|----------|-------------|
+| `truncate` | (default) Preserves system prompt + last N messages, reduces N until fits |
+| `compress` | Single-pass summarization using the model itself |
+| `rolling` | Chained incremental summarization across chunks |
+| `none` | Disables compaction entirely |
+
+```json
+{
+  "compaction": {
+    "enabled": true,
+    "mode": "truncate",
+    "minTokensToCompact": 2000,
+    "preserveSystemPrompt": true,
+    "preserveLastN": 4
+  }
+}
+```
 
 ### WebSocket Cancellation
 
@@ -169,7 +207,7 @@ Tasks define model selection, system prompts, temperature, max tokens, and other
 {
   "tasks": {
     "query": {
-      "model": "minimax-chat",
+      "model": "gemini-flash",
       "description": "General query and conversation",
       "maxTokens": 4096,
       "temperature": 0.7
@@ -183,7 +221,7 @@ Tasks define model selection, system prompts, temperature, max tokens, and other
 ### Model-Centric Design
 
 Each model is independently configured with:
-- **Type**: chat, embedding, image, audio
+- **Type**: chat, embedding, image, audio, video
 - **Adapter**: Protocol handler (gemini, openai, llamacpp, etc.)
 - **Capabilities**: Explicit declaration (contextWindow, vision, etc.)
 - **Endpoint/Auth**: Per-model configuration
@@ -198,40 +236,45 @@ Each model is independently configured with:
 
 ### Supported Adapters
 
-| Adapter | Chat | Embeddings | Images | Audio | Vision | Local |
-|---------|------|------------|--------|-------|--------|-------|
-| Gemini | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| OpenAI | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Anthropic | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Ollama | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
-| LM Studio | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
-| **llama.cpp** | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
-| MiniMax | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Kimi | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Alibaba | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| OpenAI Responses | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Adapter | Chat | Embeddings | Images | Audio | Video | Vision | Local |
+|---------|------|------------|--------|-------|-------|--------|-------|
+| Gemini | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| OpenAI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Anthropic | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Ollama | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| LM Studio | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **llama.cpp** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Kimi | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Alibaba | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
+| DashScope | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| OpenAI Responses | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
 
 ### Local Inference with llama.cpp
 
-The gateway can auto-manage local llama.cpp servers:
+The gateway routes to external llama.cpp servers via the `llamacpp` adapter. The gateway does not manage `llama-server.exe` processes itself — configure an external llama.cpp server and point the adapter to its endpoint.
 
-1. Place `llama-server.exe` and CUDA DLLs in `inference/` folder
-2. Configure with `localInference.enabled: true`
-3. Server starts on first request, stays loaded in VRAM
-4. Supports multiple models on different ports
-
-**Key options:**
-- `modelPath` - Path to GGUF file
-- `mmproj` - Path to multimodal projector (for vision)
-- `gpuLayers` - Number of layers to offload to GPU (99 = all)
-- `flashAttention` - Enable Flash Attention ("on"/"off"/"auto")
-- `mlock` - Keep model in RAM
-- `noClearIdle` + `sleepIdleSeconds: -1` - Stay loaded forever
+**Config Example:**
+```json
+"llama-chat": {
+  "adapter": "llamacpp",
+  "endpoint": "http://localhost:4080",
+  "capabilities": { "contextWindow": 64000, "vision": true },
+  "localInference": {
+    "enabled": true,
+    "modelPath": "D:/models/chat-model.gguf",
+    "mmproj": "D:/models/mmproj-f16.gguf",
+    "contextSize": 64000,
+    "gpuLayers": 99,
+    "flashAttention": true,
+    "mlock": true
+  }
+}
+```
 
 ## API Documentation
 
-- [REST API Reference](docs/api_rest.md) - Standard OpenAI-compatible HTTP endpoints
-- [WebSocket API Reference](docs/api_websocket.md) - Real-time active connection protocol
+- [REST API Reference](documentation/api_rest.md) - Standard OpenAI-compatible HTTP endpoints
+- [WebSocket API Reference](documentation/api_websocket.md) - Real-time active connection protocol
 
 ## Development
 
@@ -254,7 +297,9 @@ npm run dev
 | Session-based (`X-Session-Id`) | Stateless |
 | Capability inference from model IDs | Explicit capabilities |
 | `providers` in config | `models` in config |
-| No local inference | Auto-managed llama.cpp support |
+| No local inference | llama.cpp adapter support |
+| Single compaction strategy | Three strategies: truncate, compress, rolling |
+| No admin endpoints | Config hot-reload and queryable logs |
 
 ## Environment Variables
 

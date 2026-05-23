@@ -47,7 +47,7 @@ POST /v1/chat/completions
 data: {"choices":[{"delta":{"content":"Hello"}}]}
 
 # Large prompt (default): compaction progress events, then tokens
-event: compaction.progress
+event: compaction.start
 data: {"chunk":1,"total":3}
 
 data: {"choices":[{"delta":{"content":"The"}}]}
@@ -176,7 +176,7 @@ If `max_tokens` is omitted, the gateway derives a safe output budget from the mo
 }
 ```
 
-> **Thinking Stripper:** When `strip_thinking: true` (or `no_thinking: true`) is provided, and the model outputs reasoning/thinking tokens (like DeepSeek `<think>` blocks or native `reasoning_content`), the gateway will automatically strip the reasoning portion. This works seamlessly for both standard and streaming requests, ensuring clean JSON/markdown outputs.
+> **Thinking Stripper:** When `strip_thinking: true` (or `no_thinking: true`) is provided, and the model outputs reasoning/thinking tokens (like DeepSeek `<think` blocks or native `reasoning_content`), the gateway will automatically strip the reasoning portion. This works seamlessly for both standard and streaming requests, ensuring clean JSON/markdown outputs.
 
 > **Image Processing:** The `image_processing` field is optional. When provided, images in messages are fetched (remote URLs) and optionally resized/transcoded via MediaService. See [Vision (Image Input)](#vision-image-input) for complete examples.
 
@@ -216,6 +216,56 @@ If `max_tokens` is omitted, the gateway derives a safe output budget from the mo
   "stream_url": "/v1/tasks/tkt_xyz789/stream"
 }
 ```
+
+---
+
+### POST /v1/responses
+
+OpenAI Responses API proxy endpoint. Supports both streaming and non-streaming responses.
+
+**Headers:**
+
+| Header | Description | Required |
+|--------|-------------|----------|
+| `Content-Type` | `application/json` | Yes |
+
+**Request Body:**
+
+```json
+{
+  "model": "openai-responses",
+  "input": "Explain quantum computing",
+  "stream": true
+}
+```
+
+The gateway routes to a model configured with the `responses` adapter, which proxies to the OpenAI Responses API format. Streaming responses use SSE events with `event: type` prefixes.
+
+**Response 200 (non-streaming):**
+```json
+{
+  "id": "resp-xxx",
+  "object": "response",
+  "model": "openai-responses",
+  "output": [...]
+}
+```
+
+**Streaming Response:**
+```
+event: response.output_item.added
+data: {...}
+
+event: response.content_part.added
+data: {...}
+
+event: response.output_text.delta
+data: {"delta": "Hello"}
+
+data: [DONE]
+```
+
+If the HTTP client disconnects during streaming, the gateway aborts the upstream provider request.
 
 ---
 
@@ -454,17 +504,9 @@ OpenAI-compatible video generation endpoint.
 
 ---
 
-### GET /v1/media/:filename
-
-> **Not Implemented:** Media staging endpoint is planned but not yet available.
->
-> Will serve staged media files for generated outputs when `mediaStorage.enabled=true`.
-
----
-
 ### GET /health
 
-Health check endpoint with adapter status.
+Health check endpoint with adapter status and circuit breaker stats.
 
 ```bash
 GET /health
@@ -477,16 +519,12 @@ GET /health
   "version": "2.0.0",
   "adapters": {
     "gemini": {
-      "state": "CLOSED",
-      "failures": 0,
-      "successes": 42,
-      "lastFailure": null
+      "chat": { "state": "CLOSED", "failures": 0, "successes": 42, "lastFailure": null },
+      "stream": { "state": "CLOSED", "failures": 0, "successes": 42, "lastFailure": null },
+      "embed": { "state": "CLOSED", "failures": 0, "successes": 10, "lastFailure": null }
     },
     "openai": {
-      "state": "CLOSED",
-      "failures": 0,
-      "successes": 15,
-      "lastFailure": null
+      "chat": { "state": "CLOSED", "failures": 0, "successes": 15, "lastFailure": null }
     }
   },
   "models": ["gemini-flash", "local-llama", "openai-gpt4"]
@@ -497,10 +535,84 @@ GET /health
 
 ### GET /help
 
-Returns this API documentation rendered as HTML.
+Returns API documentation rendered as HTML.
 
 ```bash
 GET /help
+```
+
+---
+
+### GET /config
+
+Get raw gateway configuration. **Restricted to localhost only.**
+
+```bash
+GET /config
+```
+
+**Response:** Raw JSON config object.
+
+---
+
+### POST /config/store
+
+Save configuration and hot-reload the gateway. **Restricted to localhost only.**
+
+```bash
+POST /config/store
+Content-Type: application/json
+```
+
+**Request Body:** Full JSON config object.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Configuration saved and reloaded"
+}
+```
+
+The gateway reloads the model router dynamically without restarting.
+
+---
+
+### GET /logs
+
+Queryable structured log access.
+
+```bash
+GET /logs
+GET /logs?level=ERROR,WARN
+GET /logs?type=ChatRoute
+GET /logs?sessionId=abc123
+GET /logs?limit=50
+```
+
+**Query Parameters:**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `level` | Comma-separated log levels (`INFO`, `WARN`, `ERROR`, `DEBUG`) | All levels |
+| `type` | Comma-separated log types (case-insensitive) | All types |
+| `sessionId` | Filter by session ID from log filename | All sessions |
+| `limit` | Maximum entries to return | 100 |
+
+**Response:**
+```json
+{
+  "logs": [
+    {
+      "timestamp": "2026-05-23T10:30:45.123Z",
+      "level": "INFO",
+      "type": "ChatRoute",
+      "message": "Chat completion request received",
+      "payload": { "model": "gemini-flash" },
+      "sessionId": "abc123"
+    }
+  ]
+}
 ```
 
 ---
@@ -532,13 +644,13 @@ GET /v1/tasks
     {
       "id": "query",
       "object": "task",
-      "model": "minimax-chat",
+      "model": "gemini-flash",
       "description": "General query and conversation"
     },
     {
       "id": "inspect",
       "object": "task",
-      "model": "minimax-chat",
+      "model": "gemini-flash",
       "description": "Code inspection and analysis"
     }
   ]
@@ -556,7 +668,7 @@ POST /v1/chat/completions
 }
 ```
 
-The `synthesis` task might define `model: "glm5-turbo-chat"`, `temperature: 0.3`, `maxTokens: 2048`. The client's `temperature: 0.5` overrides the task default, while `model` and `maxTokens` come from the task.
+The `synthesis` task might define `model: "gemini-flash"`, `temperature: 0.3`, `maxTokens: 2048`. The client's `temperature: 0.5` overrides the task default, while `model` and `maxTokens` come from the task.
 
 ### Task Configuration
 
@@ -566,14 +678,14 @@ Tasks are defined in `config.json`:
 {
   "tasks": {
     "synthesis": {
-      "model": "glm5-turbo-chat",
+      "model": "gemini-flash",
       "description": "Content synthesis and summarization",
       "systemPrompt": "Summarize the following content concisely.",
       "maxTokens": 2048,
       "temperature": 0.3
     },
     "inspect": {
-      "model": "minimax-chat",
+      "model": "gemini-flash",
       "description": "Code inspection and analysis",
       "maxTokens": 8192,
       "temperature": 0.1,
@@ -621,7 +733,7 @@ Client parameters always win. If neither task nor client specifies a value, the 
 
 ### Using Tasks with Other Endpoints
 
-Tasks work with embeddings, image generation, and audio endpoints too:
+Tasks work with embeddings, image generation, audio, and video endpoints too:
 
 ```json
 POST /v1/embeddings
@@ -644,6 +756,14 @@ POST /v1/audio/speech
 {
   "task": "tts",
   "input": "Welcome to the gateway"
+}
+```
+
+```json
+POST /v1/videos/generations
+{
+  "task": "video",
+  "prompt": "A sunset over mountains"
 }
 ```
 
@@ -1049,6 +1169,7 @@ POST /v1/chat/completions
 | 200 | Success (small prompt or transparent compaction complete) |
 | 202 | Accepted (async ticket created) |
 | 400 | Bad request (wrong model type, missing fields) |
+| 403 | Forbidden (disabled model, config access from non-localhost) |
 | 404 | Model not found |
 | 413 | Payload too large (even after compaction or compaction disabled) |
 | 429 | Rate limit or queue full |
@@ -1150,6 +1271,7 @@ for await (const event of ticket.stream()) {
 - `vision` (boolean) - Supports image inputs
 - `structuredOutput` (boolean | string) - Supports JSON output
 - `streaming` (boolean) - Supports streaming responses
+- `maxOutputTokens` (number) - Maximum output tokens the model can produce
 
 **Embedding Models:**
 - `contextWindow` (number) - Maximum input tokens
@@ -1158,10 +1280,10 @@ for await (const event of ticket.stream()) {
 **Image Models:**
 - `maxResolution` (string) - Maximum image resolution
 - `supportedFormats` (array) - Supported output formats
+- `maxPromptLength` (number) - Maximum prompt length
 
 **Audio Models:**
 - `maxDuration` (number) - Maximum audio duration in seconds
-- `supportedFormats` (array) - Supported output formats
 
 **Video Models:**
 - `maxDuration` (number) - Maximum video duration in seconds

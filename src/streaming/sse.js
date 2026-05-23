@@ -55,7 +55,7 @@ export class StreamHandler {
         }
     }
 
-    async process(chunkGenerator, contextPayload = null, stripThinking = false, thinkingConfig = undefined, streamOptions = undefined) {
+    async process(chunkGenerator, contextPayload = null, streamOptions = undefined) {
         this.start();
 
         const thinkingExtractor = createThinkingExtractor();
@@ -129,10 +129,6 @@ export class StreamHandler {
                                 delta.reasoning_content = last.reasoning_content;
                             }
                         }
-                    }
-
-                    if (stripThinking && delta.reasoning_content !== undefined) {
-                        delete delta.reasoning_content;
                     }
                 }
 

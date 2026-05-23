@@ -232,33 +232,13 @@ function createThinkingStripper(config = {}) {
 }
 
 /**
- * Strip thinking content from text
- * @param {string} text - Input text
- * @param {string[]|Object} config - Array of tags or config object {tags: string[], orphanCloseAsSeparator: boolean}
- * @returns {string} Text with thinking content removed
- */
-export function stripThinking(text, config = {}) {
-    if (!text || typeof text !== 'string') return text;
-    
-    // Backward compatibility: if config is an array, treat it as tags
-    const normalizedConfig = Array.isArray(config) 
-        ? { ...DEFAULT_THINKING_CONFIG, tags: config }
-        : { ...DEFAULT_THINKING_CONFIG, ...config };
-    
-    const stripper = createThinkingStripper(normalizedConfig);
-    const result = stripper.process(text) + stripper.flush();
-    return result.trim();
-}
-
-export { createThinkingStripper };
-
 // ============================================================================
 // Thinking Content Extractor
 // ============================================================================
 
 /**
  * Create a streaming thinking extractor that converts <think> tags in content
- * into reasoning_content emissions. Runs always; stripThinking controls deletion.
+ * into reasoning_content emissions. Runs always.
  */
 export function createThinkingExtractor() {
     const tags = DEFAULT_THINKING_TAGS;

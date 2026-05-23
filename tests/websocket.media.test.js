@@ -22,7 +22,10 @@ describe('WebSocket v2 - Media Phase 6 Test', () => {
 
         const mockRouter = {
             registry: {
-                resolveModel: (model) => ({ adapter: 'mock', config: { type: 'chat' } })
+                resolveModel: (model) => ({ adapter: 'mock', config: { type: 'chat' } }),
+                getTaskRegistry: () => ({
+                    resolveChatRequest: (req) => ({ resolvedRequest: req, taskInfo: null })
+                })
             },
             resolveModel: (model) => ({ adapter: 'mock' }),
             routeChatCompletion: async (request) => {

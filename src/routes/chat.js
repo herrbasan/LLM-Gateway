@@ -56,12 +56,9 @@ export function createChatHandler(router, ticketRegistry) {
                     const result = await router.routeChatCompletion(requestBody);
 
                     if (result?.stream === true && result?.generator) {
-                        const clientStrip = requestBody.strip_thinking === true || requestBody.no_thinking === true;
                         await streamHandler.process(
                             result.generator,
                             result.context,
-                            clientStrip,
-                            undefined,
                             requestBody.stream_options
                         );
                     } else {

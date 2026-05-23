@@ -343,23 +343,20 @@
       "model": "openai-chat",
       "description": "Code inspection and analysis",
       "maxTokens": 8192,
-      "temperature": 0.4,
-      "stripThinking": false
+      "temperature": 0.4
     },
     "synthesis": {
       "model": "gemini-flash",
       "description": "Content synthesis and summarization",
       "maxTokens": 2048,
       "temperature": 0.4,
-      "stripThinking": true,
       "systemPrompt": "Summarize the following content concisely."
     },
     "analysis": {
       "model": "gemini-flash",
       "description": "Deep analysis and reasoning",
       "maxTokens": 8192,
-      "temperature": 0.4,
-      "stripThinking": false
+      "temperature": 0.4
     },
     "embed": {
       "model": "gemini-embedding",

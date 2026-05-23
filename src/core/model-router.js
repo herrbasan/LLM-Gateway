@@ -8,7 +8,7 @@ import { createAdapters } from './adapters.js';
 import { EmbeddingBatcher } from './embedding-batcher.js';
 import { TokenEstimator } from '../context/estimator.js';
 import { ContextManager } from '../context/strategy.js';
-import { stripThinking, extractThinking } from '../utils/format.js';
+import { extractThinking } from '../utils/format.js';
 import { getLogger } from '../utils/logger.js';
 import { MediaProcessorClient } from '../utils/media-client.js';
 import { imageFetcher } from '../utils/image-fetcher.js';
@@ -132,11 +132,10 @@ export class ModelRouter {
 
         // Transform request to adapter format
         const opts = this._buildChatOptions(effectiveRequest, modelConfig);
-        const sanitizedMessages = this._sanitizeIncomingMessages(opts.messages);
 
         // Process images only if requested (fetch remote URLs and resize/transcode)
         const processedMessages = await this._processImagesInMessages(
-            sanitizedMessages,
+            opts.messages,
             modelConfig,
             effectiveRequest.image_processing
         );
@@ -186,8 +185,7 @@ export class ModelRouter {
             result.context = responseContext;
         }
 
-        // Extract thinking tags from non-streaming content; strip if client requested
-        const clientStrip = effectiveRequest.strip_thinking === true || effectiveRequest.no_thinking === true;
+        // Extract thinking tags from non-streaming content
         const message = result.choices?.[0]?.message;
 
         if (message?.content) {
@@ -196,10 +194,6 @@ export class ModelRouter {
             if (extracted.reasoning_content) {
                 message.reasoning_content = extracted.reasoning_content;
             }
-        }
-
-        if (clientStrip && message?.reasoning_content !== undefined) {
-            delete message.reasoning_content;
         }
 
         return result;
@@ -248,8 +242,7 @@ export class ModelRouter {
         const adapter = this._getAdapter('responses');
         const opts = this._buildChatOptions(request, modelConfig);
 
-        const sanitizedMessages = this._sanitizeIncomingMessages(opts.messages);
-        const processedMessages = await this._processImagesInMessages(sanitizedMessages, modelConfig, request.image_processing);
+        const processedMessages = await this._processImagesInMessages(opts.messages, modelConfig, request.image_processing);
         const visionPreparedMessages = this._prepareImagesForModel(processedMessages, modelConfig);
         const { messages, context } = await this._handleContextCompaction(visionPreparedMessages, modelConfig, adapter);
         const resolvedMaxTokens = this._resolveChatMaxTokens(request, modelConfig, context);
@@ -475,69 +468,6 @@ export class ModelRouter {
         return {
             enable_thinking,
             chat_template_kwargs: undefined
-        };
-    }
-
-    /**
-     * Remove prior assistant reasoning traces from incoming chat history.
-     */
-    _sanitizeIncomingMessages(messages) {
-        if (!Array.isArray(messages) || messages.length === 0) {
-            return [];
-        }
-
-        const stripConfig = this._getThinkingStripConfig(this.registry.getThinkingConfig());
-
-        return messages.reduce((acc, message) => {
-            if (!message || typeof message !== 'object') {
-                return acc;
-            }
-
-            if (message.role !== 'assistant') {
-                acc.push(message);
-                return acc;
-            }
-
-            const sanitizedMessage = this._sanitizeAssistantMessage(message, stripConfig);
-            if (sanitizedMessage) {
-                acc.push(sanitizedMessage);
-            }
-            return acc;
-        }, []);
-    }
-
-    _sanitizeAssistantMessage(message, stripConfig) {
-        if (typeof message.content === 'string') {
-            const content = stripThinking(message.content, stripConfig);
-            if (content) return { ...message, content };
-            if (message.tool_calls) return { ...message, content: null };
-            return null;
-        }
-
-        if (Array.isArray(message.content)) {
-            const content = message.content
-                .map(part => {
-                    if (part?.type !== 'text') {
-                        return part;
-                    }
-
-                    const text = stripThinking(part.text || '', stripConfig);
-                    return text ? { ...part, text } : null;
-                })
-                .filter(Boolean);
-
-            if (content.length > 0) return { ...message, content };
-            if (message.tool_calls) return { ...message, content: null };
-            return null;
-        }
-
-        return message;
-    }
-
-    _getThinkingStripConfig(thinkingConfig = {}) {
-        return {
-            tags: thinkingConfig.stripTags || thinkingConfig.tags,
-            orphanCloseAsSeparator: thinkingConfig.orphanCloseAsSeparator
         };
     }
 

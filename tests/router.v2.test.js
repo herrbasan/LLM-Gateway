@@ -65,7 +65,7 @@ describe('ModelRouter v2 - Real World', () => {
             
             expect(result.object).to.equal('list');
             expect(result.data).to.be.an('array');
-            const expectedCount = Object.values(config.models).filter(m => !m.disabled).length;
+            const expectedCount = Object.entries(config.models).filter(([k, m]) => !m.disabled && !k.startsWith('_comment')).length;
             expect(result.data.length).to.equal(expectedCount);
         });
 

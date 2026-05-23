@@ -2,14 +2,14 @@
 
 ## WebSocket Real-Time API
 
-The WebSocket real-time mode provides a high-performance, bi-directional channel using JSON-RPC 2.0. It is designed for low-latency conversational agents and applications that need stream multiplexing, message interruption (cancellation), and binary audio streaming.
+The WebSocket real-time mode provides a high-performance, bi-directional channel using JSON-RPC 2.0. It is designed for low-latency conversational agents and applications that need stream multiplexing, message interruption (cancellation), binary media uploads, and binary audio streaming.
 
 **Endpoint:**
 ```
 ws://localhost:3400/v1/realtime
 ```
 > **Security:** By default, WebSocket access is restricted to local/internal IP addresses only (`WS_LOCAL_ONLY=true`). Local connections (`127.0.0.1`, `::1`) are auto-authenticated.
-> 
+>
 > You can whitelist trusted IP ranges in `config.json` via:
 > `"ws": { "whitelistIps": ["192.168.0.*", "10.0.*"] }`
 > Any connections coming from these IPs bypass the global `accessKey` requirements entirely, allowing frictionless private network use.
@@ -41,7 +41,7 @@ const ws = new WebSocket('ws://localhost:3400/v1/realtime', {
 ### JSON-RPC Commands
 
 #### `chat.create`
-Initiates a new chat completion stream. 
+Initiates a new chat completion stream.
 
 **Request:**
 ```json
@@ -73,7 +73,7 @@ Initiates a new chat completion stream.
 
 When `task` is provided, the gateway resolves the task's default model and parameters. Client-supplied params (like `temperature`, `model`, `max_tokens`) override task defaults. If the task defines a `systemPrompt`, it is prepended as the first system message.
 
-> **Thinking Stripper:** When `strip_thinking: true` or `no_thinking: true` is included in the params, any output reasoning tokens (like DeepSeek `<think>` tags or native `reasoning_content`) are automatically stripped from the `chat.delta` stream, yielding only the final cleanly-formatted answer.
+> **Thinking Stripper:** When `strip_thinking: true` or `no_thinking: true` is included in the params, any output reasoning tokens (like DeepSeek `<think` tags or native `reasoning_content`) are automatically stripped from the `chat.delta` stream, yielding only the final cleanly-formatted answer.
 
 > **Thinking Control:** Use `enable_thinking: false` in params to disable verbose model reasoning at the source. This prevents the model from producing thinking tokens entirely (more efficient than stripping after the fact). See the REST API docs for adapter support matrix.
 
@@ -82,11 +82,11 @@ When `task` is provided, the gateway resolves the task's default model and param
 ```json
 // Server -> Client
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "routing", "task": "query"}}
-{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "model_routed", "model": "minimax-chat", "provider": "anthropic"}}
+{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "model_routed", "model": "gemini-flash", "provider": "gemini"}}
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context"}}
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context_stats", "context": {"window_size": 1048576, "used_tokens": 2800, "available_tokens": 1045776, "strategy_applied": false, "resolved_max_tokens": 835060, "max_tokens_source": "implicit"}}}
 {"jsonrpc": "2.0", "method": "chat.delta", "params": {"request_id": "req-1", "choices": [{"index": 0, "delta": {"content": "Hello! "}}]}}
-{"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": false, "finish_reason": "stop", "model": "minimax-chat", "provider": "anthropic", "context": {...}, "telemetry": {"time_to_first_token_ms": 120, "total_duration_ms": 340, "chunks_sent": 5, "usage": {"prompt_tokens": 2800, "completion_tokens": 42, "total_tokens": 2842}, "reasoning_produced": false}}}
+{"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": false, "finish_reason": "stop", "model": "gemini-flash", "provider": "gemini", "context": {...}, "telemetry": {"time_to_first_token_ms": 120, "total_duration_ms": 340, "chunks_sent": 5, "usage": {"prompt_tokens": 2800, "completion_tokens": 42, "total_tokens": 2842}, "reasoning_produced": false}}}
 ```
 
 If `max_tokens` is omitted from `params`, the gateway resolves a safe output budget automatically and reports it in the `chat.progress` `context_stats` payload.
@@ -128,7 +128,6 @@ Cancels an ongoing generation stream.
   "id": "cancel-1",
   "method": "chat.cancel",
   "params": {"request_id": "req-1"}
-}
 ```
 
 The cancellation target is the original `chat.create` or `chat.append` request ID. On success, the server stops streaming, aborts the upstream provider request, and finishes with:
@@ -138,6 +137,21 @@ The cancellation target is the original `chat.create` or `chat.append` request I
 ```
 
 There is no separate acknowledgement response for `chat.cancel`; `chat.done` with `cancelled: true` is the completion signal.
+
+#### `settings.update`
+Acknowledge a settings change from the client. Used by clients to notify the gateway of configuration updates (e.g., model preferences, temperature changes).
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "settings-1",
+  "method": "settings.update",
+  "params": {
+    "temperature": 0.7,
+    "max_tokens": 4096
+  }
+}
+```
 
 ### Stream Notifications
 
@@ -168,73 +182,6 @@ Example `context_stats` notification:
   }
 }
 ```
-
-### Binary Audio Protocol
-
-For high-performance audio transmission without Base64 overhead, use the header-prefixed binary frames.
-
-#### `audio.start`
-Negotiates format and opens an audio stream.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "audio-open",
-  "method": "audio.start"
-}
-```
-*Server replies with a format map including `stream_id` and the negotiated format (e.g., PCM16 or Opus).*
-
-**Sending Binary Frames:**
-Combine a JSON header (null-byte terminated) with a raw audio payload:
-```
-{"s":"stream_id", "t": 1705312200000, "seq": 1}\x00[RAW BINARY DATA]
-```
-
-#### `audio.stop`
-Closes the audio stream.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "audio-close",
-  "method": "audio.stop",
-  "params": {"stream_id": "stream_id"}
-}
-```
-
-### Sending Images & Files
-
-Currently, raw binary WebSocket frames are reserved exclusively for the high-performance **Audio Protocol**.
-
-To send images or files via the WebSocket interface, you must include them as standard OpenAI-compatible base64 payloads or remote URLs mapped directly inside your JSON-RPC `chat.create` or `chat.append` requests.
-
-**Example Base64 Image:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "img-req-1",
-  "method": "chat.create",
-  "params": {
-    "model": "gemini-flash",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          { "type": "text", "text": "What is in this image?" },
-          {
-            "type": "image_url",
-            "image_url": {
-              "url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
-            }
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-*Note: Due to JSON serialization overhead, very large base64 image strings may impact WebSocket responsiveness briefly compared to the dedicated HTTP REST API.*
 
 ### Tool Use / Function Calling
 
@@ -333,3 +280,187 @@ The gateway automatically preserves the assistant's `tool_calls` in the internal
 These fields are additive — existing `chat.done` fields (`request_id`, `cancelled`, `finish_reason`, `model`, `provider`, `context`, `telemetry`) remain unchanged.
 
 ---
+
+### Binary Media Upload Protocol
+
+Upload files (images, documents) via a binary frame protocol without Base64 overhead. Uploaded files are stored locally and injected into chat messages using the `gateway-media://` URL scheme.
+
+#### `media.start`
+Initiates a binary media upload stream.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "media-open",
+  "method": "media.start",
+  "params": {
+    "filename": "photo.jpg",
+    "mimeType": "image/jpeg",
+    "size": 1048576
+  }
+}
+```
+
+**Server Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "media-open",
+  "result": {
+    "stream_id": "media_abc123",
+    "gateway_url": "gateway-media://media_abc123/photo.jpg"
+  }
+}
+```
+
+**Sending Binary Frames:**
+Combine a JSON header (null-byte terminated) with raw binary payload:
+```
+{"s":"media_abc123", "t": 1705312200000, "seq": 1}\x00[RAW BINARY DATA]
+```
+
+The server emits `media.progress` notifications approximately every 1MB of uploaded data.
+
+#### `media.stop`
+Completes the media upload stream.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "media-close",
+  "method": "media.stop",
+  "params": {"stream_id": "media_abc123"}
+}
+```
+
+**Using uploaded media in chat:**
+After upload, use the `gateway-media://` URL in message content:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "img-req-1",
+  "method": "chat.create",
+  "params": {
+    "model": "gemini-flash",
+    "messages": [{
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "What is in this image?" },
+        { "type": "image_url", "image_url": { "url": "gateway-media://media_abc123/photo.jpg" } }
+      ]
+    }]
+  }
+}
+```
+
+---
+
+### Binary Audio Protocol
+
+For high-performance audio transmission without Base64 overhead, use the header-prefixed binary frames.
+
+#### `audio.start`
+Negotiates format and opens an audio stream.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "audio-open",
+  "method": "audio.start"
+}
+```
+
+*Server replies with a format map including `stream_id` and the negotiated format (e.g., PCM16 for local connections, Opus for remote).*
+
+**Sending Binary Frames:**
+Combine a JSON header (null-byte terminated) with a raw audio payload:
+```
+{"s":"stream_id", "t": 1705312200000, "seq": 1}\x00[RAW BINARY DATA]
+```
+
+#### `audio.stop`
+Closes the audio stream.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "audio-close",
+  "method": "audio.stop",
+  "params": {"stream_id": "stream_id"}
+}
+```
+
+#### `audio.vad`
+Voice Activity Detection event. Used to signal speech start/stop boundaries from the client to the server.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "vad-1",
+  "method": "audio.vad",
+  "params": {
+    "event": "speech_start",
+    "stream_id": "stream_id"
+  }
+}
+```
+
+> **Note:** The audio protocol is a framework in place — `audio.start/stop/vad` handle stream negotiation and binary frame routing, but audio data is not currently forwarded to a backend model for processing.
+
+---
+
+### Sending Images & Files (Inline)
+
+To send images or files without the binary upload protocol, include them as standard OpenAI-compatible base64 payloads or remote URLs directly in JSON-RPC `chat.create` or `chat.append` requests.
+
+**Example Base64 Image:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "img-req-1",
+  "method": "chat.create",
+  "params": {
+    "model": "gemini-flash",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "What is in this image?" },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+*Note: Due to JSON serialization overhead, very large base64 image strings may impact WebSocket responsiveness briefly. For large files, prefer the binary media upload protocol.*
+
+---
+
+### `ping`
+
+Connection keep-alive and latency measurement.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "ping-1",
+  "method": "ping"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "ping-1",
+  "result": { "pong": 1705312200000 }
+}
+```

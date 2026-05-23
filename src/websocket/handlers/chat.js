@@ -278,7 +278,6 @@ export class ChatHandler {
       let thinkingSignature = null;
       const accumulatedToolCalls = {};
 
-      const clientStrip = requestObject.strip_thinking === true || requestObject.no_thinking === true;
       const thinkingExtractor = createThinkingExtractor();
 
       if (result && typeof result.generator !== 'undefined') {
@@ -373,10 +372,6 @@ export class ChatHandler {
                       delta.reasoning_content = last.reasoning_content;
                     }
                   }
-                }
-
-                if (clientStrip && delta.reasoning_content !== undefined) {
-                  delete delta.reasoning_content;
                 }
               }
 
