@@ -534,6 +534,11 @@ function buildPayload(request, modelConfig, adapterModel, isStreaming = false) {
     if (request.reasoning) {
         payload.reasoning = request.reasoning;
     }
+    if (request.enable_thinking != null) {
+        payload.reasoning = {
+            effort: request.enable_thinking ? 'medium' : 'low'
+        };
+    }
 
     // Response format / structured output
     if (request.response_format) {

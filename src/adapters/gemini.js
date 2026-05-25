@@ -609,6 +609,13 @@ function buildChatPayload(request, capabilities) {
         payload.generationConfig.responseSchema = request.schema;
     }
 
+    if (request.enable_thinking != null) {
+        payload.generationConfig.thinkingConfig = {
+            includeThoughts: true,
+            thinkingBudget: request.enable_thinking ? 16000 : 0
+        };
+    }
+
     return payload;
 }
 

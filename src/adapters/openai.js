@@ -96,15 +96,11 @@ export function createOpenAIAdapter() {
                     for (const line of lines) {
                         const trimmed = line.trim();
                         if (!trimmed || trimmed.startsWith(':')) continue;
-                        if (trimmed.startsWith('data: ')) {
-                            const data = trimmed.slice(6);
+                        if (trimmed.startsWith('data:')) {
+                            const data = trimmed.slice(5).trimStart();
                             if (data === '[DONE]') return;
                             try {
                                 const parsed = JSON.parse(data);
-                                const delta = parsed.choices?.[0]?.delta;
-                                if (delta && delta.content === null) {
-                                    delete delta.content;
-                                }
                                 parsed.provider = 'openai';
                                 yield parsed;
                             } catch (e) {

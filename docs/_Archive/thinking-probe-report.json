@@ -1,0 +1,777 @@
+{
+  "kimi-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 408,
+      "contentLen": 396,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 943,
+      "contentLen": 33,
+      "finishReason": "length",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 437,
+      "contentLen": 314,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 634,
+      "contentLen": 314,
+      "finishReason": "length",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 491,
+      "contentLen": 429,
+      "finishReason": "length",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 646,
+      "contentLen": 265,
+      "finishReason": "length",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 645,
+      "contentLen": 361,
+      "finishReason": "length",
+      "error": null
+    }
+  ],
+  "kimi-k2.5-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 572,
+      "contentLen": 420,
+      "finishReason": "length",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 524,
+      "contentLen": 261,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 570,
+      "contentLen": 322,
+      "finishReason": "length",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 363,
+      "contentLen": 318,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 728,
+      "contentLen": 251,
+      "finishReason": "length",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 553,
+      "contentLen": 377,
+      "finishReason": "length",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 585,
+      "contentLen": 232,
+      "finishReason": "stop",
+      "error": null
+    }
+  ],
+  "al-qwen-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 1306,
+      "contentLen": 333,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 1200,
+      "contentLen": 361,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 473,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 1298,
+      "contentLen": 382,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 496,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 1295,
+      "contentLen": 301,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 1279,
+      "contentLen": 355,
+      "finishReason": "stop",
+      "error": null
+    }
+  ],
+  "al-qwen-max-chat": [
+    {
+      "shape": "none",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\"error\":{\"code\":\"invalid_parameter_error\",\"message\":\"model `qwen3.7-max` is not supported.\",\"param\":null,\"type\":\"invalid_request_error\"},\"request_id\":\"4c26acd0-4c4f-9bba-9843-831c03161979\"}"
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\"error\":{\"code\":\"invalid_parameter_error\",\"message\":\"model `qwen3.7-max` is not supported.\",\"param\":null,\"type\":\"invalid_request_error\"},\"request_id\":\"3079997f-6dbd-9505-a759-93f44ec898c9\"}"
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\"error\":{\"code\":\"invalid_parameter_error\",\"message\":\"model `qwen3.7-max` is not supported.\",\"param\":null,\"type\":\"invalid_request_error\"},\"request_id\":\"20c39e09-bf2b-9fd0-8871-90afb5fd66df\"}"
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\"error\":{\"code\":\"invalid_parameter_error\",\"message\":\"model `qwen3.7-max` is not supported.\",\"param\":null,\"type\":\"invalid_request_error\"},\"request_id\":\"3fc87af2-0578-9d18-bda7-f09f03bb39b4\"}"
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\"error\":{\"code\":\"invalid_parameter_error\",\"message\":\"model `qwen3.7-max` is not supported.\",\"param\":null,\"type\":\"invalid_request_error\"},\"request_id\":\"17e84c15-6e71-97b2-8fea-a2006498f092\"}"
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\"error\":{\"code\":\"invalid_parameter_error\",\"message\":\"model `qwen3.7-max` is not supported.\",\"param\":null,\"type\":\"invalid_request_error\"},\"request_id\":\"e6d86213-12fe-975e-84fe-a3090bf0b1f2\"}"
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\"error\":{\"code\":\"invalid_parameter_error\",\"message\":\"model `qwen3.7-max` is not supported.\",\"param\":null,\"type\":\"invalid_request_error\"},\"request_id\":\"ae44c22e-4e35-9ca1-acfa-eef479b5ef5d\"}"
+    }
+  ],
+  "deepseek-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 201,
+      "contentLen": 301,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 241,
+      "contentLen": 205,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 424,
+      "contentLen": 233,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 205,
+      "contentLen": 216,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 249,
+      "contentLen": 183,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 354,
+      "contentLen": 151,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 204,
+      "contentLen": 148,
+      "finishReason": "stop",
+      "error": null
+    }
+  ],
+  "deepseek-flash-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 209,
+      "contentLen": 125,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 347,
+      "contentLen": 119,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 124,
+      "contentLen": 15,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 139,
+      "contentLen": 84,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 300,
+      "contentLen": 192,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 298,
+      "contentLen": 180,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 199,
+      "contentLen": 151,
+      "finishReason": "stop",
+      "error": null
+    }
+  ],
+  "glm5-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 392,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 220,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 312,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 423,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 151,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 358,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 407,
+      "finishReason": "stop",
+      "error": null
+    }
+  ],
+  "minimax-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 379,
+      "contentLen": 316,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 727,
+      "contentLen": 258,
+      "finishReason": "max_tokens",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 424,
+      "contentLen": 398,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 763,
+      "contentLen": 321,
+      "finishReason": "max_tokens",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 569,
+      "contentLen": 282,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 445,
+      "contentLen": 293,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 564,
+      "contentLen": 223,
+      "finishReason": "stop",
+      "error": null
+    }
+  ],
+  "grok-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 52,
+      "contentLen": 197,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 52,
+      "contentLen": 10,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 52,
+      "contentLen": 152,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 52,
+      "contentLen": 222,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 52,
+      "contentLen": 10,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 114,
+      "contentLen": 422,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 51,
+      "contentLen": 10,
+      "finishReason": "stop",
+      "error": null
+    }
+  ],
+  "gpt-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\n  \"error\": {\n    \"message\": \"Unknown parameter: 'chat_template_kwargs'.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"chat_template_kwargs\",\n    \"code\": \"unknown_parameter\"\n  }\n}"
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 400,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "finishReason": null,
+      "error": "HTTP Error 400: Bad Request: {\n  \"error\": {\n    \"message\": \"Unknown parameter: 'chat_template_kwargs'.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"chat_template_kwargs\",\n    \"code\": \"unknown_parameter\"\n  }\n}"
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 0,
+      "error": null
+    }
+  ],
+  "gemini-flash-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 25,
+      "finishReason": "max_tokens",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 28,
+      "finishReason": "max_tokens",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 98,
+      "finishReason": "max_tokens",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 24,
+      "finishReason": "max_tokens",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 25,
+      "finishReason": "max_tokens",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 109,
+      "finishReason": "max_tokens",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 23,
+      "finishReason": "max_tokens",
+      "error": null
+    }
+  ],
+  "badkid-llama-chat": [
+    {
+      "shape": "none",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 874,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 795,
+      "contentLen": 584,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "enable_thinking_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 886,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_true",
+      "status": 200,
+      "hasReasoning": true,
+      "reasoningLen": 1392,
+      "contentLen": 635,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "chat_template_kwargs_false",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 1072,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_low",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 919,
+      "finishReason": "stop",
+      "error": null
+    },
+    {
+      "shape": "reasoning_effort_high",
+      "status": 200,
+      "hasReasoning": false,
+      "reasoningLen": 0,
+      "contentLen": 939,
+      "finishReason": "stop",
+      "error": null
+    }
+  ]
+}

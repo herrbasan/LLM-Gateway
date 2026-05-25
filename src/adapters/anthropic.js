@@ -307,7 +307,11 @@ export function createAnthropicAdapter() {
                 max_tokens: request.maxTokens ?? 4096
             };
 
-            if (thinkingInHistory) {
+            if (request.enable_thinking != null) {
+                body.thinking = request.enable_thinking
+                    ? buildThinkingConfig(request.maxTokens)
+                    : { type: 'disabled' };
+            } else if (thinkingInHistory) {
                 body.thinking = buildThinkingConfig(request.maxTokens);
             }
 
@@ -384,7 +388,11 @@ export function createAnthropicAdapter() {
                 stream: true
             };
 
-            if (thinkingInHistory) {
+            if (request.enable_thinking != null) {
+                body.thinking = request.enable_thinking
+                    ? buildThinkingConfig(request.maxTokens)
+                    : { type: 'disabled' };
+            } else if (thinkingInHistory) {
                 body.thinking = buildThinkingConfig(request.maxTokens);
             }
 
