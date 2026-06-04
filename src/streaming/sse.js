@@ -1,4 +1,3 @@
-import { createThinkingExtractor } from '../utils/format.js';
 import { isAbortError } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
 import { normalizeStreamChunk } from '../utils/response-normalizer.js';
@@ -58,8 +57,6 @@ export class StreamHandler {
     async process(chunkGenerator, contextPayload = null, streamOptions = undefined) {
         this.start();
 
-        const thinkingExtractor = createThinkingExtractor();
-
         let finalId = null;
         let finalModel = null;
         let finalProvider = null;
@@ -80,56 +77,9 @@ export class StreamHandler {
                 chunk = normalizeStreamChunk(chunk);
                 const choice = chunk.choices?.[0];
                 const delta = choice?.delta;
-                const originalFinishReason = choice?.finish_reason;
-                const originalToolCalls = delta?.tool_calls;
 
                 if (delta) {
                     if (delta.content === null) delete delta.content;
-
-                    if (delta.content) {
-                        const emissions = thinkingExtractor.process(delta.content);
-
-                        if (emissions.length === 0) {
-                            delete delta.content;
-                        } else if (emissions.length === 1) {
-                            if (emissions[0].content !== undefined) {
-                                delta.content = emissions[0].content || undefined;
-                            } else {
-                                delete delta.content;
-                            }
-                            if (emissions[0].reasoning_content !== undefined) {
-                                delta.reasoning_content = emissions[0].reasoning_content;
-                            }
-                        } else {
-                            for (let i = 0; i < emissions.length - 1; i++) {
-                                const preDelta = {};
-                                if (emissions[i].content !== undefined) preDelta.content = emissions[i].content;
-                                if (emissions[i].reasoning_content !== undefined) preDelta.reasoning_content = emissions[i].reasoning_content;
-                                if (delta.role) preDelta.role = delta.role;
-                                if (delta.function_call) preDelta.function_call = delta.function_call;
-
-                                const preChunk = {
-                                    ...chunk,
-                                    choices: [{
-                                        ...choice,
-                                        delta: preDelta,
-                                        finish_reason: null
-                                    }]
-                                };
-                                this.res.write(`data: ${JSON.stringify(preChunk)}\n\n`);
-                            }
-
-                            const last = emissions[emissions.length - 1];
-                            if (last.content !== undefined) {
-                                delta.content = last.content || undefined;
-                            } else {
-                                delete delta.content;
-                            }
-                            if (last.reasoning_content !== undefined) {
-                                delta.reasoning_content = last.reasoning_content;
-                            }
-                        }
-                    }
                 }
 
                 if (streamOptions?.include_usage === true) {
@@ -153,28 +103,6 @@ export class StreamHandler {
                         this.res.once('close', resolveHandler);
                         this.res.once('error', resolveHandler);
                     });
-                }
-            }
-
-            const flushEmissions = thinkingExtractor.flush();
-            for (const emission of flushEmissions) {
-                const flushDelta = {};
-                if (emission.content !== undefined) flushDelta.content = emission.content;
-                if (emission.reasoning_content !== undefined) flushDelta.reasoning_content = emission.reasoning_content;
-
-                if (flushDelta.content || flushDelta.reasoning_content) {
-                    const extraChunk = {
-                        id: finalId || `chatcmpl-${Date.now()}`,
-                        object: 'chat.completion.chunk',
-                        created: Math.floor(Date.now() / 1000),
-                        model: finalModel || 'unknown',
-                        provider: finalProvider || 'unknown',
-                        choices: [{ delta: flushDelta }]
-                    };
-                    if (streamOptions?.include_usage === true) {
-                        extraChunk.usage = null;
-                    }
-                    this.res.write(`data: ${JSON.stringify(extraChunk)}\n\n`);
                 }
             }
 

@@ -8,7 +8,6 @@ import { createAdapters } from './adapters.js';
 import { EmbeddingBatcher } from './embedding-batcher.js';
 import { TokenEstimator } from '../context/estimator.js';
 import { ContextManager } from '../context/strategy.js';
-import { extractThinking } from '../utils/format.js';
 import { getLogger } from '../utils/logger.js';
 import { MediaProcessorClient } from '../utils/media-client.js';
 import { imageFetcher } from '../utils/image-fetcher.js';
@@ -187,14 +186,6 @@ export class ModelRouter {
 
         // Extract thinking tags from non-streaming content
         const message = result.choices?.[0]?.message;
-
-        if (message?.content) {
-            const extracted = extractThinking(message.content);
-            message.content = extracted.content;
-            if (extracted.reasoning_content) {
-                message.reasoning_content = extracted.reasoning_content;
-            }
-        }
 
         return result;
     }
@@ -535,6 +526,23 @@ export class ModelRouter {
             window: contextWindow,
             available: availableTokens
         }, 'ModelRouter');
+
+        // --- DIAGNOSTIC START ---
+        if (estimatedTokens > 0) {
+            try {
+                const diags = [];
+                for (let i = 0; i < messages.length; i++) {
+                    const m = messages[i];
+                    const contentRaw = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+                    const tks = await this.tokenEstimator.estimate(contentRaw, null, null); 
+                    diags.push(`[${i}] ${m.role}${m.name ? `(${m.name})` : ''}: ~${tks} tokens (${contentRaw.length} chars)`);
+                }
+                logger.info(`Copilot Token Diagnostic (${estimatedTokens} total):\n${diags.join('\n')}`, null, 'ModelRouter');
+            } catch (err) {
+                // Ignore diagnostic failures
+            }
+        }
+        // --- DIAGNOSTIC END ---
 
         const minTokens = compactionConfig.minTokensToCompact || 2000;
         const shouldCompact = compactionConfig.enabled !== false && estimatedTokens >= minTokens && estimatedTokens > availableTokens;
