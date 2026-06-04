@@ -278,8 +278,6 @@ export class ChatHandler {
       let thinkingSignature = null;
       const accumulatedToolCalls = {};
 
-      const thinkingExtractor = createThinkingExtractor();
-
       if (result && typeof result.generator !== 'undefined') {
         for await (const chunk of result.generator) {
           if (requestContext.state === RequestState.CANCELLED) {
