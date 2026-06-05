@@ -277,6 +277,7 @@ export class ChatHandler {
       let fullReasoningContent = '';
       let thinkingSignature = null;
       const accumulatedToolCalls = {};
+      const thinkingExtractor = createThinkingExtractor();
 
       if (result && typeof result.generator !== 'undefined') {
         for await (const chunk of result.generator) {
