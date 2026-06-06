@@ -263,14 +263,6 @@
     "defaultAudioModel": "gemini-tts"
   },
   
-  "compaction": {
-    "enabled": true,
-    "mode": "truncate",
-    "minTokensToCompact": 2000,
-    "preserveSystemPrompt": true,
-    "preserveLastN": 4
-  },
-  
   "mediaProcessor": {
     "enabled": true,
     "endpoint": "http://localhost:3500"

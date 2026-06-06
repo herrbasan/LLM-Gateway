@@ -32,14 +32,13 @@ export class ModelRegistry {
         // Global config
         this.globalConfig = Object.freeze({
             thinking: resolvedConfig.thinking || { enabled: false },
-            compaction: resolvedConfig.compaction || { enabled: false },
             routing: resolvedConfig.routing || {}
         });
 
         // Task registry
         this.taskRegistry = new TaskRegistry(resolvedConfig.tasks || {});
 
-        logger.info('Initialized', { 
+        logger.info('Initialized', {
             modelCount: this.models.size,
             models: Array.from(this.models.keys()),
             taskCount: this.taskRegistry.getAll() ? Object.keys(this.taskRegistry.getAll()).length : 0
@@ -222,13 +221,6 @@ export class ModelRegistry {
      */
     getThinkingConfig() {
         return this.globalConfig.thinking;
-    }
-
-    /**
-     * Get global compaction configuration.
-     */
-    getCompactionConfig() {
-        return this.globalConfig.compaction;
     }
 
     /**

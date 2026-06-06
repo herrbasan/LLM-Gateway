@@ -20,20 +20,14 @@ export function createSystemEventsHandler() {
 
     const taskCreatedHandler = createHandler(EVENT_TYPES.TASK_CREATED);
     const taskUpdatedHandler = createHandler(EVENT_TYPES.TASK_UPDATED);
-    const compactionStartedHandler = createHandler(EVENT_TYPES.COMPACTION_STARTED);
-    const compactionCompletedHandler = createHandler(EVENT_TYPES.COMPACTION_COMPLETED);
 
     systemEvents.on(EVENT_TYPES.TASK_CREATED, taskCreatedHandler);
     systemEvents.on(EVENT_TYPES.TASK_UPDATED, taskUpdatedHandler);
-    systemEvents.on(EVENT_TYPES.COMPACTION_STARTED, compactionStartedHandler);
-    systemEvents.on(EVENT_TYPES.COMPACTION_COMPLETED, compactionCompletedHandler);
 
     // Handle client disconnect
     req.on('close', () => {
       systemEvents.off(EVENT_TYPES.TASK_CREATED, taskCreatedHandler);
       systemEvents.off(EVENT_TYPES.TASK_UPDATED, taskUpdatedHandler);
-      systemEvents.off(EVENT_TYPES.COMPACTION_STARTED, compactionStartedHandler);
-      systemEvents.off(EVENT_TYPES.COMPACTION_COMPLETED, compactionCompletedHandler);
       res.end();
     });
   };

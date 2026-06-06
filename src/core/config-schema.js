@@ -184,17 +184,6 @@ export function validateGlobalConfig(config) {
         }
     }
 
-    // Compaction config
-    if (config.compaction) {
-        const validModes = ['truncate', 'rolling', 'none'];
-        if (config.compaction.mode && !validModes.includes(config.compaction.mode)) {
-            throw new Error(`[Config] compaction.mode must be one of: ${validModes.join(', ')}`);
-        }
-        if ('minTokensToCompact' in config.compaction && typeof config.compaction.minTokensToCompact !== 'number') {
-            throw new Error('[Config] compaction.minTokensToCompact must be a number');
-        }
-    }
-
     // Routing config
     if (config.routing) {
         // Routing defaults are optional but must be strings if present

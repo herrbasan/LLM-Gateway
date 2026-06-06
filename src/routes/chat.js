@@ -78,7 +78,7 @@ export function createChatHandler(router, ticketRegistry) {
                 return;
             }
 
-            // Handle async requests with compaction
+            // Handle async requests (X-Async: true ticket flow)
             if (isAsync) {
                 const ticket = ticketRegistry.createTicket(1);
                 ticketRegistry.updateTicketStatus(ticket.id, 'processing');

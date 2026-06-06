@@ -32,8 +32,9 @@ describe('Adapters v2 - Real World', () => {
         it('should create all adapter types', () => {
             expect(adapters.has('gemini')).to.be.true;
             expect(adapters.has('openai')).to.be.true;
-            expect(adapters.has('ollama')).to.be.true;
-            expect(adapters.has('lmstudio')).to.be.true;
+            expect(adapters.has('anthropic')).to.be.true;
+            expect(adapters.has('responses')).to.be.true;
+            expect(adapters.has('alibaba')).to.be.true;
             expect(adapters.has('llamacpp')).to.be.true;
         });
 

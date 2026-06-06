@@ -61,13 +61,6 @@ const VALID_CONFIG = {
         stripTags: ['think', 'thinking', 'thought', 'reasoning'],
         orphanCloseAsSeparator: true
     },
-    compaction: {
-        enabled: true,
-        mode: 'truncate',
-        minTokensToCompact: 2000,
-        preserveSystemPrompt: true,
-        preserveLastN: 4
-    },
     routing: {
         defaultChatModel: 'gemini-flash',
         defaultEmbeddingModel: 'gemini-embedding',
@@ -240,7 +233,6 @@ describe('ModelRegistry', () => {
 
     it('should return global config', () => {
         expect(registry.getThinkingConfig().enabled).to.be.true;
-        expect(registry.getCompactionConfig().enabled).to.be.true;
         expect(registry.getRoutingConfig().defaultChatModel).to.equal('gemini-flash');
     });
 });

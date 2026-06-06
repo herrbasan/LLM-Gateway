@@ -98,13 +98,8 @@ describe('ModelRouter v2 - Real World', () => {
     });
 
     describe('Context Compaction Config', () => {
-        it('reads compaction config from global', () => {
-            const compaction = router.registry.getCompactionConfig();
-            
-            if (config.compaction?.enabled) {
-                expect(compaction.enabled).to.be.true;
-                expect(compaction.mode).to.exist;
-            }
+        it('compaction is no longer a registered feature', () => {
+            expect(router.registry.getCompactionConfig).to.be.undefined;
         });
     });
 });
