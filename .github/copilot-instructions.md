@@ -26,7 +26,6 @@
 - **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST and WebSocket with adapter-specific format conversion (COMPLETE)
 - **OpenAI Responses API**: `POST /v1/responses` proxies to the `responses` adapter with streaming and non-streaming support
 - **Video generation**: `POST /v1/videos/generations` routes to Gemini (Veo) and OpenAI adapters
-- **Context compaction strategies**: Three strategies available: `truncate` (default), `compress` (single-pass summarization), `rolling` (incremental chained summarization)
 - **Admin endpoints**: `/config` (GET) and `/config/store` (POST) for config management with hot-reload (localhost-only)
 - **Queryable logs**: `GET /logs` with filters for level, type, sessionId, limit
 - **WebSocket binary media**: `media.start/stop` for binary file uploads with `gateway-media://` URL injection into chat messages
@@ -47,7 +46,7 @@ The LLM Gateway is a lightweight, high-performance Node.js API that sits between
 ### Core Components
 - **Adapters (`src/adapters/`)**: Normalizes upstream LLM APIs into a unified standard interface.
 - **Core (`src/core/`)**: Handles model routing, ticket registries for async jobs, and circuit breaking for resilience.
-- **Context Management (`src/context/`)**: Performs token estimation and automatic context compaction (truncate, compress, rolling strategies).
+- **Context Management (`src/context/`)**: Performs token estimation for context telemetry only. The gateway is stateless; context compaction is a client concern.
 - **Dual Interfaces**:
   - **HTTP/REST (`src/routes/`, `src/streaming/`)**: Standard OpenAI-compatible endpoints with Server-Sent Events (SSE).
   - **WebSocket (`src/websocket/`)**: Low-latency, bi-directional JSON-RPC protocol supporting active chat cancellation, binary media/audio, and multiplexing.
@@ -140,7 +139,7 @@ Disabled models:
 - Client sends full message history with each request
 - No server-side session management
 - No `X-Session-Id` header
-- Automatic context compaction when needed
+- Context management is the client's responsibility
 
 ### Task-Based Query System
 
@@ -230,19 +229,6 @@ The gateway supports disabling/enabling model reasoning per-request from both RE
 | `alibaba` | `enable_thinking` (top-level) |
 
 **Pipeline:** `_buildChatOptions` calls `_resolveThinking()` which merges all sources into a single `enable_thinking` value. Each adapter translates this to its native format. Config `extraBody` is applied first, then `extra_body`, then `enable_thinking` overrides both.
-
-### Context Compaction Strategies
-
-The gateway supports three compaction strategies configured via `compaction.mode`:
-
-| Strategy | Description |
-|----------|-------------|
-| `truncate` | (default) Preserves system prompt + last N messages, reduces N until fits, then truncates content |
-| `compress` | Single-pass summarization using the model itself to compress history |
-| `rolling` | Chained incremental summarization across chunks, falls back to truncate on error |
-| `none` | Disables compaction entirely |
-
-All strategies support configurable prompts via `compaction.prompts`.
 
 ### Local Inference (llama.cpp)
 

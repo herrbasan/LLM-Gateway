@@ -97,8 +97,8 @@ describe('ModelRouter v2 - Real World', () => {
         });
     });
 
-    describe('Context Compaction Config', () => {
-        it('compaction is no longer a registered feature', () => {
+    describe('Removed Features', () => {
+        it('getCompactionConfig is not exposed by the registry', () => {
             expect(router.registry.getCompactionConfig).to.be.undefined;
         });
     });

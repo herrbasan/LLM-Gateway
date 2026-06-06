@@ -26,14 +26,12 @@ The gateway is **stateless**. Clients send full message history with each reques
 
 ### Unified Response Model
 
-All chat requests go to one endpoint. By default, all responses are OpenAI-compatible `200 OK` — compaction is transparent. The `202` ticket flow is opt-in only via `X-Async: true` header.
+All chat requests go to one endpoint. By default, all responses are OpenAI-compatible `200 OK`. The `202` ticket flow is opt-in only via `X-Async: true` header.
 
 | Prompt Size | Default Response | With `X-Async: true` |
 |-------------|-----------------|----------------------|
 | Fits in context | `200 OK` — immediate response | `200 OK` — immediate response |
-| Exceeds context (≥`minTokensToCompact` AND > available tokens) | `200 OK` — server blocks, compacts transparently, then responds | `202 Accepted` — ticket created, client polls for result |
-
-> **Note:** `minTokensToCompact` (default: 2000) is the minimum threshold for running the compaction algorithm, not the sole trigger. Both conditions must be met: token count ≥ threshold AND tokens exceed available context window.
+| Exceeds context | `413 Payload Too Large` — client owns compaction | `202 Accepted` — ticket created, client polls for result |
 
 ### Unified Streaming
 
@@ -43,19 +41,13 @@ All streaming uses a single SSE connection:
 POST /v1/chat/completions
 { "stream": true, "messages": [...] }
 
-# Small prompt: tokens stream immediately
+# Tokens stream immediately
 data: {"choices":[{"delta":{"content":"Hello"}}]}
-
-# Large prompt (default): compaction progress events, then tokens
-event: compaction.start
-data: {"chunk":1,"total":3}
-
-data: {"choices":[{"delta":{"content":"The"}}]}
 
 # With X-Async: true: returns 202 + ticket, client connects to task stream
 ```
 
-> **Backpressure:** If the client reads slowly, SSE events buffer in memory. For long compaction jobs, the server emits periodic heartbeat comments (`: heartbeat`) to detect stale connections, and caps the internal event buffer to prevent memory exhaustion.
+> **Backpressure:** If the client reads slowly, SSE events buffer in memory. The server emits periodic heartbeat comments (`: heartbeat`) to detect stale connections, and caps the internal event buffer to prevent memory exhaustion.
 
 ---
 
@@ -91,9 +83,9 @@ Content-Type: application/json
 }
 ```
 
-### Pattern 2: Large Prompt → Transparent Compaction (200)
+### Pattern 2: Large Prompt → 413 Payload Too Large
 
-For oversized prompts, the gateway compacts automatically and returns 200:
+For oversized prompts, the gateway does not silently compact. The client is responsible for truncating or summarising its own history before retrying. The gateway returns `413 Payload Too Large` so the client can react explicitly:
 
 ```bash
 POST /v1/chat/completions
@@ -101,11 +93,11 @@ Content-Type: application/json
 
 {
   "model": "gemini-flash",
-  "messages": [{"role": "user", "content": "...(45k tokens)..."}]
+  "messages": [{"role": "user", "content": "...(oversized)..."}]
 }
 ```
 
-**Response:** Standard OpenAI format (compaction happens transparently on the server).
+**Response:** HTTP `413` with a JSON error body describing the size limit and the model's `contextWindow`.
 
 ### Pattern 3: Large Prompt with Async (202 + Ticket)
 
@@ -180,7 +172,7 @@ If `max_tokens` is omitted, the gateway derives a safe output budget from the mo
 
 > **Image Processing:** The `image_processing` field is optional. When provided, images in messages are fetched (remote URLs) and optionally resized/transcoded via MediaService. See [Vision (Image Input)](#vision-image-input) for complete examples.
 
-**Response 200 (Small Prompt or Transparent Compaction):**
+**Response 200:**
 
 ```json
 {
@@ -196,14 +188,13 @@ If `max_tokens` is omitted, the gateway derives a safe output budget from the mo
     "window_size": 1048576,
     "used_tokens": 2800,
     "available_tokens": 1045776,
-    "strategy_applied": true,
     "resolved_max_tokens": 835060,
-    "max_tokens_source": "implicit"
+    "max_tokens_source": "default"
   }
 }
 ```
 
-`context.max_tokens_source` is `explicit` when the request supplied `max_tokens`, otherwise `implicit`.
+`context.max_tokens_source` is `explicit` when the request supplied `max_tokens`, `config` when resolved from the model's `maxOutputTokens` capability, and `default` when the upstream API decides its own default.
 
 **Response 202 (With `X-Async: true`):**
 
@@ -286,41 +277,12 @@ data: {"id":"...","choices":[{"delta":{"content":"Hello"}}]}
 data: {"id":"...","choices":[{"delta":{"content":" world"}}]}
 
 event: context.status
-data: {"window_size":1048576,"used_tokens":2800,"available_tokens":1045776,"strategy_applied":false,"resolved_max_tokens":835060,"max_tokens_source":"implicit"}
+data: {"window_size":1048576,"used_tokens":2800,"available_tokens":1045776,"resolved_max_tokens":835060,"max_tokens_source":"default"}
 
 data: [DONE]
 ```
 
-#### Large Prompt Streaming (Transparent Compaction)
-
-```bash
-curl http://localhost:3400/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -d '{"model": "gemini-flash", "messages": [{"role": "user", "content": "...(45k tokens)"}], "stream": true}'
-```
-
-**Response:**
-```
-event: compaction.start
-data: {"estimated_chunks":3}
-
-event: compaction.progress
-data: {"chunk":1,"total":3}
-
-event: compaction.complete
-data: {"original_tokens":45000,"final_tokens":2800}
-
-data: {"id":"...","choices":[{"delta":{"content":"The"}}]}
-data: {"id":"...","choices":[{"delta":{"content":" answer"}}]}
-
-event: context.status
-data: {"window_size":1048576,"used_tokens":2800,"available_tokens":1045776,"strategy_applied":true,"resolved_max_tokens":835060,"max_tokens_source":"implicit"}
-
-data: [DONE]
-```
-
-> Compaction progress events are non-standard SSE events (prefixed with `compaction.`). Standard OpenAI SDKs will ignore them, receiving only the `data:` token chunks. Clients that understand compaction events get progress visibility for free.
+> Oversized streaming requests are rejected with `413 Payload Too Large` (or a `202 Accepted` ticket if `X-Async: true` was set). The gateway does not inject compaction progress events into the stream.
 
 If the HTTP client disconnects during streaming or before a non-streaming response completes, the gateway aborts the upstream provider request for fetch-based chat adapters instead of continuing generation in the background.
 
@@ -777,7 +739,7 @@ Used for:
 - Future: Image generation jobs (when async is implemented)
 - Future: Video generation jobs (when async is implemented)
 
-Without `X-Async`, compaction is transparent and no ticket is created.
+Without `X-Async`, the gateway returns the chat result directly with no ticket.
 
 ### Query Task Status
 
@@ -843,7 +805,7 @@ Global SSE endpoint for monitoring gateway-wide events.
 
 ### GET /v1/system/events
 
-Subscribe to system-level events: task lifecycle, compaction progress, routing metrics.
+Subscribe to system-level events: task lifecycle and routing metrics.
 
 ```bash
 GET /v1/system/events
@@ -857,8 +819,6 @@ Headers: Accept: text/event-stream
 | `connected` | Initial connection acknowledgment |
 | `task.created` | New async task created |
 | `task.updated` | Task status changed |
-| `compaction.started` | Context compaction began |
-| `compaction.completed` | Context compaction finished |
 
 **Example Stream:**
 ```
@@ -867,12 +827,6 @@ data: {"message":"System events stream connected","timestamp":1739999999000}
 
 event: task.created
 data: {"ticket":"tkt_abc123","status":"accepted"}
-
-event: compaction.started
-data: {"ticket":"tkt_abc123","estimated_chunks":3}
-
-event: compaction.completed
-data: {"ticket":"tkt_abc123","original_tokens":45000,"final_tokens":2800}
 
 event: task.updated
 data: {"ticket":"tkt_abc123","status":"complete"}
@@ -899,9 +853,9 @@ data: {"ticket":"tkt_abc123","status":"complete"}
 | Use Case | Implementation |
 |----------|---------------|
 | Small prompt | `200 OK` — immediate response |
-| Large prompt (default) | `200 OK` — server compacts transparently, then responds |
-| Large prompt (async) | `202 Accepted` — requires `X-Async: true` header |
-| Streaming | Unified SSE (small=tokens, large=progress+tokens) |
+| Oversized prompt (default) | `413 Payload Too Large` — client truncates and retries |
+| Oversized prompt (async) | `202 Accepted` — requires `X-Async: true` header |
+| Streaming | Unified SSE (single token stream) |
 | Structured output | `response_format: { type: "json_schema" }` — routed only to models with `structuredOutput` capability |
 | Token constraints | `max_tokens` respected by all adapters |
 | Thinking control | `enable_thinking` per-request or `extraBody` in config/task |
@@ -1166,12 +1120,12 @@ POST /v1/chat/completions
 
 | Code | Meaning |
 |------|---------|
-| 200 | Success (small prompt or transparent compaction complete) |
+| 200 | Success |
 | 202 | Accepted (async ticket created) |
 | 400 | Bad request (wrong model type, missing fields) |
 | 403 | Forbidden (disabled model, config access from non-localhost) |
 | 404 | Model not found |
-| 413 | Payload too large (even after compaction or compaction disabled) |
+| 413 | Payload too large — request exceeds the model's context window |
 | 429 | Rate limit or queue full |
 | 502 | Provider unavailable |
 | 503 | Circuit breaker open |

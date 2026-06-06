@@ -9,7 +9,7 @@ A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface wit
 - WebSocket `chat.cancel` aborts the upstream provider request
 - HTTP client disconnects abort in-flight upstream chat generation for supported adapters
 - Task-based query system for semantic routing with preset parameters (`task` param in request body)
-- Three context compaction strategies: `truncate` (default), `compress`, and `rolling`
+- Stateless by design — context management is the client's responsibility
 - OpenAI Responses API support via `POST /v1/responses`
 - Video generation via `POST /v1/videos/generations`
 - Binary media uploads over WebSocket with `gateway-media://` URL scheme
@@ -41,7 +41,6 @@ LLM Gateway provides a unified interface to multiple LLM providers:
 - **Multi-provider** - Gemini, OpenAI, Anthropic, Ollama, LM Studio, llama.cpp, Kimi, Alibaba Cloud
 - **Stateless** - No server-side session management
 - **Model-centric config** - Each model configured independently
-- **Context compaction** - Three strategies: truncate, compress, rolling summarization
 - **Generation cancellation** - WebSocket cancellation and HTTP disconnect abort propagation
 - **Media processing** - Image fetching with SSRF protection, optional resize/transcode
 - **Binary WebSocket** - Media uploads and audio streaming over WebSocket
@@ -113,27 +112,6 @@ Define models in `config.json`:
 | `image` | Image generation models |
 | `audio` | Audio/speech synthesis models |
 | `video` | Video generation models |
-
-### Context Compaction
-
-| Strategy | Description |
-|----------|-------------|
-| `truncate` | (default) Preserves system prompt + last N messages, reduces N until fits |
-| `compress` | Single-pass summarization using the model itself |
-| `rolling` | Chained incremental summarization across chunks |
-| `none` | Disables compaction entirely |
-
-```json
-{
-  "compaction": {
-    "enabled": true,
-    "mode": "truncate",
-    "minTokensToCompact": 2000,
-    "preserveSystemPrompt": true,
-    "preserveLastN": 4
-  }
-}
-```
 
 ### WebSocket Cancellation
 
@@ -232,7 +210,7 @@ Each model is independently configured with:
 - Client sends full message history with each request
 - No server-side session management
 - No `X-Session-Id` header
-- Automatic context compaction when needed
+- Context management is the client's responsibility
 
 ### Supported Adapters
 
@@ -298,7 +276,7 @@ npm run dev
 | Capability inference from model IDs | Explicit capabilities |
 | `providers` in config | `models` in config |
 | No local inference | llama.cpp adapter support |
-| Single compaction strategy | Three strategies: truncate, compress, rolling |
+| Server-side context compaction | Client-owned context management |
 | No admin endpoints | Config hot-reload and queryable logs |
 
 ## Environment Variables
