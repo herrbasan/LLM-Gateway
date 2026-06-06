@@ -106,7 +106,7 @@ export class StreamHandler {
                 }
             }
 
-            if (this.isActive) {
+            if (this.isActive && streamOptions?.include_usage === true) {
                 const usage = capturedUsage || {
                     prompt_tokens: contextPayload?.promptTokens || contextPayload?.prompt_tokens || 0,
                     completion_tokens: contextPayload?.completionTokens || contextPayload?.completion_tokens || 0,
@@ -123,7 +123,9 @@ export class StreamHandler {
                     usage
                 };
                 this.res.write(`data: ${JSON.stringify(finalUsageChunk)}\n\n`);
+            }
 
+            if (this.isActive) {
                 this.res.write('data: [DONE]\n\n');
             }
         } catch (err) {

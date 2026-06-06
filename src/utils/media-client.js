@@ -46,29 +46,6 @@ export const PROVIDER_VISION_LIMITS = {
         description: 'xAI Grok'
     },
     
-    // LM Studio: Local deployment, varies by model
-    // Using conservative defaults
-    lmstudio: {
-        maxDimension: 2048,
-        lowResSize: 512,
-        highResSize: 1024,
-        autoResSize: 768,
-        maxFileSize: 50 * 1024 * 1024, // Larger for local processing
-        supportedFormats: ['png', 'jpeg', 'gif', 'webp'],
-        description: 'LM Studio (local)'
-    },
-    
-    // Ollama: Local deployment, varies by model
-    ollama: {
-        maxDimension: 2048,
-        lowResSize: 512,
-        highResSize: 1024,
-        autoResSize: 768,
-        maxFileSize: 50 * 1024 * 1024,
-        supportedFormats: ['png', 'jpeg', 'gif', 'webp'],
-        description: 'Ollama (local)'
-    },
-    
     // Default fallback for unknown providers
     default: {
         maxDimension: 2048,

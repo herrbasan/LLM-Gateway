@@ -46,9 +46,8 @@ const VALID_CONFIG = {
         },
         'local-llama': {
             type: 'chat',
-            adapter: 'ollama',
+            adapter: 'llamacpp',
             endpoint: 'http://localhost:11434',
-            adapterModel: 'llama3.2',
             capabilities: {
                 contextWindow: 128000,
                 vision: false,
@@ -292,34 +291,35 @@ describe('ModelRouter', () => {
     it('should preserve explicit max_tokens when resolving chat options', () => {
         const resolved = router._resolveChatMaxTokens(
             { max_tokens: 2048 },
-            VALID_CONFIG.models['gemini-flash'],
-            { used_tokens: 1000 }
+            VALID_CONFIG.models['gemini-flash']
         );
 
         expect(resolved).to.equal(2048);
     });
 
-    it('should derive implicit max_tokens from remaining context budget', () => {
+    it('should return null when no explicit max_tokens and no maxOutputTokens config', () => {
         const resolved = router._resolveChatMaxTokens(
             {},
-            VALID_CONFIG.models['gemini-flash'],
-            { used_tokens: 400000 }
+            VALID_CONFIG.models['gemini-flash']
         );
 
-        expect(resolved).to.equal(438861);
+        expect(resolved).to.be.null;
     });
 
-    it('should clamp implicit max_tokens to at least one token', () => {
-        const resolved = router._resolveChatMaxTokens(
-            {},
-            VALID_CONFIG.models['gemini-flash'],
-            { used_tokens: 1048576 }
-        );
+    it('should return maxOutputTokens from config when no explicit max_tokens', () => {
+        const modelWithMaxOutput = {
+            ...VALID_CONFIG.models['gemini-flash'],
+            capabilities: {
+                ...VALID_CONFIG.models['gemini-flash'].capabilities,
+                maxOutputTokens: 65536
+            }
+        };
+        const resolved = router._resolveChatMaxTokens({}, modelWithMaxOutput);
 
-        expect(resolved).to.equal(1);
+        expect(resolved).to.equal(65536);
     });
 
-    it('should annotate context with resolved implicit max_tokens', () => {
+    it('should annotate context with default source when no max_tokens resolved', () => {
         const context = router._annotateContext(
             {
                 window_size: 1048576,
@@ -327,13 +327,22 @@ describe('ModelRouter', () => {
                 available_tokens: 648576,
                 strategy_applied: false
             },
-            438861,
+            null,
             {}
         );
 
         expect(context).to.include({
-            resolved_max_tokens: 438861,
-            max_tokens_source: 'implicit'
+            resolved_max_tokens: null,
+            max_tokens_source: 'default'
+        });
+    });
+
+    it('should annotate context with config source when maxOutputTokens resolved', () => {
+        const context = router._annotateContext(null, 65536, {});
+
+        expect(context).to.deep.equal({
+            resolved_max_tokens: 65536,
+            max_tokens_source: 'config'
         });
     });
 

@@ -5,11 +5,7 @@
 
 import { createGeminiAdapter } from '../adapters/gemini.js';
 import { createOpenAIAdapter } from '../adapters/openai.js';
-import { createOllamaAdapter } from '../adapters/ollama.js';
-import { createLmStudioAdapter } from '../adapters/lmstudio.js';
-import { createKimiCliAdapter } from '../adapters/kimi-cli.js';
 import { createAnthropicAdapter } from '../adapters/anthropic.js';
-import { createDashScopeAdapter } from '../adapters/dashscope.js';
 import { createAlibabaAdapter } from '../adapters/alibaba.js';
 import { createResponsesAdapter } from '../adapters/responses.js';
 import { createLlamaCppAdapter } from '../adapters/llamacpp.js';
@@ -18,11 +14,7 @@ import { CircuitBreaker } from './circuit-breaker.js';
 const ADAPTER_FACTORIES = {
     gemini: createGeminiAdapter,
     openai: createOpenAIAdapter,
-    ollama: createOllamaAdapter,
-    lmstudio: createLmStudioAdapter,
-    'kimi-cli': createKimiCliAdapter,
     anthropic: createAnthropicAdapter,
-    dashscope: createDashScopeAdapter,
     alibaba: createAlibabaAdapter,
     responses: createResponsesAdapter,
     llamacpp: createLlamaCppAdapter

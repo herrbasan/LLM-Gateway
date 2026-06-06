@@ -84,7 +84,7 @@ describe('Configuration Manager', () => {
       expect(['chat', 'embedding', 'image', 'audio', 'video']).to.include(modelConfig.type);
       
       // Verify adapter is valid
-      expect(['gemini', 'openai', 'ollama', 'lmstudio', 'minimax', 'kimi-cli', 'anthropic', 'alibaba', 'dashscope', 'responses', 'kimi', 'llamacpp']).to.include(modelConfig.adapter);
+      expect(['gemini', 'openai', 'anthropic', 'alibaba', 'responses', 'llamacpp']).to.include(modelConfig.adapter);
     }
   });
 });

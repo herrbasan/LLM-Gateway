@@ -7,7 +7,6 @@ import { ModelRegistry } from './model-registry.js';
 import { createAdapters } from './adapters.js';
 import { EmbeddingBatcher } from './embedding-batcher.js';
 import { TokenEstimator } from '../context/estimator.js';
-import { ContextManager } from '../context/strategy.js';
 import { getLogger } from '../utils/logger.js';
 import { MediaProcessorClient } from '../utils/media-client.js';
 import { imageFetcher } from '../utils/image-fetcher.js';
@@ -73,7 +72,6 @@ export class ModelRouter {
 
         // Context management components
         this.tokenEstimator = new TokenEstimator(config);
-        this.contextManager = new ContextManager(config);
 
         // Media processor for image optimization
         this.mediaProcessor = new MediaProcessorClient(config);
@@ -95,7 +93,6 @@ export class ModelRouter {
 
         this.registry = new ModelRegistry(newConfig);
         this.tokenEstimator = new TokenEstimator(newConfig);
-        this.contextManager = new ContextManager(newConfig);
         this.mediaProcessor = new MediaProcessorClient(newConfig);
         this.embeddingBatchers = new Map();
         this.embeddingBatchDefaults = newConfig.embeddingBatch || {};
@@ -140,16 +137,11 @@ export class ModelRouter {
         );
 
         // Replace image blocks with descriptive text for non-vision models
-        const visionPreparedMessages = this._prepareImagesForModel(processedMessages, modelConfig);
+        const messages = this._prepareImagesForModel(processedMessages, modelConfig);
 
-        // Apply context compaction if needed
-        const { messages, context } = await this._handleContextCompaction(
-            visionPreparedMessages,
-            modelConfig,
-            adapter
-        );
+        const context = await this._buildContextStats(messages, modelConfig, adapter);
 
-        const resolvedMaxTokens = this._resolveChatMaxTokens(effectiveRequest, modelConfig, context);
+        const resolvedMaxTokens = this._resolveChatMaxTokens(effectiveRequest, modelConfig);
         const responseContext = this._annotateContext(context, resolvedMaxTokens, effectiveRequest);
 
         const finalOpts = {
@@ -234,15 +226,16 @@ export class ModelRouter {
         const opts = this._buildChatOptions(request, modelConfig);
 
         const processedMessages = await this._processImagesInMessages(opts.messages, modelConfig, request.image_processing);
-        const visionPreparedMessages = this._prepareImagesForModel(processedMessages, modelConfig);
-        const { messages, context } = await this._handleContextCompaction(visionPreparedMessages, modelConfig, adapter);
-        const resolvedMaxTokens = this._resolveChatMaxTokens(request, modelConfig, context);
+        const messages = this._prepareImagesForModel(processedMessages, modelConfig);
+        const context = await this._buildContextStats(messages, modelConfig, adapter);
+        const resolvedMaxTokens = this._resolveChatMaxTokens(request, modelConfig);
         const responseContext = this._annotateContext(context, resolvedMaxTokens, request);
 
         const finalOpts = { ...opts, messages, maxTokens: resolvedMaxTokens, signal: request.signal };
 
         if (request.stream) {
-            const nativeRequest = { ...rawRequest, max_output_tokens: resolvedMaxTokens };
+            const nativeRequest = { ...rawRequest };
+            if (resolvedMaxTokens != null) nativeRequest.max_output_tokens = resolvedMaxTokens;
             return {
                 stream: true,
                 generator: adapter.streamComplete(modelConfig, nativeRequest),
@@ -251,7 +244,8 @@ export class ModelRouter {
             };
         }
 
-        const nativeRequest = { ...rawRequest, max_output_tokens: resolvedMaxTokens };
+        const nativeRequest = { ...rawRequest };
+        if (resolvedMaxTokens != null) nativeRequest.max_output_tokens = resolvedMaxTokens;
         const result = await adapter.chatComplete(modelConfig, nativeRequest);
         result.context = responseContext;
         return result;
@@ -464,71 +458,49 @@ export class ModelRouter {
 
     /**
      * Resolve the max output token budget for a chat request.
+     *
+     * Resolution order:
+     * 1. Explicit client value (max_completion_tokens, max_tokens, maxTokens)
+     * 2. Model config maxOutputTokens capability
+     * 3. null — let the upstream API decide its own default
      */
-    _resolveChatMaxTokens(request, modelConfig, context) {
-        // Accept both snake_case (max_tokens) and camelCase (maxTokens) from clients
+    _resolveChatMaxTokens(request, modelConfig) {
         const requestedMaxTokens = request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens;
         if (requestedMaxTokens != null) {
             return requestedMaxTokens;
         }
 
-        const contextWindow = modelConfig?.capabilities?.contextWindow || 8192;
-        const maxOutputTokens = modelConfig?.capabilities?.maxOutputTokens;
-        const usedTokens = context?.used_tokens || 0;
-        const safetyMargin = Math.floor(contextWindow * 0.20);
-        let remainingBudget = contextWindow - usedTokens - safetyMargin;
-        
-        remainingBudget = Math.max(1, remainingBudget);
-
-        if (maxOutputTokens && remainingBudget > maxOutputTokens) {
-            return maxOutputTokens;
-        }
-
-        return remainingBudget;
+        return modelConfig?.capabilities?.maxOutputTokens ?? null;
     }
 
     /**
      * Attach resolved token budget metadata to response context.
      */
     _annotateContext(context, resolvedMaxTokens, request) {
-        if (!context) {
-            return {
-                resolved_max_tokens: resolvedMaxTokens,
-                max_tokens_source: (request.max_completion_tokens != null || request.max_tokens != null) ? 'explicit' : 'implicit'
-            };
-        }
+        const source = (request.max_completion_tokens != null || request.max_tokens != null || request.maxTokens != null)
+            ? 'explicit'
+            : (resolvedMaxTokens != null ? 'config' : 'default');
 
-        return {
-            ...context,
+        const annotation = {
             resolved_max_tokens: resolvedMaxTokens,
-            max_tokens_source: (request.max_completion_tokens != null || request.max_tokens != null) ? 'explicit' : 'implicit'
+            max_tokens_source: source
         };
+
+        if (!context) return annotation;
+        return { ...context, ...annotation };
     }
 
     /**
-     * Handle context compaction if enabled and needed.
+     * Estimate tokens for messages to populate context stats.
      */
-    async _handleContextCompaction(messages, modelConfig, adapter) {
-        const compactionConfig = this.registry.getCompactionConfig() || {};
-
-        if (messages.length === 0) {
-            return { messages, context: null };
-        }
-
-        const estimatedTokens = await this._estimateMessagesTokens(messages, adapter, modelConfig);
+    async _buildContextStats(messages, modelConfig, adapter) {
         const contextWindow = modelConfig.capabilities?.contextWindow || 8192;
-        const outputBuffer = 1024; // Safe default
-        const safetyMargin = Math.floor(contextWindow * 0.20);
-        const availableTokens = contextWindow - outputBuffer - safetyMargin;
-
-        logger.debug('Context check', {
-            estimated: estimatedTokens,
-            window: contextWindow,
-            available: availableTokens
-        }, 'ModelRouter');
-
-        // --- DIAGNOSTIC START ---
-        if (estimatedTokens > 0) {
+        
+        let estimatedTokens = 0;
+        if (messages.length > 0) {
+            estimatedTokens = await this._estimateMessagesTokens(messages, adapter, modelConfig);
+            
+            // --- DIAGNOSTIC START ---
             try {
                 const diags = [];
                 for (let i = 0; i < messages.length; i++) {
@@ -541,54 +513,14 @@ export class ModelRouter {
             } catch (err) {
                 // Ignore diagnostic failures
             }
+            // --- DIAGNOSTIC END ---
         }
-        // --- DIAGNOSTIC END ---
-
-        const minTokens = compactionConfig.minTokensToCompact || 2000;
-        const shouldCompact = compactionConfig.enabled !== false && estimatedTokens >= minTokens && estimatedTokens > availableTokens;
-
-        if (!shouldCompact) {
-            return {
-                messages,
-                context: {
-                    window_size: contextWindow,
-                    used_tokens: estimatedTokens,
-                    available_tokens: Math.max(0, contextWindow - estimatedTokens),
-                    strategy_applied: false
-                }
-            };
-        }
-
-        if (compactionConfig.mode === 'none') {
-            const err = new Error(`[ModelRouter] Payload too large: ${estimatedTokens} tokens exceeds available ${availableTokens}`);
-            err.status = 413;
-            throw err;
-        }
-
-        logger.info('Applying compaction', { mode: compactionConfig.mode, tokens: estimatedTokens }, 'ModelRouter');
-
-        const strategyFn = this.contextManager[compactionConfig.mode]?.bind(this.contextManager)
-            || this.contextManager.truncate.bind(this.contextManager);
-
-        const compactedMessages = await strategyFn(
-            messages,
-            availableTokens,
-            this.tokenEstimator,
-            adapter,
-            compactionConfig
-        );
-
-        const finalTokens = await this._estimateMessagesTokens(compactedMessages, adapter, modelConfig);
-
-        logger.info('Compaction complete', {
-            original: estimatedTokens,
-            final: finalTokens,
-            mode: compactionConfig.mode
-        }, 'ModelRouter');
 
         return {
-            messages: compactedMessages,
-            context: this._buildContextPayload(contextWindow, finalTokens, true)
+            window_size: contextWindow,
+            used_tokens: estimatedTokens,
+            available_tokens: Math.max(0, contextWindow - estimatedTokens),
+            strategy_applied: false
         };
     }
 

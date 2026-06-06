@@ -169,7 +169,8 @@ export function createAnthropicAdapter() {
     }
 
     function buildThinkingConfig(maxTokens) {
-        const budget = Math.min(Math.max(Math.floor((maxTokens ?? 4096) * 0.8), 1024), 32000);
+        const resolved = maxTokens ?? 8192;
+        const budget = Math.max(Math.floor(resolved * 0.8), 1024);
         return { type: 'enabled', budget_tokens: budget };
     }
 
@@ -437,6 +438,12 @@ export function createAnthropicAdapter() {
                 body: JSON.stringify(body)
             });
 
+            if (!res.ok) {
+                const errorStr = await res.text();
+                logger.error('Anthropic API Streaming Error', { status: res.status, body: errorStr }, 'AnthropicAdapter');
+                throw new Error(`Anthropic API Streaming Error (${res.status}): ${errorStr}`);
+            }
+
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
@@ -463,6 +470,10 @@ export function createAnthropicAdapter() {
 
                         try {
                             const event = JSON.parse(data);
+                            if (event.type === 'error') {
+                                logger.error('Anthropic stream emitted error event', { error: event.error }, 'AnthropicAdapter');
+                                throw new Error(`Upstream API Stream Error: ${event.error?.message || JSON.stringify(event.error)}`);
+                            }
                             if (event.type === 'message_start' && event.message?.usage) {
                                 inputTokens = event.message.usage.input_tokens || 0;
                                 if (event.message.content) {

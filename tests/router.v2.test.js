@@ -82,7 +82,7 @@ describe('ModelRouter v2 - Real World', () => {
 
     describe('Adapter Access', () => {
         it('has all adapter types', () => {
-            const expected = ['gemini', 'openai', 'ollama', 'lmstudio', 'kimi-cli'];
+            const expected = ['gemini', 'openai', 'anthropic', 'responses', 'alibaba', 'llamacpp'];
             for (const type of expected) {
                 expect(router.adapters.has(type), `Missing adapter: ${type}`).to.be.true;
             }

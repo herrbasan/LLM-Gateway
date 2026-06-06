@@ -5,30 +5,6 @@
   "models": {
     "_comment": "=== LLM GATEWAY MODEL CONFIGURATION ===",
     
-    "_comment_lmstudio": "--- LM Studio (External Server) ---",
-    "lmstudio-chat": {
-      "type": "chat",
-      "adapter": "lmstudio",
-      "endpoint": "http://localhost:12345",
-      "adapterModel": "qwen/qwen2.5-9b",
-      "capabilities": {
-        "contextWindow": 30000,
-        "vision": true,
-        "structuredOutput": true,
-        "streaming": true
-      }
-    },
-    "lmstudio-embed": {
-      "type": "embedding",
-      "adapter": "lmstudio",
-      "endpoint": "http://localhost:12345",
-      "adapterModel": "text-embedding-nomic",
-      "capabilities": {
-        "contextWindow": 512,
-        "dimensions": 768
-      }
-    },
-    
     "_comment_llamacpp": "--- llama.cpp (llama-cpp-gateway Manager) ---",
     "_comment_llamacpp_note": "Start manager first: node D:\\DEV\\llama-cpp-gateway\\src\\manager\\server.js",
     
@@ -77,30 +53,6 @@
         "pooling": "mean",
         "batchSize": 512,
         "mlock": true
-      }
-    },
-    
-    "_comment_ollama": "--- Ollama ---",
-    "ollama-chat": {
-      "type": "chat",
-      "adapter": "ollama",
-      "endpoint": "http://localhost:11434",
-      "adapterModel": "gemma3:12b",
-      "capabilities": {
-        "contextWindow": 8192,
-        "vision": true,
-        "structuredOutput": true,
-        "streaming": true
-      }
-    },
-    "ollama-embed": {
-      "type": "embedding",
-      "adapter": "ollama",
-      "endpoint": "http://localhost:11434",
-      "adapterModel": "nomic-embed-text",
-      "capabilities": {
-        "contextWindow": 512,
-        "dimensions": 768
       }
     },
     

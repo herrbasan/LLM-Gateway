@@ -506,11 +506,11 @@ function buildPayload(request, modelConfig, adapterModel, isStreaming = false) {
     
     // Max tokens - config override takes precedence, then request value
     const configMaxTokens = modelConfig?.maxTokens;
-    if (configMaxTokens !== undefined) {
+    if (configMaxTokens != null) {
         payload.max_output_tokens = configMaxTokens;
-    } else if (request.max_tokens !== undefined) {
+    } else if (request.max_tokens != null) {
         payload.max_output_tokens = request.max_tokens;
-    } else if (request.max_output_tokens !== undefined) {
+    } else if (request.max_output_tokens != null) {
         payload.max_output_tokens = request.max_output_tokens;
     }
 
