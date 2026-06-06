@@ -918,9 +918,7 @@ POST /v1/chat/completions
 |---------|--------------------------|
 | `openai` | `chat_template_kwargs.enable_thinking` |
 | `llamacpp` | `chat_template_kwargs.enable_thinking` |
-| `lmstudio` | `chat_template_kwargs.enable_thinking` |
 | `alibaba` | `enable_thinking` (top-level) |
-| `ollama` | Not supported (native API) |
 | `anthropic` | Not supported (different mechanism) |
 | `gemini` | Not supported (different mechanism) |
 
@@ -1107,9 +1105,7 @@ POST /v1/chat/completions
 | `openai` | Direct passthrough | OpenAI, xAI, and compatible providers |
 | `anthropic` | Format conversion | OpenAI tools ↔ Claude tool_use |
 | `gemini` | Format conversion | OpenAI tools ↔ Gemini functionDeclarations |
-| `kimi` | Direct passthrough | OpenAI-compatible API |
-| `ollama` | Direct passthrough | Model-dependent |
-| `lmstudio` | Direct passthrough | OpenAI-compatible |
+| `alibaba` | Direct passthrough | OpenAI-compatible API |
 | `llamacpp` | Variable | Model/build dependent |
 
 **Response normalization:** All non-streaming tool-call responses include `refusal: null`, `function_call: null`, `tool_calls: null` (when absent), `annotations: []`, and `system_fingerprint: null` for strict client compatibility (OpenAI SDK, VS Code extensions).
