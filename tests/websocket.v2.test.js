@@ -12,12 +12,23 @@ describe('WebSocket v2 - Real Time Mode', () => {
     let wsSystem;
     let wsUrl;
     let wsClients = [];
+    let testModelId;
 
     before(async () => {
         config = await loadConfig();
         // Use a random port
-        config.port = 0; 
-        
+        config.port = 0;
+
+        // Pick any non-disabled chat model from the loaded config so the test
+        // is portable across configs that lack 'gemini-flash'.
+        const chatModels = Object.entries(config.models)
+            .filter(([, m]) => m && m.type === 'chat' && !m.disabled)
+            .map(([id]) => id);
+        if (chatModels.length === 0) {
+            throw new Error('WebSocket v2 test requires at least one enabled chat model in config.json');
+        }
+        testModelId = chatModels[0];
+
         app = createServer(config);
         server = http.createServer(app);
         
@@ -85,7 +96,7 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
             id: "test-auth",
             method: "chat.create",
             params: {
-                model: "gemini-flash",
+                model: testModelId,
                 messages: [{ role: "user", content: "hi" }]
             }
         });
@@ -115,7 +126,7 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
             id: "chat-1",
             method: "chat.create",
             params: {
-                model: "gemini-flash",
+                model: testModelId,
                 messages: [{ role: "user", content: "What is 2+2? Answer in one word." }]
             }
         }));
@@ -163,13 +174,13 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
             jsonrpc: "2.0",
             id: "req-1",
             method: "chat.create",
-            params: { model: "gemini-flash", messages: [{ role: "user", content: "A" }] }
+            params: { model: testModelId, messages: [{ role: "user", content: "A" }] }
         };
         const req2 = {
             jsonrpc: "2.0",
             id: "req-2",
             method: "chat.create",
-            params: { model: "gemini-flash", messages: [{ role: "user", content: "B" }] }
+            params: { model: testModelId, messages: [{ role: "user", content: "B" }] }
         };
 
         client.send(JSON.stringify(req1));
@@ -236,7 +247,7 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
             jsonrpc: "2.0",
             id: "req-cancel",
             method: "chat.create",
-            params: { model: "gemini-flash", messages: [{ role: "user", content: "Tell me a story." }] }
+            params: { model: testModelId, messages: [{ role: "user", content: "Tell me a story." }] }
         }));
 
         const events = [];
@@ -311,7 +322,7 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
             id: "req-context",
             method: "chat.create",
             params: {
-                model: "gemini-flash",
+                model: testModelId,
                 messages: [{ role: "user", content: "Check context stability." }]
             }
         }));
@@ -376,7 +387,7 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
             jsonrpc: "2.0",
             id: "req-app-1",
             method: "chat.create",
-            params: { model: "gemini-flash", messages: [{ role: "user", content: "First." }] }
+            params: { model: testModelId, messages: [{ role: "user", content: "First." }] }
         }));
 
         // Drain the stream until chat.done
