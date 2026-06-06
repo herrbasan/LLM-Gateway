@@ -1278,15 +1278,6 @@ for await (const event of ticket.stream()) {
 
 ### Client Changes
 
-**v1.x:**
-```javascript
-// Create session, then use X-Session-Id
-const session = await fetch('/v1/sessions', {method: 'POST'});
-await fetch('/v1/chat/completions', {
-  headers: {'X-Session-Id': session.id}
-});
-```
-
 **v2.0:**
 ```javascript
 // Send full history each time

@@ -358,70 +358,6 @@ describe('Integration Tests (live gateway)', function () {
     });
 
     // ==================================================================
-    //  5. SESSIONS — full lifecycle
-    // ==================================================================
-    describe('Sessions lifecycle', () => {
-        let sessionId;
-
-        it('should create a session', async () => {
-            const { status, data } = await gw('POST', '/v1/sessions', { strategy: 'truncate' });
-            expect(status).to.equal(201);
-            expect(data.session).to.have.property('id');
-            sessionId = data.session.id;
-        });
-
-        it('should retrieve the session', async () => {
-            const { status, data } = await gw('GET', `/v1/sessions/${sessionId}`);
-            expect(status).to.equal(200);
-            expect(data.session.id).to.equal(sessionId);
-            expect(data.session.message_count).to.equal(0);
-        });
-
-        it('should send a message through the session and accumulate history', async function () {
-            requireLLM(this);
-            const { status, data } = await gw('POST', '/v1/chat/completions', {
-                model: 'auto',
-                messages: [{ role: 'user', content: 'My favourite colour is blue. Remember that.' }],
-                stream: false,
-            }, { ...providerHeader(), 'X-Session-Id': sessionId });
-
-            expect(status).to.equal(200);
-            expect(data.choices[0].message.content.length).to.be.greaterThan(0);
-
-            const sess = await gw('GET', `/v1/sessions/${sessionId}`);
-            expect(sess.data.session.message_count).to.be.greaterThan(0);
-        });
-
-        it('should recall session context in a follow-up message', async function () {
-            requireLLM(this);
-            const { status, data } = await gw('POST', '/v1/chat/completions', {
-                model: 'auto',
-                messages: [{ role: 'user', content: 'What is my favourite colour?' }],
-                stream: false,
-            }, { ...providerHeader(), 'X-Session-Id': sessionId });
-
-            expect(status).to.equal(200);
-            expect(data.choices[0].message.content.toLowerCase()).to.include('blue');
-        });
-
-        it('should patch session settings', async () => {
-            const { status, data } = await gw('PATCH', `/v1/sessions/${sessionId}`, {
-                strategy: 'compress',
-            });
-            expect(status).to.equal(200);
-            expect(data.session.context.strategy).to.equal('compress');
-        });
-
-        it('should delete the session', async () => {
-            const { status } = await gw('DELETE', `/v1/sessions/${sessionId}`);
-            expect(status).to.equal(204);
-
-            const { status: getStatus } = await gw('GET', `/v1/sessions/${sessionId}`);
-            expect(getStatus).to.equal(404);
-        });
-    });
-
-    // ==================================================================
     //  6. EMBEDDINGS
     // ==================================================================
     describe('POST /v1/embeddings', () => {
@@ -505,11 +441,6 @@ describe('Integration Tests (live gateway)', function () {
             expect(status).to.equal(404);
         });
 
-        it('should return 404 for non-existent session', async () => {
-            const { status } = await gw('GET', '/v1/sessions/does-not-exist-123');
-            expect(status).to.equal(404);
-        });
-
         it('should return 404 for non-existent task ticket', async () => {
             const { status } = await gw('GET', '/v1/tasks/fake-ticket-000');
             expect(status).to.equal(404);
@@ -534,15 +465,6 @@ describe('Integration Tests (live gateway)', function () {
             expect(data.error).to.include('No adapter found');
         });
 
-        it('should return 404 when using a non-existent session ID for chat', async () => {
-            const { status, data } = await gw('POST', '/v1/chat/completions', {
-                model: 'auto',
-                messages: [{ role: 'user', content: 'test' }],
-                stream: false,
-            }, { 'X-Session-Id': 'ghost-session-id' });
-            expect(status).to.equal(404);
-            expect(data.error).to.include('Session Not Found');
-        });
     });
 
     // ==================================================================
