@@ -273,14 +273,7 @@ function transformStreamingEvent(event) {
         // Response creation/starting
         case 'response.created':
         case 'response.in_progress':
-            return {
-                id: event.response?.id,
-                object: 'chat.completion.chunk',
-                created: Math.floor(Date.now() / 1000),
-                model: event.response?.model,
-                choices: [],
-                provider: 'openai'
-            };
+            return null;
 
         // Response completed
         case 'response.completed':

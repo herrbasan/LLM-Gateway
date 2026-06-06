@@ -7,7 +7,7 @@ const MODEL_TYPES = ['chat', 'embedding', 'image', 'audio', 'video'];
 
 const REQUIRED_MODEL_FIELDS = ['type', 'adapter', 'capabilities'];
 
-const ADAPTER_TYPES = ['gemini', 'openai', 'anthropic', 'alibaba', 'responses', 'llamacpp'];
+const ADAPTER_TYPES = ['gemini', 'openai', 'anthropic', 'responses', 'llamacpp'];
 
 /**
  * Validates a model configuration object.
@@ -29,9 +29,8 @@ export function validateModelConfig(modelId, config) {
         }
     }
 
-    // Endpoint is required for all adapters except alibaba
-    const ADAPTERS_WITHOUT_ENDPOINT = ['alibaba'];
-    if (!ADAPTERS_WITHOUT_ENDPOINT.includes(config.adapter) && !config.endpoint) {
+    // Endpoint is required for all adapters
+    if (!config.endpoint) {
         throw new Error(`[Config] Model "${modelId}": endpoint is required for adapter "${config.adapter}"`);
     }
 
@@ -46,10 +45,8 @@ export function validateModelConfig(modelId, config) {
     }
 
     // Endpoint validation
-    if (!ADAPTERS_WITHOUT_ENDPOINT.includes(config.adapter)) {
-        if (typeof config.endpoint !== 'string' || !config.endpoint.startsWith('http')) {
-            throw new Error(`[Config] Model "${modelId}": endpoint must be a valid HTTP URL`);
-        }
+    if (typeof config.endpoint !== 'string' || !config.endpoint.startsWith('http')) {
+        throw new Error(`[Config] Model "${modelId}": endpoint must be a valid HTTP URL`);
     }
 
     // Capabilities validation by type

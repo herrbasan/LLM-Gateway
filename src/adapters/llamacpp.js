@@ -188,7 +188,9 @@ export function createLlamaCppAdapter() {
                 };
             }
 
-            payload.stream_options = { ...request.stream_options, include_usage: true };
+            if (request.stream_options) {
+                payload.stream_options = request.stream_options;
+            }
 
             const res = await httpRequest(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',

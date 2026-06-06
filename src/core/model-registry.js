@@ -144,15 +144,15 @@ export class ModelRegistry {
                 continue;
             }
             const contextWindow = config.capabilities?.contextWindow || 0;
-            const maxOutput = config.capabilities?.maxOutputTokens || 0;
+            const maxOutput = config.capabilities?.maxOutputTokens || undefined;
             data.push({
                 id,
                 object: 'model',
                 owned_by: config.adapter,
                 type: config.type,
                 context_length: contextWindow || undefined,
-                max_output_tokens: maxOutput || undefined,
-                limit: contextWindow ? { context: contextWindow, output: maxOutput || contextWindow } : undefined,
+                max_output_tokens: maxOutput,
+                limit: contextWindow ? { context: contextWindow, output: maxOutput } : undefined,
                 capabilities: {
                         ...config.capabilities,
                         ...(config.imageInputLimit && { imageInputLimit: config.imageInputLimit })
@@ -182,14 +182,14 @@ export class ModelRegistry {
                 continue;
             }
             const contextWindow = config.capabilities?.contextWindow || 0;
-            const maxOutput = config.capabilities?.maxOutputTokens || 0;
+            const maxOutput = config.capabilities?.maxOutputTokens || undefined;
             const modelInfo = {
                 id,
                 object: 'model',
                 owned_by: config.adapter,
                 context_length: contextWindow || undefined,
-                max_output_tokens: maxOutput || undefined,
-                limit: contextWindow ? { context: contextWindow, output: maxOutput || contextWindow } : undefined,
+                max_output_tokens: maxOutput,
+                limit: contextWindow ? { context: contextWindow, output: maxOutput } : undefined,
                 capabilities: {
                         ...config.capabilities,
                         ...(config.imageInputLimit && { imageInputLimit: config.imageInputLimit })

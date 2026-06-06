@@ -57,22 +57,11 @@ export class StreamHandler {
     async process(chunkGenerator, contextPayload = null, streamOptions = undefined) {
         this.start();
 
-        let finalId = null;
-        let finalModel = null;
-        let finalProvider = null;
-        let capturedUsage = null;
+        let seenUpstreamUsage = false;
 
         try {
             for await (let chunk of chunkGenerator) {
                 if (!this.isActive) break;
-
-                finalId = chunk.id;
-                finalModel = chunk.model;
-                finalProvider = chunk.provider;
-
-                if (chunk.usage && (chunk.usage.prompt_tokens || chunk.usage.completion_tokens)) {
-                    capturedUsage = chunk.usage;
-                }
 
                 chunk = normalizeStreamChunk(chunk);
                 const choice = chunk.choices?.[0];
@@ -82,8 +71,31 @@ export class StreamHandler {
                     if (delta.content === null) delete delta.content;
                 }
 
-                if (streamOptions?.include_usage === true) {
-                    chunk.usage = null;
+                // Track whether upstream provided usage data
+                if (chunk.usage && (chunk.usage.prompt_tokens || chunk.usage.total_tokens)) {
+                    seenUpstreamUsage = true;
+
+                    // Override prompt_tokens with our estimate — upstream may report
+                    // only uncached tokens (DeepSeek disk caching) or tokenizer-specific
+                    // counts that don't reflect total context usage for the client display.
+                    if (contextPayload && typeof contextPayload.used_tokens === 'number') {
+                        const upstreamCompletion = chunk.usage.completion_tokens ?? 0;
+                        chunk = {
+                            ...chunk,
+                            usage: {
+                                prompt_tokens: contextPayload.used_tokens,
+                                completion_tokens: upstreamCompletion,
+                                total_tokens: contextPayload.used_tokens + upstreamCompletion
+                            }
+                        };
+                    }
+                }
+
+                // Skip metadata-only chunks with empty choices (e.g. response.in_progress).
+                // Usage-bearing chunks with empty choices are standard OpenAI format
+                // (stream_options.include_usage) and Copilot handles them natively.
+                if (chunk.choices && chunk.choices.length === 0 && !chunk.usage) {
+                    continue;
                 }
 
                 const payloadStr = `data: ${JSON.stringify(chunk)}\n\n`;
@@ -106,23 +118,24 @@ export class StreamHandler {
                 }
             }
 
-            if (this.isActive && streamOptions?.include_usage === true) {
-                const usage = capturedUsage || {
-                    prompt_tokens: contextPayload?.promptTokens || contextPayload?.prompt_tokens || 0,
-                    completion_tokens: contextPayload?.completionTokens || contextPayload?.completion_tokens || 0,
-                    total_tokens: contextPayload?.totalTokens || contextPayload?.total_tokens || 0
+            // If client requested include_usage but upstream didn't provide usage,
+            // inject the gateway's own context estimate as a final usage chunk.
+            // Uses the standard OpenAI `choices: []` + `usage` format that Copilot expects.
+            if (this.isActive && streamOptions?.include_usage === true && !seenUpstreamUsage && contextPayload) {
+                const usage = {
+                    prompt_tokens: contextPayload.used_tokens ?? 0,
+                    completion_tokens: 0,
+                    total_tokens: contextPayload.used_tokens ?? 0
                 };
-
-                const finalUsageChunk = {
-                    id: finalId || `chatcmpl-${Date.now()}`,
+                const injectedChunk = {
+                    id: `chatcmpl-gw-${Date.now()}`,
                     object: 'chat.completion.chunk',
                     created: Math.floor(Date.now() / 1000),
-                    model: finalModel || 'unknown',
-                    provider: finalProvider || 'unknown',
+                    model: '',
                     choices: [],
                     usage
                 };
-                this.res.write(`data: ${JSON.stringify(finalUsageChunk)}\n\n`);
+                this.res.write(`data: ${JSON.stringify(injectedChunk)}\n\n`);
             }
 
             if (this.isActive) {

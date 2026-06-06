@@ -494,26 +494,11 @@ export class ModelRouter {
      * Estimate tokens for messages to populate context stats.
      */
     async _buildContextStats(messages, modelConfig, adapter) {
-        const contextWindow = modelConfig.capabilities?.contextWindow || 8192;
+        const contextWindow = modelConfig.capabilities.contextWindow;
         
         let estimatedTokens = 0;
         if (messages.length > 0) {
             estimatedTokens = await this._estimateMessagesTokens(messages, adapter, modelConfig);
-            
-            // --- DIAGNOSTIC START ---
-            try {
-                const diags = [];
-                for (let i = 0; i < messages.length; i++) {
-                    const m = messages[i];
-                    const contentRaw = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
-                    const tks = await this.tokenEstimator.estimate(contentRaw, null, null); 
-                    diags.push(`[${i}] ${m.role}${m.name ? `(${m.name})` : ''}: ~${tks} tokens (${contentRaw.length} chars)`);
-                }
-                logger.info(`Copilot Token Diagnostic (${estimatedTokens} total):\n${diags.join('\n')}`, null, 'ModelRouter');
-            } catch (err) {
-                // Ignore diagnostic failures
-            }
-            // --- DIAGNOSTIC END ---
         }
 
         return {

@@ -599,7 +599,8 @@ export function createAnthropicAdapter() {
                                 if (finishReason === 'end_turn') finishReason = 'stop';
                                 else if (finishReason === 'tool_use') finishReason = 'tool_calls';
 
-                                const chunk = {
+                                // Emit finish_reason chunk (no usage — Copilot expects usage in a separate choices:[] chunk)
+                                const finishChunk = {
                                     id: event.message?.id || processId,
                                     object: 'chat.completion.chunk',
                                     created: Math.floor(Date.now() / 1000),
@@ -609,17 +610,27 @@ export function createAnthropicAdapter() {
                                         index: 0,
                                         delta: {},
                                         finish_reason: finishReason || 'stop'
-                                    }],
+                                    }]
+                                };
+                                if (thinkingSignature) {
+                                    finishChunk._thinking_signature = thinkingSignature;
+                                }
+                                yield finishChunk;
+
+                                // Emit usage-only chunk in standard OpenAI format (choices: [])
+                                yield {
+                                    id: event.message?.id || processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model,
+                                    provider: 'anthropic',
+                                    choices: [],
                                     usage: {
                                         prompt_tokens: inputTokens,
                                         completion_tokens: outputTokens,
                                         total_tokens: inputTokens + outputTokens
                                     }
                                 };
-                                if (thinkingSignature) {
-                                    chunk._thinking_signature = thinkingSignature;
-                                }
-                                yield chunk;
                             }
                         } catch {
                             // Ignore parse errors

@@ -56,7 +56,7 @@ The LLM Gateway is a lightweight, high-performance Node.js API that sits between
 
 Each model is independently configured with:
 - **Type**: chat, embedding, image, audio, video
-- **Adapter**: Protocol handler (gemini, openai, ollama, responses, etc.)
+- **Adapter**: Protocol handler (gemini, openai, alibaba, responses, etc.)
 - **Capabilities**: Explicit declaration (contextWindow, vision, etc.)
 - **Endpoint/Auth**: Per-model configuration
 - **Disabled**: Set `disabled: true` to temporarily disable a model without removing it from config
@@ -88,14 +88,10 @@ Disabled models:
 | `anthropic` | Anthropic Claude API | chat |
 | `gemini` | Google Gemini API | chat, embedding, image, audio, video |
 | `kimi` | Moonshot Kimi API (native HTTP) | chat |
-| `kimi-cli` | Moonshot Kimi CLI (subprocess) | chat |
-| `ollama` | Ollama local API | chat, embedding |
-| `lmstudio` | LM Studio API | chat, embedding |
-| `dashscope` | Alibaba DashScope (TTS only) | audio |
 | `alibaba` | Alibaba Cloud AI (unified) | chat, embedding, image, audio |
 | `llamacpp` | llama.cpp local server | chat, embedding |
 
-> **Note:** `dashscope` is a dedicated TTS-only adapter. For unified Alibaba Cloud support (chat + embeddings + TTS + image), use the `alibaba` adapter. `kimi-cli` uses a CLI subprocess and is registered but not the primary Kimi path — use `kimi` for HTTP-based Kimi integration.
+> **Note:** The `alibaba` adapter handles all Alibaba/DashScope functionality (chat, embeddings, TTS, images). For Kimi, use the `kimi` adapter (native HTTP).
 
 ### REST Endpoints
 
@@ -185,11 +181,9 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 - WebSocket `chat.done` includes final `context` metadata for client persistence
 - Kimi chat requests sanitize prior assistant thinking traces before estimation and upstream dispatch
 - Kimi native token counting uses dedicated Moonshot tokenizer endpoints when available and falls back to estimator logic if token estimation is unavailable
-- `kimi-cli` adapter remains registered but is not the primary Kimi path — use the `kimi` adapter for HTTP-based integration
 - Qwen models support `enable_thinking` toggle via `extraBody.chat_template_kwargs` — set to `false` to disable verbose reasoning
 
 ### Thinking Control (Per-Request)
-
 The gateway supports disabling/enabling model reasoning per-request from both REST and WebSocket endpoints. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.
 
 **Resolution priority** (highest wins):
@@ -225,13 +219,11 @@ The gateway supports disabling/enabling model reasoning per-request from both RE
 |---------|--------------------------|
 | `openai` | `chat_template_kwargs.enable_thinking` |
 | `llamacpp` | `chat_template_kwargs.enable_thinking` |
-| `lmstudio` | `chat_template_kwargs.enable_thinking` |
 | `alibaba` | `enable_thinking` (top-level) |
 
 **Pipeline:** `_buildChatOptions` calls `_resolveThinking()` which merges all sources into a single `enable_thinking` value. Each adapter translates this to its native format. Config `extraBody` is applied first, then `extra_body`, then `enable_thinking` overrides both.
 
-### Local Inference (llama.cpp)
-
+###
 The gateway routes to external llama.cpp servers via the `llamacpp` adapter. Local inference configuration (`localInference`) in model config is passed to the server endpoint — the gateway does not manage `llama-server.exe` processes itself.
 
 **Config Example:**
@@ -279,7 +271,46 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 
 **This codebase follows deterministic, rigorous engineering principles.**
 
+**FAILURE IS CHEAPER THAN CONFUSION.** A crash with a clear stack trace costs 30 seconds. A silent fallback producing wrong numbers costs hours of debugging and real money in API credits burned. In development, correctness is the only performance metric that matters.
+
+### Forbidden Patterns
+
+These patterns have repeatedly caused hours of wasted debugging and real financial cost. They are banned in this codebase:
+
+1. **The `||` Fallback on Falsy-Valid Values**
+   - `x || defaultValue` silently replaces `0`, `false`, `''`, and `[]` with garbage
+   - Use `??` when `null`/`undefined` are the only invalid states
+   - If a value must be a specific type, validate it — don't silently replace it
+
+2. **Mock Data, Defaults, and Placeholders**
+   - Never invent numbers when you don't know them (`contextWindow || 8192`)
+   - Never substitute plausible values for missing data
+   - If the data isn't there, the request is invalid — reject it
+   - A model without a declared `contextWindow` is a broken config, not an opportunity to guess
+
+3. **try/catch That Swallows Errors**
+   - `try { ... } catch { /* ignore */ }` is a crime scene
+   - If an operation can fail, either it shouldn't be called, or the failure should propagate
+   - The ONLY valid catch is at system boundaries (network, user input, third-party APIs)
+   - Every silent catch you write today will cost someone a day of debugging tomorrow
+
+4. **Defensive `?.` Chains into Nothing**
+   - `a?.b?.c ?? defaultValue` is three lies in a trenchcoat
+   - If `a.b.c` is required, access it directly and let it crash if missing
+   - Optional chaining is for optional data — not for avoiding design work
+
+5. **Silent Type Coercion**
+   - `false || 'backup'` → `'backup'` is a bug factory
+   - `0 || 1000000` → `1000000` cost us real debugging hours today
+   - Zero is a valid number. Empty string is a valid string. Treat them as such.
+
 ### Core Principles
+
+0. **Fail Fast, Fail Loud**
+   - A crash with a stack trace is a gift — it tells you exactly what's wrong
+   - A silent fallback is a thief — it steals hours of your life
+   - Development code should explode on invalid state, not gracefully degrade
+   - This costs real money: wrong context numbers → wrong API calls → wasted tokens
 
 1. **Design Failures Away**
    - Prevention produces more reliable systems than handling
@@ -348,6 +379,9 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 - **Stringly-Typed Code** — moves error detection to production
 - **Documentation That Lies** — false confidence is dangerous
 - **Type Theater** — treating annotations as proof
+- **The Silent Fallback** — `x || default` where `x` can legitimately be `0`, `false`, or `''`. Silently replaces real data with lies.
+- **The Guessing Game** — `contextWindow || 8192` or `maxOutput || contextWindow`. If you don't know the number, the config is broken — reject it.
+- **The Empty Catch** — `try { } catch { }` or `try { } catch { /* ignore */ }`. Every swallowed error is a future debugging session you're stealing from yourself.
 
 ### The Mindset Shift
 
@@ -356,6 +390,8 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 | "What if something goes wrong?" | "How do I design this so it cannot go wrong?" |
 | "I'll handle the error case" | "I'll eliminate the error case" |
 | "Good enough for now" | "Correct or not at all" |
+| "I don't have the number, I'll guess" | "The config is broken — reject it" |
+| "What should this default to?" | "Why would the value ever be absent?" |
 
 ### Where These Apply
 

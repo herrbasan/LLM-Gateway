@@ -171,17 +171,6 @@ export function createGeminiAdapter() {
                             // If we already emitted tools in a prior chunk, and this is just an empty 'stop' closure, 
                             // suppress emitting another delta entirely unless it has usage telemetry.
                             if (!outText && toolParts.length === 0 && hasEmittedTools) {
-                                if (usage) {
-                                    yield {
-                                        id: processId,
-                                        object: 'chat.completion.chunk',
-                                        created: Math.floor(Date.now() / 1000),
-                                        model: model,
-                                        provider: 'gemini',
-                                        choices: [],
-                                        usage: usage
-                                    };
-                                }
                                 continue;
                             }
 
@@ -197,8 +186,20 @@ export function createGeminiAdapter() {
                                     finish_reason: (toolParts.length === 0) ? (finishReason || null) : null
                                 }]
                             };
-                            if (usage) chunk.usage = usage;
                             yield chunk;
+
+                            // Emit usage-only chunk in standard OpenAI format (choices: [])
+                            if (usage) {
+                                yield {
+                                    id: processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model: model,
+                                    provider: 'gemini',
+                                    choices: [],
+                                    usage
+                                };
+                            }
                         }
 
                         // Emit tool Parts strictly as OpenAI expects: id+name first, then arguments
@@ -250,8 +251,20 @@ export function createGeminiAdapter() {
                                         finish_reason: (i === toolParts.length - 1) ? finishReason : null
                                     }]
                                 };
-                                if (usage && i === toolParts.length - 1) chunkArgs.usage = usage;
                                 yield chunkArgs;
+                            }
+
+                            // Emit usage-only chunk in standard OpenAI format (choices: [])
+                            if (usage) {
+                                yield {
+                                    id: processId,
+                                    object: 'chat.completion.chunk',
+                                    created: Math.floor(Date.now() / 1000),
+                                    model: model,
+                                    provider: 'gemini',
+                                    choices: [],
+                                    usage
+                                };
                             }
                         }
                     }
