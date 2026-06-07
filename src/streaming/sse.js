@@ -59,6 +59,14 @@ export class StreamHandler {
 
         let seenUpstreamUsage = false;
 
+        // Emit context stats as initial event so clients can display context window
+        if (contextPayload && contextPayload.window_size) {
+            this.res.write(`data: ${JSON.stringify({
+                object: 'chat.completion.chunk',
+                context: contextPayload
+            })}\n\n`);
+        }
+
         try {
             for await (let chunk of chunkGenerator) {
                 if (!this.isActive) break;
@@ -68,11 +76,17 @@ export class StreamHandler {
                 const delta = choice?.delta;
 
                 if (delta) {
-                    if (delta.content === null) delete delta.content;
+                    // Only delete null content if there's no reasoning_content —
+                    // Copilot's BYOK consumer needs content to exist alongside reasoning.
+                    if (delta.content === null && delta.reasoning_content === undefined) {
+                        delete delta.content;
+                    } else if (delta.content === null) {
+                        delta.content = "";
+                    }
                 }
 
                 // Track whether upstream provided usage data
-                if (chunk.usage && (chunk.usage.prompt_tokens || chunk.usage.total_tokens)) {
+                if (chunk.usage && (chunk.usage.prompt_tokens != null || chunk.usage.total_tokens != null)) {
                     seenUpstreamUsage = true;
 
                     // Override prompt_tokens with our estimate — upstream may report
@@ -118,15 +132,17 @@ export class StreamHandler {
                 }
             }
 
-            // If client requested include_usage but upstream didn't provide usage,
-            // inject the gateway's own context estimate as a final usage chunk.
-            // Uses the standard OpenAI `choices: []` + `usage` format that Copilot expects.
-            if (this.isActive && streamOptions?.include_usage === true && !seenUpstreamUsage && contextPayload) {
+            // Always inject the gateway's context estimate as a final usage chunk
+            // if upstream didn't provide usage or provided partial (cached-only) data.
+            // This ensures clients always see the full cumulative token count.
+            if (this.isActive && contextPayload && typeof contextPayload.used_tokens === 'number') {
                 const usage = {
                     prompt_tokens: contextPayload.used_tokens ?? 0,
                     completion_tokens: 0,
                     total_tokens: contextPayload.used_tokens ?? 0
                 };
+                // If upstream already gave us completion tokens, preserve them
+                // (they get picked up by the override in the chunk loop)
                 const injectedChunk = {
                     id: `chatcmpl-gw-${Date.now()}`,
                     object: 'chat.completion.chunk',

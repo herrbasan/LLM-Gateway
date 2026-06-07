@@ -288,6 +288,10 @@ These patterns have repeatedly caused hours of wasted debugging and real financi
    - Never substitute plausible values for missing data
    - If the data isn't there, the request is invalid — reject it
    - A model without a declared `contextWindow` is a broken config, not an opportunity to guess
+   - **CRITICAL: When you encounter a fallback, default, or placeholder — REMOVE IT.**
+     Do not "fix" it by raising the number. Do not "improve" it with a better guess.
+     Trace back to where the value SHOULD come from and make that source authoritative.
+     Every `|| 4096` or `?? 8192` you leave behind will silently corrupt data for the next person.
 
 3. **try/catch That Swallows Errors**
    - `try { ... } catch { /* ignore */ }` is a crime scene

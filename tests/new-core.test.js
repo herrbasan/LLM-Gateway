@@ -227,8 +227,16 @@ describe('ModelRegistry', () => {
         const list = registry.listModels();
         expect(list.object).to.equal('list');
         expect(list.data).to.have.length(4);
-        expect(list.data[0]).to.have.property('id');
-        expect(list.data[0]).to.have.property('capabilities');
+        const model = list.data[0];
+        expect(model).to.have.property('id');
+        expect(model).to.have.property('capabilities');
+        // v2.1: Context window exposed at multiple paths for compatibility
+        expect(model).to.have.property('maxInputTokens');
+        expect(model).to.have.property('contextWindow');
+        expect(model).to.have.property('context_length');
+        expect(model).to.have.property('maxOutputTokens');
+        expect(model).to.have.property('limit');
+        expect(model.limit).to.have.property('context');
     });
 
     it('should return global config', () => {
@@ -289,13 +297,36 @@ describe('ModelRouter', () => {
         expect(resolved).to.equal(2048);
     });
 
-    it('should return null when no explicit max_tokens and no maxOutputTokens config', () => {
+    it('should return null when no explicit max_tokens, no maxOutputTokens, and no context', () => {
+        // Without context available, can't compute implicit budget — let adapter reject
         const resolved = router._resolveChatMaxTokens(
             {},
             VALID_CONFIG.models['gemini-flash']
         );
 
         expect(resolved).to.be.null;
+    });
+
+    it('should compute implicit budget from available context tokens', () => {
+        const resolved = router._resolveChatMaxTokens(
+            {},
+            VALID_CONFIG.models['gemini-flash'],
+            { available_tokens: 100000 }
+        );
+
+        // 80% of 100000 = 80000
+        expect(resolved).to.equal(80000);
+    });
+
+    it('should floor implicit budget at 4096 for tiny context windows', () => {
+        const resolved = router._resolveChatMaxTokens(
+            {},
+            VALID_CONFIG.models['gemini-flash'],
+            { available_tokens: 100 }
+        );
+
+        // 80% of 100 = 80, but floored at 4096
+        expect(resolved).to.equal(4096);
     });
 
     it('should return maxOutputTokens from config when no explicit max_tokens', () => {
@@ -311,7 +342,7 @@ describe('ModelRouter', () => {
         expect(resolved).to.equal(65536);
     });
 
-    it('should annotate context with default source when no max_tokens resolved', () => {
+    it('should annotate context with implicit source when no explicit max_tokens', () => {
         const context = router._annotateContext(
             {
                 window_size: 1048576,
@@ -319,22 +350,13 @@ describe('ModelRouter', () => {
                 available_tokens: 648576,
                 strategy_applied: false
             },
-            null,
+            80000,
             {}
         );
 
         expect(context).to.include({
-            resolved_max_tokens: null,
-            max_tokens_source: 'default'
-        });
-    });
-
-    it('should annotate context with config source when maxOutputTokens resolved', () => {
-        const context = router._annotateContext(null, 65536, {});
-
-        expect(context).to.deep.equal({
-            resolved_max_tokens: 65536,
-            max_tokens_source: 'config'
+            resolved_max_tokens: 80000,
+            max_tokens_source: 'implicit'
         });
     });
 

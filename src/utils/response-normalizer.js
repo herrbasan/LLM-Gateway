@@ -72,6 +72,12 @@ function normalizeMessage(message) {
  * Normalize delta object (for streaming responses).
  * We don't forcefully inject nulls into every delta, because streaming chunks are sparse.
  * But we can ensure fields are standardized if present.
+ *
+ * CRITICAL: Copilot's BYOK SSE parser accumulates only `delta.content`.
+ * If a model emits chunks with `reasoning_content` but no `content` field
+ * (Kimi K2.5, DeepSeek R1, Claude with thinking), Copilot sees zero
+ * accumulated content and throws "Response contained no choices."
+ * We inject `content: ""` so Copilot always has a content field to track.
  */
 function normalizeDelta(delta) {
     if (!delta) return delta;
@@ -80,6 +86,13 @@ function normalizeDelta(delta) {
     
     if (delta.refusal !== undefined) {
         normalized.refusal = delta.refusal;
+    }
+
+    // Ensure content is present when reasoning_content exists,
+    // so Copilot's BYOK consumer doesn't see an empty response.
+    // Handles both missing (undefined) and explicitly null content.
+    if (normalized.reasoning_content !== undefined && (normalized.content === undefined || normalized.content === null)) {
+        normalized.content = "";
     }
 
     return normalized;

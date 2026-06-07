@@ -143,15 +143,21 @@ export class ModelRegistry {
             if (type && config.type !== type) {
                 continue;
             }
-            const contextWindow = config.capabilities?.contextWindow || 0;
-            const maxOutput = config.capabilities?.maxOutputTokens || undefined;
+            const contextWindow = config.capabilities?.contextWindow;
+            const maxOutput = config.capabilities?.maxOutputTokens;
             data.push({
                 id,
                 object: 'model',
                 owned_by: config.adapter,
                 type: config.type,
-                context_length: contextWindow || undefined,
+                // Standard OpenAI-compatible fields
+                context_length: contextWindow,
                 max_output_tokens: maxOutput,
+                // VS Code Copilot BYOK reads maxInputTokens for context window display
+                maxInputTokens: contextWindow,
+                // Backward compat: chat app may read top-level contextWindow
+                contextWindow,
+                maxOutputTokens: maxOutput,
                 limit: contextWindow ? { context: contextWindow, output: maxOutput } : undefined,
                 capabilities: {
                         ...config.capabilities,
@@ -181,14 +187,17 @@ export class ModelRegistry {
             if (!includeDisabled && config.disabled) {
                 continue;
             }
-            const contextWindow = config.capabilities?.contextWindow || 0;
-            const maxOutput = config.capabilities?.maxOutputTokens || undefined;
+            const contextWindow = config.capabilities?.contextWindow;
+            const maxOutput = config.capabilities?.maxOutputTokens;
             const modelInfo = {
                 id,
                 object: 'model',
                 owned_by: config.adapter,
-                context_length: contextWindow || undefined,
+                context_length: contextWindow,
                 max_output_tokens: maxOutput,
+                maxInputTokens: contextWindow,
+                contextWindow,
+                maxOutputTokens: maxOutput,
                 limit: contextWindow ? { context: contextWindow, output: maxOutput } : undefined,
                 capabilities: {
                         ...config.capabilities,

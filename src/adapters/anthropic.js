@@ -169,8 +169,7 @@ export function createAnthropicAdapter() {
     }
 
     function buildThinkingConfig(maxTokens) {
-        const resolved = maxTokens ?? 8192;
-        const budget = Math.max(Math.floor(resolved * 0.8), 1024);
+        const budget = Math.max(Math.floor(maxTokens * 0.8), 1024);
         return { type: 'enabled', budget_tokens: budget };
     }
 
@@ -305,7 +304,7 @@ export function createAnthropicAdapter() {
             const body = {
                 model,
                 messages: formattedMessages,
-                max_tokens: request.maxTokens ?? 4096
+                max_tokens: request.maxTokens
             };
 
             if (request.enable_thinking != null) {
@@ -385,7 +384,7 @@ export function createAnthropicAdapter() {
             const body = {
                 model,
                 messages: formattedMessages,
-                max_tokens: request.maxTokens ?? 4096,
+                max_tokens: request.maxTokens,
                 stream: true
             };
 

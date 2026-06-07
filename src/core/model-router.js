@@ -141,7 +141,7 @@ export class ModelRouter {
 
         const context = await this._buildContextStats(messages, modelConfig, adapter);
 
-        const resolvedMaxTokens = this._resolveChatMaxTokens(effectiveRequest, modelConfig);
+        const resolvedMaxTokens = this._resolveChatMaxTokens(effectiveRequest, modelConfig, context);
         const responseContext = this._annotateContext(context, resolvedMaxTokens, effectiveRequest);
 
         const finalOpts = {
@@ -462,15 +462,31 @@ export class ModelRouter {
      * Resolution order:
      * 1. Explicit client value (max_completion_tokens, max_tokens, maxTokens)
      * 2. Model config maxOutputTokens capability
-     * 3. null — let the upstream API decide its own default
+     * 3. Available context window (context.available_tokens) — implicit budget
+     *    from remaining context, capped at a reasonable output ratio.
+     *
+     * If no value can be resolved, returns null — the adapter will reject
+     * with a clear error rather than silently using a guess.
      */
-    _resolveChatMaxTokens(request, modelConfig) {
+    _resolveChatMaxTokens(request, modelConfig, context) {
         const requestedMaxTokens = request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens;
         if (requestedMaxTokens != null) {
             return requestedMaxTokens;
         }
 
-        return modelConfig?.capabilities?.maxOutputTokens ?? null;
+        if (modelConfig?.capabilities?.maxOutputTokens != null) {
+            return modelConfig.capabilities.maxOutputTokens;
+        }
+
+        // Implicit budget: use up to 80% of remaining context for output,
+        // with a floor of 4096 so short conversations still get reasonable output.
+        const availableTokens = context?.available_tokens;
+        if (typeof availableTokens === 'number' && Number.isFinite(availableTokens) && availableTokens > 0) {
+            return Math.max(Math.floor(availableTokens * 0.8), 4096);
+        }
+
+        // No budget resolvable — adapter will reject with clear error
+        return null;
     }
 
     /**
@@ -479,7 +495,7 @@ export class ModelRouter {
     _annotateContext(context, resolvedMaxTokens, request) {
         const source = (request.max_completion_tokens != null || request.max_tokens != null || request.maxTokens != null)
             ? 'explicit'
-            : (resolvedMaxTokens != null ? 'config' : 'default');
+            : 'implicit';
 
         const annotation = {
             resolved_max_tokens: resolvedMaxTokens,
@@ -501,10 +517,18 @@ export class ModelRouter {
             estimatedTokens = await this._estimateMessagesTokens(messages, adapter, modelConfig);
         }
 
+        const available = Math.max(0, contextWindow - estimatedTokens);
+
         return {
+            // camelCase (new clients)
+            windowSize: contextWindow,
+            usedTokens: estimatedTokens,
+            availableTokens: isNaN(available) ? 0 : available,
+            // snake_case (backward compat)
             window_size: contextWindow,
             used_tokens: estimatedTokens,
-            available_tokens: Math.max(0, contextWindow - estimatedTokens),
+            available_tokens: isNaN(available) ? 0 : available,
+            // metadata
             strategy_applied: false
         };
     }
