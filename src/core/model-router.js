@@ -5,7 +5,6 @@
 
 import { ModelRegistry } from './model-registry.js';
 import { createAdapters } from './adapters.js';
-import { EmbeddingBatcher } from './embedding-batcher.js';
 import { TokenEstimator } from '../context/estimator.js';
 import { getLogger } from '../utils/logger.js';
 import { MediaProcessorClient } from '../utils/media-client.js';
@@ -67,9 +66,6 @@ export class ModelRouter {
         // Create adapters (simplified - no config needed at factory level)
         this.adapters = createAdapters();
 
-        this.embeddingBatchers = new Map();
-        this.embeddingBatchDefaults = config.embeddingBatch || {};
-
         // Context management components
         this.tokenEstimator = new TokenEstimator(config);
 
@@ -94,8 +90,6 @@ export class ModelRouter {
         this.registry = new ModelRegistry(newConfig);
         this.tokenEstimator = new TokenEstimator(newConfig);
         this.mediaProcessor = new MediaProcessorClient(newConfig);
-        this.embeddingBatchers = new Map();
-        this.embeddingBatchDefaults = newConfig.embeddingBatch || {};
         
         logger.info('Configuration reloaded', {
             models: this.registry.getModelIds().length,
@@ -253,6 +247,9 @@ export class ModelRouter {
 
     /**
      * Route an embedding request.
+     * Passthrough — no batching, no chunking. The llama-cpp-gateway owns
+     * all embedding batching/chunking logic since it has real ctxSize, VRAM,
+     * and concurrency state.
      */
     async routeEmbedding(request) {
         if (!request || typeof request !== 'object') {
@@ -271,21 +268,7 @@ export class ModelRouter {
             task: taskInfo?.id || null
         }, 'ModelRouter');
 
-        const batchConfig = modelConfig.embeddingBatch !== undefined
-            ? modelConfig.embeddingBatch
-            : this.embeddingBatchDefaults;
-
-        if (batchConfig === false) {
-            return adapter.createEmbedding(modelConfig, resolvedRequest);
-        }
-
-        let batcher = this.embeddingBatchers.get(modelId);
-        if (!batcher) {
-            batcher = new EmbeddingBatcher(batchConfig);
-            this.embeddingBatchers.set(modelId, batcher);
-        }
-
-        return batcher.submit(adapter, modelConfig, resolvedRequest);
+        return adapter.createEmbedding(modelConfig, resolvedRequest);
     }
 
     /**

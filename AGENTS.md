@@ -30,7 +30,6 @@
 - **Queryable logs**: `GET /logs` with filters for level, type, sessionId, limit
 - **WebSocket binary media**: `media.start/stop` for binary file uploads with `gateway-media://` URL injection into chat messages
 - **WebSocket audio**: `audio.start/stop/vad` for binary audio stream negotiation (framework in place)
-- **Embedding batching**: Automatic batching of embedding requests via `EmbeddingBatcher`
 
 ## Documentation
 
