@@ -62,6 +62,19 @@ export class TaskRegistry {
     }
 
     /**
+     * Find all tasks marked as default.
+     * Returns Array<{ id, config }> of default tasks.
+     */
+    getDefaultTasks() {
+        const defaults = [];
+        for (const [id, config] of this.tasks.entries()) {
+            if (!config.default) continue;
+            defaults.push({ id, config });
+        }
+        return defaults;
+    }
+
+    /**
      * Resolve a task and merge its defaults into the request body.
      * Client params always override task defaults.
      * Returns { resolvedRequest, taskInfo } where taskInfo is null if no task was used.
@@ -96,6 +109,8 @@ export class TaskRegistry {
         const taskInfo = {
             id: taskId,
             model: task.model,
+            fallback: task.fallback || null,
+            fallbackCooldownMinutes: task.fallbackCooldownMinutes || null,
             description: task.description || null
         };
 
@@ -131,6 +146,8 @@ export class TaskRegistry {
         const taskInfo = {
             id: taskId,
             model: task.model,
+            fallback: task.fallback || null,
+            fallbackCooldownMinutes: task.fallbackCooldownMinutes || null,
             description: task.description || null
         };
 

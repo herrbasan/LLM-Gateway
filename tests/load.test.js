@@ -82,9 +82,9 @@ describe('Phase 9: Load Testing & Memory Bounds', function () {
             }
         };
 
-        // Ensure routing default points to our load-tester model
-        config.routing = config.routing || {};
-        config.routing.defaultChatModel = 'load-tester';
+        // Ensure default task points to our load-tester model
+        config.tasks = config.tasks || {};
+        config.tasks.query = { model: 'load-tester', default: true };
 
         // Increase threshold to avoid circuit breaker tripping during heavy load
         config.concurrency = config.concurrency || {};

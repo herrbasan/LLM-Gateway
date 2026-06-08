@@ -842,9 +842,10 @@ data: {"ticket":"tkt_abc123","status":"complete"}
 
 | Use Case | Request | Resolution |
 |----------|---------|------------|
-| Default model | Omit `model` or use configured default | Uses `routing.defaultChatModel` from config |
+| Default model | Omit `model` and `task` | Uses the task marked `default: true` for the request type |
 | Specific model | `"model": "gemini-flash"` | Looks up model by ID in config |
 | Task-based | `"task": "synthesis"` | Uses task's model + defaults, client overrides apply |
+| Task with fallback | Task has `fallback` model | Primary fails → switches to fallback for 60s cooldown |
 | List models | `GET /v1/models` | Returns flat list from config |
 | List tasks | `GET /v1/tasks` | Returns list of configured tasks |
 

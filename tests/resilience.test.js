@@ -23,10 +23,10 @@ describe('Resilience & Circuit Breaker', () => {
             }
         };
 
-        // Temporarily set default chat model to our fake model so requests without
-        // an explicit model also hit it (not strictly needed, but keeps routing simple)
-        config.routing = config.routing || {};
-        config.routing.defaultChatModel = 'fake-down';
+        // Set default task to our fake model so requests without
+        // an explicit model also hit it
+        config.tasks = config.tasks || {};
+        config.tasks.query = { model: 'fake-down', default: true };
 
         app = createServer(config);
     });

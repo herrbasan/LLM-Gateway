@@ -31,8 +31,7 @@ export class ModelRegistry {
 
         // Global config
         this.globalConfig = Object.freeze({
-            thinking: resolvedConfig.thinking || { enabled: false },
-            routing: resolvedConfig.routing || {}
+            thinking: resolvedConfig.thinking || { enabled: false }
         });
 
         // Task registry
@@ -99,33 +98,31 @@ export class ModelRegistry {
     }
 
     /**
-     * Resolve model ID, falling back to default if not specified.
-     * Throws if resolved model doesn't exist or is wrong type.
+     * Resolve model ID. Throws if model doesn't exist or is wrong type.
+     * No default fallback — the caller (ModelRouter) handles default task resolution.
      */
     resolveModel(modelId, expectedType) {
-        const resolvedId = modelId || this.globalConfig.routing[`default${this._capitalize(expectedType)}Model`];
-        
-        if (!resolvedId) {
-            const err = new Error(`[ModelRegistry] No model specified and no default ${expectedType} model configured`);
+        if (!modelId) {
+            const err = new Error(`[ModelRegistry] No model specified and no default task configured for type "${expectedType}"`);
             err.status = 400;
             throw err;
         }
 
-        const model = this.get(resolvedId);
+        const model = this.get(modelId);
 
         if (model.disabled) {
-            const err = new Error(`[ModelRegistry] Model "${resolvedId}" is disabled`);
+            const err = new Error(`[ModelRegistry] Model "${modelId}" is disabled`);
             err.status = 403;
             throw err;
         }
 
         if (model.type !== expectedType) {
-            const err = new Error(`[ModelRegistry] Model "${resolvedId}" is type "${model.type}", expected "${expectedType}"`);
+            const err = new Error(`[ModelRegistry] Model "${modelId}" is type "${model.type}", expected "${expectedType}"`);
             err.status = 400;
             throw err;
         }
 
-        return { id: resolvedId, config: model };
+        return { id: modelId, config: model };
     }
 
     /**
@@ -233,13 +230,6 @@ export class ModelRegistry {
     }
 
     /**
-     * Get global routing configuration.
-     */
-    getRoutingConfig() {
-        return this.globalConfig.routing;
-    }
-
-    /**
      * Get the task registry.
      */
     getTaskRegistry() {
@@ -272,9 +262,5 @@ export class ModelRegistry {
             }
         }
         return result;
-    }
-
-    _capitalize(str) {
-        return str.charAt(0).toUpperCase() + str.slice(1);
     }
 }

@@ -59,6 +59,10 @@ The LLM Gateway has been successfully transformed from provider-centric to model
 }
 ```
 
+> **DEPRECATED**: This example shows the v1.x `routing` and `compaction` config.
+> As of v2.0, routing is task-based (tasks with `"default": true`) and
+> compaction has been removed. See `config.example.json` for current format.
+
 ---
 
 ## Completion Status

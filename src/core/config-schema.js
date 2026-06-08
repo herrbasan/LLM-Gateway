@@ -181,16 +181,6 @@ export function validateGlobalConfig(config) {
         }
     }
 
-    // Routing config
-    if (config.routing) {
-        // Routing defaults are optional but must be strings if present
-        for (const field of ['defaultChatModel', 'defaultEmbeddingModel', 'defaultImageModel', 'defaultAudioModel', 'defaultVideoModel']) {
-            if (field in config.routing && typeof config.routing[field] !== 'string') {
-                throw new Error(`[Config] routing.${field} must be a string`);
-            }
-        }
-    }
-
     // Tasks config
     if (config.tasks) {
         if (typeof config.tasks !== 'object' || Array.isArray(config.tasks)) {
@@ -223,7 +213,8 @@ function validateTaskConfig(taskId, config) {
         'presencePenalty', 'frequencyPenalty', 'seed', 'stop',
         'max_tokens', 'top_p', 'top_k',
         'presence_penalty', 'frequency_penalty', 'response_format',
-        'extra_body', 'enable_thinking', 'chat_template_kwargs'
+        'extra_body', 'enable_thinking', 'chat_template_kwargs',
+        'default', 'fallback', 'fallbackCooldownMinutes'
     ];
 
     for (const key of Object.keys(config)) {
@@ -289,11 +280,6 @@ export function validateConfig(config) {
     // Validate global sections
     validateGlobalConfig(config);
 
-    // Validate that routing defaults point to existing models
-    if (config.routing) {
-        validateRoutingDefaults(config.routing, Object.keys(config.models));
-    }
-
     // Validate that task models reference existing models
     if (config.tasks) {
         validateTaskModels(config.tasks, Object.keys(config.models));
@@ -308,13 +294,8 @@ function validateTaskModels(tasks, availableModels) {
         if (!availableModels.includes(taskConfig.model)) {
             throw new Error(`[Config] Task "${taskId}": model "${taskConfig.model}" does not exist in models`);
         }
-    }
-}
-
-function validateRoutingDefaults(routing, availableModels) {
-    for (const [key, modelId] of Object.entries(routing)) {
-        if (!availableModels.includes(modelId)) {
-            throw new Error(`[Config] routing.${key}="${modelId}" does not exist in models`);
+        if (taskConfig.fallback && !availableModels.includes(taskConfig.fallback)) {
+            throw new Error(`[Config] Task "${taskId}": fallback model "${taskConfig.fallback}" does not exist in models`);
         }
     }
 }

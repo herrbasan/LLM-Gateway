@@ -29,14 +29,19 @@ describe('ModelRouter v2 - Real World', () => {
             expect(result.config.type).to.equal('chat');
         });
 
-        it('resolves default chat model when not specified', () => {
-            if (!config.routing?.defaultChatModel) {
-                console.log('[SKIP] No default chat model configured');
+        it('resolves default chat model via task when not specified', () => {
+            const defaultTasks = router.registry.getTaskRegistry().getDefaultTasks();
+            const chatDefault = defaultTasks.find(t => {
+                const model = router.registry.get(t.config.model);
+                return model && model.type === 'chat';
+            });
+            if (!chatDefault) {
+                console.log('[SKIP] No default chat task configured');
                 return;
             }
             
-            const result = router.registry.resolveModel(null, 'chat');
-            expect(result.id).to.equal(config.routing.defaultChatModel);
+            const result = router.registry.resolveModel(chatDefault.config.model, 'chat');
+            expect(result.id).to.equal(chatDefault.config.model);
         });
 
         it('throws on unknown model', () => {

@@ -56,9 +56,13 @@ The LLM Gateway is a lightweight, high-performance Node.js API that sits between
 Each model is independently configured with:
 - **Type**: chat, embedding, image, audio, video
 - **Adapter**: Protocol handler (gemini, openai, alibaba, responses, etc.)
-- **Capabilities**: Explicit declaration (contextWindow, vision, etc.)
+- **Capabilities**: Explicit declaration (contextWindow, vision, thinking, excludeParams, etc.)
 - **Endpoint/Auth**: Per-model configuration
 - **Disabled**: Set `disabled: true` to temporarily disable a model without removing it from config
+
+**Capability flags:**
+- `thinking: "chat_template_kwargs"` — Model supports `chat_template_kwargs.enable_thinking` (llama.cpp/Qwen). Without this, the thinking param is silently dropped for OpenAI-adapter models.
+- `excludeParams: ["temperature", "top_p", ...]` — Parameters to strip from the upstream payload. Used for reasoning models that reject sampling params.
 
 ### Disabling Models
 
@@ -146,7 +150,14 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
     "model": "openai-chat",
     "description": "General query and conversation",
     "maxTokens": 4096,
-    "temperature": 0.7
+    "temperature": 0.7,
+    "default": true
+  },
+  "embed": {
+    "model": "gemini-embedding",
+    "fallback": "llama-embed",
+    "description": "Text embedding generation",
+    "default": true
   }
 }
 ```
@@ -160,6 +171,24 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 **System prompt handling:** Task `systemPrompt` is prepended before all existing messages, regardless of role.
 
 **Task validation:** Task models must reference existing models. Unknown task names return `400`.
+
+**Default tasks:** When a request has no `model` and no `task`, the router finds the task with `"default": true` and uses its model. Each request type (chat, embedding, image, audio) should have exactly one default task.
+
+**Fallback models:** Tasks can declare a `"fallback"` model. When the primary model fails, the gateway:
+1. Records the failure with a timestamp
+2. Routes subsequent requests to the fallback model for the cooldown period (`fallbackCooldownMinutes`, default 1 min)
+3. After cooldown expires, tries the primary again
+4. On success, clears the failure state immediately
+5. If the primary fails again, re-enters fallback mode
+
+```json
+"embed": {
+  "model": "local-embed",
+  "fallback": "cloud-embed",
+  "fallbackCooldownMinutes": 60,
+  "default": true
+}
+```
 
 **Endpoints:**
 - `GET /v1/tasks` — list available tasks
@@ -214,11 +243,16 @@ The gateway supports disabling/enabling model reasoning per-request from both RE
 
 **Adapter translation:**
 
-| Adapter | `enable_thinking` becomes |
-|---------|--------------------------|
-| `openai` | `chat_template_kwargs.enable_thinking` |
-| `llamacpp` | `chat_template_kwargs.enable_thinking` |
-| `alibaba` | `enable_thinking` (top-level) |
+| Adapter | `enable_thinking` becomes | Gate |
+|---------|--------------------------|------|
+| `openai` | `chat_template_kwargs.enable_thinking` | Only if `capabilities.thinking === "chat_template_kwargs"` |
+| `llamacpp` | `chat_template_kwargs.enable_thinking` | Always (llama.cpp native param) |
+| `alibaba` | `enable_thinking` (top-level) | Always |
+| `gemini` | `generationConfig.thinkingConfig` | Always |
+| `anthropic` | `thinking` block | Always |
+| `responses` | `reasoning.effort` | Always |
+
+**Capability gate:** The `openai` adapter serves many incompatible upstream APIs (Grok, OpenRouter, Kimi, etc.) that reject `chat_template_kwargs`. Only models that declare `capabilities.thinking: "chat_template_kwargs"` receive the parameter. Without the declaration, `enable_thinking` is silently dropped for that model.
 
 **Pipeline:** `_buildChatOptions` calls `_resolveThinking()` which merges all sources into a single `enable_thinking` value. Each adapter translates this to its native format. Config `extraBody` is applied first, then `extra_body`, then `enable_thinking` overrides both.
 

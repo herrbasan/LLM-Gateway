@@ -27,7 +27,7 @@ export function createOpenAIAdapter() {
             applyFormatParams(payload, request, capabilities);
             applyToolParams(payload, request);
             applyLogprobParams(payload, request);
-            applyThinkingControl(payload, request);
+            applyThinkingControl(payload, request, capabilities);
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
@@ -68,7 +68,7 @@ export function createOpenAIAdapter() {
             applyFormatParams(payload, request, capabilities);
             applyToolParams(payload, request);
             applyLogprobParams(payload, request);
-            applyThinkingControl(payload, request);
+            applyThinkingControl(payload, request, capabilities);
 
             if (request.stream_options) {
                 payload.stream_options = request.stream_options;
@@ -367,8 +367,10 @@ function applyLogprobParams(payload, request) {
     if (request.top_logprobs != null) payload.top_logprobs = request.top_logprobs;
 }
 
-function applyThinkingControl(payload, request) {
-    if (request.enable_thinking != null) {
+function applyThinkingControl(payload, request, capabilities) {
+    // Only inject chat_template_kwargs for models that declare support.
+    // This is a llama.cpp/Qwen-specific parameter — Grok, OpenRouter, etc. reject it.
+    if (request.enable_thinking != null && capabilities?.thinking === 'chat_template_kwargs') {
         payload.chat_template_kwargs = {
             ...payload.chat_template_kwargs,
             enable_thinking: request.enable_thinking

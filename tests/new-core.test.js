@@ -61,10 +61,22 @@ const VALID_CONFIG = {
         stripTags: ['think', 'thinking', 'thought', 'reasoning'],
         orphanCloseAsSeparator: true
     },
-    routing: {
-        defaultChatModel: 'gemini-flash',
-        defaultEmbeddingModel: 'gemini-embedding',
-        defaultImageModel: 'dall-e-3'
+    tasks: {
+        query: {
+            model: 'gemini-flash',
+            description: 'Default chat task',
+            default: true
+        },
+        embed: {
+            model: 'gemini-embedding',
+            description: 'Default embedding task',
+            default: true
+        },
+        image: {
+            model: 'dall-e-3',
+            description: 'Default image task',
+            default: true
+        }
     }
 };
 
@@ -138,11 +150,12 @@ describe('Config Schema', () => {
                 .to.throw('Missing or invalid "models" section');
         });
 
-        it('should throw on invalid routing default', () => {
+        it('should throw on invalid task model', () => {
             const config = {
                 ...VALID_CONFIG,
-                routing: {
-                    defaultChatModel: 'non-existent-model'
+                tasks: {
+                    ...VALID_CONFIG.tasks,
+                    query: { model: 'non-existent-model', default: true }
                 }
             };
             expect(() => validateConfig(config))
@@ -213,9 +226,9 @@ describe('ModelRegistry', () => {
         expect(config.type).to.equal('chat');
     });
 
-    it('should resolve default model when not specified', () => {
-        const { id, config } = registry.resolveModel(null, 'chat');
-        expect(id).to.equal('gemini-flash');
+    it('should throw when no model specified (task system handles defaults)', () => {
+        expect(() => registry.resolveModel(null, 'chat'))
+            .to.throw('No model specified');
     });
 
     it('should throw on type mismatch', () => {
@@ -241,7 +254,11 @@ describe('ModelRegistry', () => {
 
     it('should return global config', () => {
         expect(registry.getThinkingConfig().enabled).to.be.true;
-        expect(registry.getRoutingConfig().defaultChatModel).to.equal('gemini-flash');
+        const defaultTasks = registry.getTaskRegistry().getDefaultTasks();
+        expect(defaultTasks).to.have.length.greaterThan(0);
+        const chatDefault = defaultTasks.find(t => t.id === 'query');
+        expect(chatDefault).to.not.be.undefined;
+        expect(chatDefault.config.model).to.equal('gemini-flash');
     });
 });
 

@@ -568,14 +568,24 @@ function buildPayload(request, modelConfig, adapterModel, isStreaming = false) {
 
     // Config-level extra_body (applied to all requests for this model)
     if (modelConfig?.extraBody) {
-        Object.assign(payload, modelConfig.extraBody);
+        const { chat_template_kwargs, ...safeExtra } = modelConfig.extraBody;
+        Object.assign(payload, safeExtra);
     }
 
     // Request-level extra_body (provider-specific extensions)
-    // e.g., chat_template_kwargs for disabling thinking on Qwen models
-    // Request-level overrides config-level
+    // Strip chat_template_kwargs — Responses API doesn't support it;
+    // thinking is handled via reasoning.effort above.
     if (request.extra_body) {
-        Object.assign(payload, request.extra_body);
+        const { chat_template_kwargs, ...safeExtra } = request.extra_body;
+        Object.assign(payload, safeExtra);
+    }
+
+    // Strip parameters the model doesn't support (e.g. reasoning models reject temperature)
+    const excludeParams = modelConfig?.capabilities?.excludeParams;
+    if (Array.isArray(excludeParams)) {
+        for (const key of excludeParams) {
+            delete payload[key];
+        }
     }
 
     return payload;

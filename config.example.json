@@ -51,7 +51,6 @@
         "gpuLayers": 99,
         "embedding": true,
         "pooling": "mean",
-        "batchSize": 512,
         "mlock": true
       }
     },
@@ -256,12 +255,6 @@
     "maxThinkingContent": 8192
   },
   
-  "routing": {
-    "defaultChatModel": "llama-chat",
-    "defaultEmbeddingModel": "llama-embed",
-    "defaultImageModel": "gemini-image",
-    "defaultAudioModel": "gemini-tts"
-  },
   
   "mediaProcessor": {
     "enabled": true,
@@ -281,7 +274,8 @@
       "model": "openai-chat",
       "description": "General query and conversation",
       "maxTokens": 4096,
-      "temperature": 0.7
+      "temperature": 0.7,
+      "default": true
     },
     "inspect": {
       "model": "openai-chat",
@@ -304,7 +298,10 @@
     },
     "embed": {
       "model": "gemini-embedding",
-      "description": "Text embedding generation"
+      "fallback": "llama-embed",
+      "fallbackCooldownMinutes": 60,
+      "description": "Text embedding generation",
+      "default": true
     },
     "vision": {
       "model": "gemini-flash",
@@ -314,11 +311,13 @@
     },
     "image": {
       "model": "openai-image",
-      "description": "Image generation from text prompts"
+      "description": "Image generation from text prompts",
+      "default": true
     },
     "tts": {
       "model": "openai-tts",
-      "description": "Text-to-speech synthesis"
+      "description": "Text-to-speech synthesis",
+      "default": true
     }
   }
 }

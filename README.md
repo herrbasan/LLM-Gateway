@@ -86,8 +86,14 @@ Define models in `config.json`:
       }
     }
   },
-  "routing": {
-    "defaultChatModel": "gemini-flash"
+  "tasks": {
+    "query": {
+      "model": "gemini-flash",
+      "description": "General query and conversation",
+      "maxTokens": 4096,
+      "temperature": 0.7,
+      "default": true
+    }
   }
 }
 ```
