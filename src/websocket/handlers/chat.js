@@ -82,13 +82,6 @@ export class ChatHandler {
 
     connection.conversationBuffer.push(params.message);
 
-    // Max tokens check could be approximated or checked here, we'll keep it simple for now
-    const MAX_BUFFER_TOKENS = this.config.websocket?.maxBufferTokens || 200000;
-    if (connection.conversationBuffer.length > MAX_BUFFER_TOKENS) {
-         // This is a naive limit by length instead of tokens if not tracking tokens
-         // A real token estimation would be better
-    }
-
     return this._handleChatCompletion(connection, id, params, connection.conversationBuffer, model);
   }
 

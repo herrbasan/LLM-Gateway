@@ -1,13 +1,12 @@
 /**
  * llama.cpp Adapter - Protocol handler for llama.cpp server.
  * Optimized for direct llama.cpp OpenAI-compatible API.
- * 
+ *
  * llama.cpp is the fastest and most reliable inference engine for GGUF models.
  * This adapter provides direct integration without abstraction overhead.
- * 
+ *
  * Features:
  * - Config-level maxTokens override
- * - Hard token cap for safety (models ignoring max_tokens)
  * - Config-level extraBody for provider-specific parameters
  * - Request-level extra_body support
  */
@@ -143,8 +142,8 @@ export function createLlamaCppAdapter() {
          * Streaming chat completion.
          */
         async *streamComplete(modelConfig, request) {
-            
-            const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody, hardTokenCap, localInference } = modelConfig;
+
+            const { endpoint, adapterModel, maxTokens: configMaxTokens, extraBody, localInference } = modelConfig;
             const model = adapterModel || 'unknown';
             const modelHeaders = buildModelHeaders(localInference);
 
@@ -206,11 +205,7 @@ export function createLlamaCppAdapter() {
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
-            
-            // Hard token cap tracking
-            let generatedTokens = 0;
-            const tokenCap = hardTokenCap || configMaxTokens;
-            
+
             // Track thinking mode to suppress tool detection during reasoning
             let inThinkingMode = false;
 
@@ -328,26 +323,6 @@ export function createLlamaCppAdapter() {
 
                                     if (delta.content === null || delta.content === '') {
                                         delete delta.content;
-                                    }
-                                }
-                                
-                                // Hard token cap check
-                                if (tokenCap) {
-                                    const content = parsed.choices?.[0]?.delta?.content || '';
-                                    const reasoning = parsed.choices?.[0]?.delta?.reasoning_content || '';
-                                    // Rough token estimation: ~4 chars per token for English
-                                    const estimatedTokens = Math.ceil((content.length + reasoning.length) / 4);
-                                    generatedTokens += estimatedTokens;
-                                    
-                                    if (generatedTokens >= tokenCap) {
-                                        // Yield final chunk with finish_reason
-                                        parsed.choices = parsed.choices || [];
-                                        if (parsed.choices[0]) {
-                                            parsed.choices[0].finish_reason = 'length';
-                                            parsed.choices[0].delta = {}; // Clear delta to signal end
-                                        }
-                                        yield parsed;
-                                        return; // Stop generation
                                     }
                                 }
                                 

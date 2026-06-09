@@ -71,9 +71,7 @@ export const DEFAULT_THINKING_CONFIG = {
     tags: DEFAULT_THINKING_TAGS,
     // If true, orphan close tags (</tag> without opening) treat everything before as thinking
     // This handles "separator style" where content before the first close tag is considered thinking
-    orphanCloseAsSeparator: true,
-    // Max thinking content size in characters before flagging excessive thinking (~2K tokens)
-    maxThinkingContent: 8192
+    orphanCloseAsSeparator: true
 };
 
 function createThinkingStripper(config = {}) {
@@ -84,13 +82,10 @@ function createThinkingStripper(config = {}) {
 
     const tags = normalizedConfig.tags;
     const orphanCloseAsSeparator = normalizedConfig.orphanCloseAsSeparator;
-    const maxThinkingContent = normalizedConfig.maxThinkingContent;
 
     const maxBuffer = 16384;
     let buffer = '';
     let inTag = null;
-    let thinkingContentSize = 0;
-    let thinkingExceeded = false;
     let tagOpenedAt = 0;
 
     const closeNeedleFor = (tagLower) => `</${tagLower}>`;
@@ -137,16 +132,6 @@ function createThinkingStripper(config = {}) {
         return bestIdx === -1 ? null : { idx: bestIdx, tag: bestTag };
     };
 
-    const trackThinking = (size) => {
-        if (inTag && maxThinkingContent) {
-            thinkingContentSize += size;
-            if (!thinkingExceeded && thinkingContentSize > maxThinkingContent) {
-                thinkingExceeded = true;
-                logger.warn(`Thinking content exceeded ${maxThinkingContent} chars (${thinkingContentSize} chars, ~${Math.floor(thinkingContentSize / 4)} tokens)`, null, 'ThinkingStripper');
-            }
-        }
-    };
-
     return {
         process(text) {
             if (!text) return '';
@@ -159,14 +144,10 @@ function createThinkingStripper(config = {}) {
                     const closeNeedle = closeNeedleFor(inTag);
                     const closeIdx = buffer.toLowerCase().indexOf(closeNeedle);
                     if (closeIdx === -1) {
-                        // Track thinking content size for unclosed tag
-                        trackThinking(buffer.length);
                         // Keep only enough chars to detect the close tag at the boundary
                         buffer = buffer.slice(-(closeNeedle.length - 1));
                         break;
                     }
-                    // Track the thinking content that was stripped
-                    trackThinking(closeIdx);
                     buffer = buffer.slice(closeIdx + closeNeedle.length);
                     inTag = null;
                     continue;
@@ -202,30 +183,19 @@ function createThinkingStripper(config = {}) {
         },
         flush() {
             if (inTag) {
-                const thinkingTokens = Math.floor(thinkingContentSize / 4);
-                const reason = thinkingExceeded
-                    ? `excessive thinking (${thinkingContentSize} chars, ~${thinkingTokens} tokens)`
-                    : `unclosed <${inTag}> tag (${thinkingContentSize} chars, ~${thinkingTokens} tokens)`;
-                logger.warn(`Flush with ${reason} — thinking content discarded`, null, 'ThinkingStripper');
+                logger.warn(`Flush with unclosed <${inTag}> tag — thinking content discarded`, null, 'ThinkingStripper');
                 buffer = '';
                 inTag = null;
-                thinkingContentSize = 0;
-                thinkingExceeded = false;
                 return '';
             }
             const out = buffer;
             buffer = '';
             inTag = null;
-            thinkingContentSize = 0;
-            thinkingExceeded = false;
             return out;
         },
         getStats() {
             return {
-                inTag,
-                thinkingContentSize,
-                thinkingExceeded,
-                thinkingTokens: Math.floor(thinkingContentSize / 4)
+                inTag
             };
         }
     };

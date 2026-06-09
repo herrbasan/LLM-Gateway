@@ -62,11 +62,6 @@ export function validateModelConfig(modelId, config) {
         throw new Error(`[Config] Model "${modelId}": extraBody must be an object`);
     }
 
-    // Validate optional hardTokenCap if present (safety limit for endless generation)
-    if ('hardTokenCap' in config && (typeof config.hardTokenCap !== 'number' || config.hardTokenCap < 1)) {
-        throw new Error(`[Config] Model "${modelId}": hardTokenCap must be a positive number`);
-    }
-
     return true;
 }
 
@@ -175,9 +170,6 @@ export function validateGlobalConfig(config) {
         }
         if ('orphanCloseAsSeparator' in config.thinking && typeof config.thinking.orphanCloseAsSeparator !== 'boolean') {
             throw new Error('[Config] thinking.orphanCloseAsSeparator must be boolean');
-        }
-        if ('maxThinkingContent' in config.thinking && (typeof config.thinking.maxThinkingContent !== 'number' || config.thinking.maxThinkingContent < 1)) {
-            throw new Error('[Config] thinking.maxThinkingContent must be a positive number');
         }
     }
 

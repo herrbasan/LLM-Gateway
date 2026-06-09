@@ -59,7 +59,7 @@ export function createResponsesAdapter() {
          * @param {Object} request - Responses API format request
          */
         async *streamComplete(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel, headers: customHeaders, hardTokenCap } = modelConfig;
+            const { endpoint, apiKey, adapterModel, headers: customHeaders } = modelConfig;
 
             const payload = buildPayload(request, modelConfig, adapterModel, true);
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
@@ -77,10 +77,6 @@ export function createResponsesAdapter() {
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
-            
-            // Hard token cap tracking
-            let generatedTokens = 0;
-            const tokenCap = hardTokenCap || modelConfig?.maxTokens;
 
             try {
                 while (true) {
@@ -94,38 +90,19 @@ export function createResponsesAdapter() {
                     for (const line of lines) {
                         const trimmed = line.trim();
                         if (!trimmed || trimmed.startsWith(':')) continue;
-                        
+
                         if (trimmed.startsWith('data: ')) {
                             const data = trimmed.slice(6);
                             if (data === '[DONE]') {
                                 yield { provider: 'openai' };
                                 return;
                             }
-                            
+
                             try {
                                 const parsed = JSON.parse(data);
                                 // Transform Responses API events to Chat Completions format
                                 const transformed = transformStreamingEvent(parsed);
                                 if (transformed) {
-                                    // Hard token cap check
-                                    if (tokenCap) {
-                                        const content = transformed.choices?.[0]?.delta?.content || '';
-                                        // Rough token estimation: ~4 chars per token for English
-                                        const estimatedTokens = Math.ceil(content.length / 4);
-                                        generatedTokens += estimatedTokens;
-                                        
-                                        if (generatedTokens >= tokenCap) {
-                                            // Yield final chunk with finish_reason
-                                            transformed.choices = transformed.choices || [];
-                                            if (transformed.choices[0]) {
-                                                transformed.choices[0].finish_reason = 'length';
-                                                transformed.choices[0].delta = {};
-                                            }
-                                            yield transformed;
-                                            return; // Stop generation
-                                        }
-                                    }
-                                    
                                     yield transformed;
                                 }
                             } catch (e) {
