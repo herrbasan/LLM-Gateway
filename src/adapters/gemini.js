@@ -140,6 +140,9 @@ export function createGeminiAdapter() {
                         try {
                             payloadData = JSON.parse(dataStr);
                         } catch (e) {
+                            if (dataStr.length > 0) {
+                                console.error(`[GeminiAdapter] Failed to parse SSE data line: ${dataStr.slice(0, 200)}`);
+                            }
                             continue;
                         }
 

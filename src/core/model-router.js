@@ -431,7 +431,12 @@ export class ModelRouter {
         const requestKwargs = request.chat_template_kwargs || {};
         const extraBodyKwargs = (request.extra_body || {}).chat_template_kwargs || {};
 
-        const enable_thinking = request.enable_thinking ?? extraBodyKwargs.enable_thinking ?? requestKwargs.enable_thinking ?? configThinking;
+        // Priority: client explicit > extra_body > chat_template_kwargs > model config extraBody > model config top-level
+        const enable_thinking = request.enable_thinking
+            ?? extraBodyKwargs.enable_thinking
+            ?? requestKwargs.enable_thinking
+            ?? configThinking
+            ?? modelConfig.enable_thinking;
 
         if (enable_thinking == null) {
             return {

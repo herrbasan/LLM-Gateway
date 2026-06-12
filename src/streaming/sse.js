@@ -58,6 +58,7 @@ export class StreamHandler {
         this.start();
 
         let seenUpstreamUsage = false;
+        let hasContent = false;
 
         // Emit context stats as initial event so clients can display context window
         if (contextPayload && contextPayload.window_size) {
@@ -82,6 +83,18 @@ export class StreamHandler {
                         delete delta.content;
                     } else if (delta.content === null) {
                         delta.content = "";
+                    }
+
+                    // Track whether this chunk contributes meaningful content.
+                    // Copilot's BYOK parser accumulates delta.content across chunks;
+                    // if no chunk ever delivers content, it throws "Response contained no choices."
+                    if (
+                        (typeof delta.content === 'string' && delta.content.length > 0) ||
+                        delta.tool_calls != null ||
+                        delta.function_call != null ||
+                        delta.reasoning_content != null
+                    ) {
+                        hasContent = true;
                     }
                 }
 
@@ -154,12 +167,40 @@ export class StreamHandler {
                 this.res.write(`data: ${JSON.stringify(injectedChunk)}\n\n`);
             }
 
+            // CRITICAL: Copilot's BYOK parser accumulates delta.content across chunks.
+            // If zero content was delivered, Copilot throws "Response contained no choices."
+            // Surface a clear error here so the root cause isn't hidden behind Copilot's generic message.
+            if (this.isActive && !hasContent) {
+                logger.error('Stream produced zero content chunks', {
+                    seenUpstreamUsage,
+                    context: contextPayload
+                }, 'StreamHandler');
+                this.res.write(`data: ${JSON.stringify({
+                    error: {
+                        message: 'Stream produced no content. The upstream model returned no text, tool calls, or reasoning. This may indicate an API error, an empty model response, or a format mismatch.',
+                        type: 'zero_content_error',
+                        code: 'ZERO_CONTENT'
+                    }
+                })}\n\n`);
+            }
+
             if (this.isActive) {
                 this.res.write('data: [DONE]\n\n');
             }
         } catch (err) {
             if (!isAbortError(err)) {
                 logger.error('Streaming error', { error: err.message, stack: err.stack }, 'StreamHandler');
+                // Surface the error to the client so Copilot doesn't just see
+                // a truncated stream and throw "Response contained no choices."
+                if (this.isActive) {
+                    this.res.write(`data: ${JSON.stringify({
+                        error: {
+                            message: err.message || 'Unknown streaming error',
+                            type: 'stream_error',
+                            code: err.code || 'STREAM_ERROR'
+                        }
+                    })}\n\n`);
+                }
             }
         } finally {
             this.cleanup();

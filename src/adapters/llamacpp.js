@@ -328,7 +328,9 @@ export function createLlamaCppAdapter() {
                                 
                                 yield parsed;
                             } catch (e) {
-                                // Skip broken JSON
+                                if (data.length > 0 && data !== '[DONE]') {
+                                    console.error(`[llamacppAdapter] Failed to parse SSE data line: ${data.slice(0, 200)}`);
+                                }
                             }
                         }
                     }

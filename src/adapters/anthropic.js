@@ -463,8 +463,16 @@ export function createAnthropicAdapter() {
                     buffer = lines.pop();
 
                     for (const line of lines) {
-                        if (!line.startsWith('data: ')) continue;
-                        const data = line.slice(6);
+                        // Standard Anthropic: "data: {...}" (space after colon)
+                        // Kimi Coding API:   "data:{...}"  (no space)
+                        let data;
+                        if (line.startsWith('data: ')) {
+                            data = line.slice(6);
+                        } else if (line.startsWith('data:')) {
+                            data = line.slice(5);
+                        } else {
+                            continue;
+                        }
                         if (data === '[DONE]') continue;
 
                         try {
@@ -700,6 +708,45 @@ export function createAnthropicAdapter() {
                     }
                 }));
             }
+        },
+
+        /**
+         * Native token counting via the Anthropic count_tokens endpoint.
+         * Used by the model router for accurate context window display.
+         */
+        async countMessageTokens(messages, modelConfig) {
+            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const model = adapterModel || 'claude-3-opus-20240229';
+
+            const { messages: rawMessages, systemPrompt } = extractSystemPrompt(messages);
+            const normalized = normalizeMessages(rawMessages);
+            const formatted = formatMessages(normalized);
+
+            const body = { model, messages: formatted };
+            if (systemPrompt) body.system = systemPrompt;
+
+            try {
+                const res = await httpRequest(`${endpoint}/v1/messages/count_tokens`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (typeof data.input_tokens === 'number') {
+                    return data.input_tokens;
+                }
+                logger.warn('count_tokens returned unexpected format', { data }, 'AnthropicAdapter');
+            } catch (err) {
+                logger.warn('count_tokens failed, falling back to estimator', {
+                    error: err.message,
+                    messageCount: messages?.length,
+                    hasTools: messages?.some(m => m.role === 'tool' || m.tool_calls)
+                }, 'AnthropicAdapter');
+            }
+            return null;
         }
     };
 }

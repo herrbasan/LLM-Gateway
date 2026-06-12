@@ -74,6 +74,25 @@ export function createResponsesAdapter() {
                 body: JSON.stringify(payload)
             });
 
+            if (!res.ok) {
+                const errorStr = await res.text();
+                throw new Error(`Responses API Streaming Error (${res.status}): ${errorStr}`);
+            }
+
+            // Guard against APIs that return 200 with JSON error bodies.
+            const contentType = res.headers.get('content-type') || '';
+            if (!contentType.includes('text/event-stream')) {
+                const body = await res.text();
+                let parsed;
+                try { parsed = JSON.parse(body); } catch { /* not JSON */ }
+                if (parsed?.error) {
+                    const err = new Error(`Responses API Error: ${parsed.error.message || JSON.stringify(parsed.error)}`);
+                    err.status = parsed.error.code || 500;
+                    throw err;
+                }
+                throw new Error(`Responses API unexpected response type: ${contentType}. Body: ${body.slice(0, 500)}`);
+            }
+
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
@@ -106,7 +125,9 @@ export function createResponsesAdapter() {
                                     yield transformed;
                                 }
                             } catch (e) {
-                                // Skip broken JSON
+                                if (data.length > 0 && data !== '[DONE]') {
+                                    console.error(`[ResponsesAdapter] Failed to parse SSE data line: ${data.slice(0, 200)}`);
+                                }
                             }
                         }
                     }

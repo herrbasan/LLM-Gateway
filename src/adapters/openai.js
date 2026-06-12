@@ -23,7 +23,7 @@ export function createOpenAIAdapter() {
             };
 
             applyTokenParams(payload, request, capabilities);
-            applyStandardParams(payload, request);
+            applyStandardParams(payload, request, modelConfig);
             applyFormatParams(payload, request, capabilities);
             applyToolParams(payload, request);
             applyLogprobParams(payload, request);
@@ -64,7 +64,7 @@ export function createOpenAIAdapter() {
             };
 
             applyTokenParams(payload, request, capabilities);
-            applyStandardParams(payload, request);
+            applyStandardParams(payload, request, modelConfig);
             applyFormatParams(payload, request, capabilities);
             applyToolParams(payload, request);
             applyLogprobParams(payload, request);
@@ -81,6 +81,26 @@ export function createOpenAIAdapter() {
                 signal: request.signal,
                 body: JSON.stringify(payload)
             });
+
+            if (!res.ok) {
+                const errorStr = await res.text();
+                throw new Error(`OpenAI API Streaming Error (${res.status}): ${errorStr}`);
+            }
+
+            // Guard against APIs that return 200 with JSON error bodies (e.g. Kimi Coding API).
+            // If the response isn't SSE, read it as JSON and surface any error.
+            const contentType = res.headers.get('content-type') || '';
+            if (!contentType.includes('text/event-stream')) {
+                const body = await res.text();
+                let parsed;
+                try { parsed = JSON.parse(body); } catch { /* not JSON */ }
+                if (parsed?.error) {
+                    const err = new Error(`OpenAI API Error: ${parsed.error.message || JSON.stringify(parsed.error)}`);
+                    err.status = parsed.error.code || 500;
+                    throw err;
+                }
+                throw new Error(`OpenAI API unexpected response type: ${contentType}. Body: ${body.slice(0, 500)}`);
+            }
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
@@ -106,7 +126,11 @@ export function createOpenAIAdapter() {
                                 parsed.provider = 'openai';
                                 yield parsed;
                             } catch (e) {
-                                // Skip broken JSON
+                                // Malformed SSE data line — log but don't halt the stream.
+                                // A single corrupt line shouldn't kill the entire response.
+                                if (data.length > 0 && data !== '[DONE]') {
+                                    console.error(`[OpenAIAdapter] Failed to parse SSE data line: ${data.slice(0, 200)}`);
+                                }
                             }
                         }
                     }
@@ -331,9 +355,20 @@ function applyTokenParams(payload, request, capabilities) {
     }
 }
 
-function applyStandardParams(payload, request) {
-    if (typeof request.temperature === 'number') payload.temperature = request.temperature;
-    if (typeof request.top_p === 'number') payload.top_p = request.top_p;
+function applyStandardParams(payload, request, modelConfig) {
+    // Model-level overrides take precedence when explicitly configured.
+    // This lets a model declare "I only accept temperature: 1" in config
+    // rather than silently deleting what the client sends.
+    if (typeof modelConfig?.temperature === 'number') {
+        payload.temperature = modelConfig.temperature;
+    } else if (typeof request.temperature === 'number') {
+        payload.temperature = request.temperature;
+    }
+    if (typeof modelConfig?.top_p === 'number') {
+        payload.top_p = modelConfig.top_p;
+    } else if (typeof request.top_p === 'number') {
+        payload.top_p = request.top_p;
+    }
     if (typeof request.frequency_penalty === 'number') payload.frequency_penalty = request.frequency_penalty;
     if (typeof request.presence_penalty === 'number') payload.presence_penalty = request.presence_penalty;
     if (request.stop) payload.stop = request.stop;
