@@ -60,13 +60,7 @@ export class StreamHandler {
         let seenUpstreamUsage = false;
         let hasContent = false;
 
-        // Emit context stats as initial event so clients can display context window
-        if (contextPayload && contextPayload.window_size) {
-            this.res.write(`data: ${JSON.stringify({
-                object: 'chat.completion.chunk',
-                context: contextPayload
-            })}\n\n`);
-        }
+
 
         try {
             for await (let chunk of chunkGenerator) {

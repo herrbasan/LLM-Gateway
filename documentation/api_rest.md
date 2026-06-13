@@ -187,14 +187,12 @@ If `max_tokens` is omitted, the gateway derives a safe output budget from the mo
   "context": {
     "window_size": 1048576,
     "used_tokens": 2800,
-    "available_tokens": 1045776,
-    "resolved_max_tokens": 835060,
-    "max_tokens_source": "default"
+    "available_tokens": 1045776
   }
 }
 ```
 
-`context.max_tokens_source` is `explicit` when the request supplied `max_tokens`, `config` when resolved from the model's `maxOutputTokens` capability, and `default` when the upstream API decides its own default.
+The `context` object is gateway telemetry (window size, estimated usage). It is not part of the OpenAI Chat Completions spec and is omitted from spec-compliant responses.
 
 **Response 202 (With `X-Async: true`):**
 
@@ -277,7 +275,7 @@ data: {"id":"...","choices":[{"delta":{"content":"Hello"}}]}
 data: {"id":"...","choices":[{"delta":{"content":" world"}}]}
 
 event: context.status
-data: {"window_size":1048576,"used_tokens":2800,"available_tokens":1045776,"resolved_max_tokens":835060,"max_tokens_source":"default"}
+data: {"window_size":1048576,"used_tokens":2800,"available_tokens":1045776}
 
 data: [DONE]
 ```

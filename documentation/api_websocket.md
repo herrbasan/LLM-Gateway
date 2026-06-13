@@ -84,12 +84,12 @@ When `task` is provided, the gateway resolves the task's default model and param
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "routing", "task": "query"}}
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "model_routed", "model": "gemini-flash", "provider": "gemini"}}
 {"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context"}}
-{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context_stats", "context": {"window_size": 1048576, "used_tokens": 2800, "available_tokens": 1045776, "strategy_applied": false, "resolved_max_tokens": 835060, "max_tokens_source": "implicit"}}}
+{"jsonrpc": "2.0", "method": "chat.progress", "params": {"request_id": "req-1", "phase": "context_stats", "context": {"window_size": 1048576, "used_tokens": 2800, "available_tokens": 1045776, "strategy_applied": false}}}
 {"jsonrpc": "2.0", "method": "chat.delta", "params": {"request_id": "req-1", "choices": [{"index": 0, "delta": {"content": "Hello! "}}]}}
 {"jsonrpc": "2.0", "method": "chat.done", "params": {"request_id": "req-1", "cancelled": false, "finish_reason": "stop", "model": "gemini-flash", "provider": "gemini", "context": {...}, "telemetry": {"time_to_first_token_ms": 120, "total_duration_ms": 340, "chunks_sent": 5, "usage": {"prompt_tokens": 2800, "completion_tokens": 42, "total_tokens": 2842}, "reasoning_produced": false}}}
 ```
 
-If `max_tokens` is omitted from `params`, the gateway resolves a safe output budget automatically and reports it in the `chat.progress` `context_stats` payload.
+If `max_tokens` is omitted from `params`, the gateway falls back to the model's declared `capabilities.maxOutputTokens` (or omits the field for OpenAI-adapter upstreams).
 
 #### `chat.append`
 Efficient incremental context update using a connection-scoped buffer. Appends only the new message to avoid sending massive context histories repeatedly.
@@ -175,9 +175,7 @@ Example `context_stats` notification:
       "window_size": 1048576,
       "used_tokens": 2800,
       "available_tokens": 1045776,
-      "strategy_applied": false,
-      "resolved_max_tokens": 835060,
-      "max_tokens_source": "implicit"
+      "strategy_applied": false
     }
   }
 }

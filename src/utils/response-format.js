@@ -15,7 +15,7 @@ export function chatCompletionsToResponse(chatResponse, rawRequest = {}) {
         error: null,
         incomplete_details: null,
         instructions: rawRequest.instructions || null,
-        max_output_tokens: chatResponse.resolved_max_tokens ?? rawRequest.max_output_tokens ?? null,
+        max_output_tokens: rawRequest.max_output_tokens ?? null,
         model: chatResponse.model || rawRequest.model || 'unknown',
         output,
         parallel_tool_calls: rawRequest.parallel_tool_calls ?? true,

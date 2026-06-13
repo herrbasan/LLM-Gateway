@@ -170,7 +170,7 @@
       }
     },
     
-    "_comment_anthropic": "--- Anthropic Claude ---",
+    "_comment_anthropic": "--- Anthropic Claude (requires maxOutputTokens) ---",
     "anthropic-chat": {
       "type": "chat",
       "adapter": "anthropic",
@@ -179,21 +179,23 @@
       "adapterModel": "claude-3-5-sonnet-20241022",
       "capabilities": {
         "contextWindow": 200000,
+        "maxOutputTokens": 8192,
         "vision": true,
         "streaming": true,
         "structuredOutput": true
       }
     },
     
-    "_comment_kimi": "--- Moonshot Kimi ---",
+    "_comment_kimi": "--- Moonshot Kimi (Anthropic Messages API, requires maxOutputTokens) ---",
     "kimi-chat": {
       "type": "chat",
-      "adapter": "kimi",
-      "endpoint": "https://api.kimi.com/coding/v1",
+      "adapter": "anthropic",
+      "endpoint": "https://api.kimi.com/coding",
       "apiKey": "your-kimi-api-key",
       "adapterModel": "kimi-for-coding",
       "capabilities": {
         "contextWindow": 256000,
+        "maxOutputTokens": 8192,
         "vision": true,
         "structuredOutput": true,
         "streaming": true

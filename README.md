@@ -4,8 +4,7 @@ A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface wit
 
 ## Recent Behavior of Note
 
-- Chat requests without `max_tokens` get an automatically derived output budget based on remaining context
-- Chat responses expose `context.resolved_max_tokens` and `context.max_tokens_source`
+- Chat requests without `max_tokens` fall back to the model's declared `capabilities.maxOutputTokens`; OpenAI-spec responses are not extended with gateway metadata
 - WebSocket `chat.cancel` aborts the upstream provider request
 - HTTP client disconnects abort in-flight upstream chat generation for supported adapters
 - Task-based query system for semantic routing with preset parameters (`task` param in request body)

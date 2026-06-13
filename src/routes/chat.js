@@ -125,9 +125,6 @@ export function createChatHandler(router, ticketRegistry) {
                 normalized.usage.prompt_tokens = context.used_tokens;
                 if (!normalized.usage.completion_tokens) normalized.usage.completion_tokens = 0;
                 normalized.usage.total_tokens = context.used_tokens + (normalized.usage.completion_tokens || 0);
-                
-                // Also attach full context metadata for clients that read it
-                normalized.context = context;
             }
 
             res.status(200).json(normalized);

@@ -259,8 +259,7 @@ export class ChatHandler {
           details: {
             phase: 'context_stats',
             used_tokens: initialContext.used_tokens,
-            available_tokens: initialContext.available_tokens,
-            resolved_max_tokens: initialContext.resolved_max_tokens ?? null
+            available_tokens: initialContext.available_tokens
           }
         });
       }

@@ -139,8 +139,9 @@ export class ModelRouter {
 
         const context = await this._buildContextStats(messages, modelConfig, adapter);
 
-        const resolvedMaxTokens = this._resolveChatMaxTokens(effectiveRequest, modelConfig, context);
-        const responseContext = this._annotateContext(context, resolvedMaxTokens, effectiveRequest);
+        const resolvedMaxTokens = effectiveRequest.max_completion_tokens ?? effectiveRequest.max_tokens ?? effectiveRequest.maxTokens
+            ?? modelConfig.capabilities?.maxOutputTokens
+            ?? null;
 
         const finalOpts = {
             ...opts,
@@ -154,9 +155,8 @@ export class ModelRouter {
             adapter: modelConfig.adapter,
             stream: effectiveRequest.stream === true,
             message_count: messages.length,
-            context: responseContext,
-            explicit_max_tokens: (effectiveRequest.max_completion_tokens ?? effectiveRequest.max_tokens ?? effectiveRequest.maxTokens) ?? null,
-            resolved_max_tokens: resolvedMaxTokens,
+            context,
+            explicit_max_tokens: resolvedMaxTokens,
             temperature: finalOpts.temperature ?? null,
             task: taskInfo?.id || null
         }, 'ModelRouter');
@@ -167,11 +167,11 @@ export class ModelRouter {
             return {
                 stream: true,
                 generator: adapter.streamComplete(modelConfig, finalOpts),
-                context: responseContext
+                context
             };
         } else {
             result = await adapter.chatComplete(modelConfig, finalOpts);
-            result.context = responseContext;
+            result.context = context;
         }
 
         // Extract thinking tags from non-streaming content
@@ -226,8 +226,10 @@ export class ModelRouter {
         const processedMessages = await this._processImagesInMessages(opts.messages, modelConfig, request.image_processing);
         const messages = this._prepareImagesForModel(processedMessages, modelConfig);
         const context = await this._buildContextStats(messages, modelConfig, adapter);
-        const resolvedMaxTokens = this._resolveChatMaxTokens(request, modelConfig);
-        const responseContext = this._annotateContext(context, resolvedMaxTokens, request);
+
+        const resolvedMaxTokens = request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens
+            ?? modelConfig.capabilities?.maxOutputTokens
+            ?? null;
 
         const finalOpts = { ...opts, messages, maxTokens: resolvedMaxTokens, signal: request.signal };
 
@@ -237,7 +239,7 @@ export class ModelRouter {
             return {
                 stream: true,
                 generator: adapter.streamComplete(modelConfig, nativeRequest),
-                context: responseContext,
+                context,
                 _format: 'responses-native'
             };
         }
@@ -245,7 +247,7 @@ export class ModelRouter {
         const nativeRequest = { ...rawRequest };
         if (resolvedMaxTokens != null) nativeRequest.max_output_tokens = resolvedMaxTokens;
         const result = await adapter.chatComplete(modelConfig, nativeRequest);
-        result.context = responseContext;
+        result.context = context;
         return result;
     }
 
@@ -527,56 +529,6 @@ export class ModelRouter {
             }
             throw err;
         }
-    }
-
-    /**
-     * Resolve the max output token budget for a chat request.
-     *
-     * Resolution order:
-     * 1. Explicit client value (max_completion_tokens, max_tokens, maxTokens)
-     * 2. Model config maxOutputTokens capability
-     * 3. Available context window (context.available_tokens) — implicit budget
-     *    from remaining context, capped at a reasonable output ratio.
-     *
-     * If no value can be resolved, returns null — the adapter will reject
-     * with a clear error rather than silently using a guess.
-     */
-    _resolveChatMaxTokens(request, modelConfig, context) {
-        const requestedMaxTokens = request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens;
-        if (requestedMaxTokens != null) {
-            return requestedMaxTokens;
-        }
-
-        if (modelConfig?.capabilities?.maxOutputTokens != null) {
-            return modelConfig.capabilities.maxOutputTokens;
-        }
-
-        // Implicit budget: use up to 80% of remaining context for output,
-        // with a floor of 4096 so short conversations still get reasonable output.
-        const availableTokens = context?.available_tokens;
-        if (typeof availableTokens === 'number' && Number.isFinite(availableTokens) && availableTokens > 0) {
-            return Math.max(Math.floor(availableTokens * 0.8), 4096);
-        }
-
-        // No budget resolvable — adapter will reject with clear error
-        return null;
-    }
-
-    /**
-     * Attach resolved token budget metadata to response context.
-     */
-    _annotateContext(context, resolvedMaxTokens, request) {
-        const source = (request.max_completion_tokens != null || request.max_tokens != null || request.maxTokens != null)
-            ? 'explicit'
-            : 'implicit';
-
-        const annotation = {
-            resolved_max_tokens: resolvedMaxTokens,
-            max_tokens_source: source
-        };
-
-        if (!context) return annotation;
-        return { ...context, ...annotation };
     }
 
     /**

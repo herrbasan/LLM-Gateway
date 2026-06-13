@@ -20,7 +20,7 @@
 - **v1.x**: Provider-centric architecture (archived docs in `docs/_Archive/`)
 - **Task-based query system**: Named tasks with preset model + parameters, client overrides apply (COMPLETE)
 - **Chat cancellation**: WebSocket `chat.cancel` and HTTP disconnect abort propagation are implemented for fetch-based chat adapters
-- **Implicit max token budget**: Omitted `max_tokens` values are resolved centrally from remaining context and surfaced in response context metadata
+- **Per-model `maxOutputTokens`**: Omitted `max_tokens` values fall back to `capabilities.maxOutputTokens` declared in each model config. Required for Anthropic-adapter upstreams (Kimi, GLM, DeepSeek, MiniMax). OpenAI-adapter upstreams omit the field and use their own default.
 - **WebSocket context telemetry**: `chat.progress` context stats are kept authoritative during streaming and `chat.done` now carries final context metadata
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
 - **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST and WebSocket with adapter-specific format conversion (COMPLETE)
@@ -84,15 +84,15 @@ Disabled models:
 
 ### Available Adapters
 
-| Adapter | Description | Supported Types |
-|---------|-------------|-----------------|
-| `openai` | Standard OpenAI Chat Completions API | chat, embedding, image, audio, video |
-| `responses` | OpenAI Responses API (newer format) | chat |
-| `anthropic` | Anthropic Claude API | chat |
-| `gemini` | Google Gemini API | chat, embedding, image, audio, video |
-| `kimi` | Moonshot Kimi API (native HTTP) | chat |
-| `alibaba` | Alibaba Cloud AI (unified) | chat, embedding, image, audio |
-| `llamacpp` | llama.cpp local server | chat, embedding |
+| Adapter | Description | Supported Types | Notes |
+|---------|-------------|-----------------|-------|
+| `openai` | Standard OpenAI Chat Completions API | chat, embedding, image, audio, video | Omits `max_tokens` when client omits it; upstream decides default |
+| `responses` | OpenAI Responses API (newer format) | chat | — |
+| `anthropic` | Anthropic Claude API | chat | Requires `max_tokens`; falls back to `capabilities.maxOutputTokens` if client omits it |
+| `gemini` | Google Gemini API | chat, embedding, image, audio, video | — |
+| `kimi` | Moonshot Kimi API (native HTTP) | chat | — |
+| `alibaba` | Alibaba Cloud AI (unified) | chat, embedding, image, audio | — |
+| `llamacpp` | llama.cpp local server | chat, embedding | — |
 
 > **Note:** The `alibaba` adapter handles all Alibaba/DashScope functionality (chat, embeddings, TTS, images). For Kimi, use the `kimi` adapter (native HTTP).
 
@@ -205,11 +205,21 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 
 - WebSocket clients cancel generation with `chat.cancel` and `params.request_id`
 - HTTP chat requests abort upstream generation when the client disconnects
-- Response context now exposes `resolved_max_tokens` and `max_tokens_source`
+- OpenAI-spec responses do not include gateway-specific `context` metadata; usage `prompt_tokens` is still overridden with the gateway's context estimate
 - WebSocket `chat.done` includes final `context` metadata for client persistence
 - Kimi chat requests sanitize prior assistant thinking traces before estimation and upstream dispatch
 - Kimi native token counting uses dedicated Moonshot tokenizer endpoints when available and falls back to estimator logic if token estimation is unavailable
 - Qwen models support `enable_thinking` toggle via `extraBody.chat_template_kwargs` — set to `false` to disable verbose reasoning
+
+### Max Output Tokens
+
+The gateway does not synthesize output token budgets. For each model:
+
+- If the client sends `max_tokens` / `max_completion_tokens`, it is forwarded unchanged.
+- If omitted and the model declares `capabilities.maxOutputTokens`, that value is sent upstream.
+- If omitted and no `maxOutputTokens` is declared, the field is omitted (OpenAI-adapter upstreams provide their own default; Anthropic-adapter upstreams will reject the request).
+
+This means Anthropic-adapter models (Kimi, GLM, DeepSeek, MiniMax) **must** declare `capabilities.maxOutputTokens` in `config.json`.
 
 ### Thinking Control (Per-Request)
 The gateway supports disabling/enabling model reasoning per-request from both REST and WebSocket endpoints. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.

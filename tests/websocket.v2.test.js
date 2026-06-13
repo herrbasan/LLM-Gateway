@@ -299,9 +299,7 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
                 window_size: 256000,
                 used_tokens: 22000,
                 available_tokens: 234000,
-                strategy_applied: false,
-                resolved_max_tokens: 12000,
-                max_tokens_source: 'implicit'
+                strategy_applied: false
             },
             generator: (async function* () {
                 yield { choices: [{ delta: { content: 'first' } }] };
@@ -355,9 +353,7 @@ it('Local IP Auto-Authentication: allows chat.create immediately', async () => {
             window_size: 256000,
             used_tokens: 22000,
             available_tokens: 234000,
-            strategy_applied: false,
-            resolved_max_tokens: 12000,
-            max_tokens_source: 'implicit'
+            strategy_applied: false
         });
     });
 
