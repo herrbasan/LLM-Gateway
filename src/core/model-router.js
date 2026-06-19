@@ -646,6 +646,15 @@ export class ModelRouter {
                 const imageUrl = part.image_url?.url || '';
                 const detail = part.image_url?.detail || 'auto';
 
+                // Reject non-fetchable URLs before entering try/catch
+                if (!imageUrl) continue;
+                if (!imageUrl.startsWith('data:') && !imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
+                    logger.warn('Stripping image with non-fetchable URL', {
+                        url: imageUrl.substring(0, 120)
+                    }, 'ModelRouter');
+                    continue;
+                }
+
                 try {
                     // Fetch image (handles both data URLs and remote URLs)
                     const { mimeType, base64 } = await imageFetcher.fetchImage(imageUrl);
@@ -696,11 +705,11 @@ export class ModelRouter {
                         quality: processOptions.quality
                     }, 'ModelRouter');
                 } catch (error) {
-                    logger.warn('Failed to process image, using original', {
-                        error: error.message
+                    // Only network/processing failures reach here — the URL was already validated
+                    logger.warn('Failed to process image, stripping from request', {
+                        error: error.message,
+                        url: imageUrl.substring(0, 120)
                     }, 'ModelRouter');
-                    // Fall back to original
-                    processedContent.push(part);
                 }
             }
 
@@ -739,9 +748,17 @@ export class ModelRouter {
 
                 const imageUrl = part.image_url?.url || '';
 
-                // Skip if already a data URL
+                // Skip if already a data URL — already inlined, no fetch needed
                 if (imageUrl.startsWith('data:')) {
                     processedContent.push(part);
+                    continue;
+                }
+
+                // Reject non-fetchable URLs before entering try/catch
+                if (!imageUrl || (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://'))) {
+                    logger.warn('Stripping image with non-fetchable URL', {
+                        url: (imageUrl || '').substring(0, 120)
+                    }, 'ModelRouter');
                     continue;
                 }
 
@@ -755,10 +772,11 @@ export class ModelRouter {
                         }
                     });
                 } catch (error) {
-                    logger.warn('Failed to fetch remote image, using original URL', {
-                        error: error.message
+                    // Only network failures reach here — the URL was already validated
+                    logger.warn('Failed to fetch remote image, stripping from request', {
+                        error: error.message,
+                        url: imageUrl.substring(0, 120)
                     }, 'ModelRouter');
-                    processedContent.push(part);
                 }
             }
 
