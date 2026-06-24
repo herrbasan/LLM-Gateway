@@ -168,7 +168,11 @@ export function createAnthropicAdapter() {
         return result;
     }
 
-    function buildThinkingConfig(maxTokens) {
+    function buildThinkingConfig(maxTokens, capabilities) {
+        // Opus 4.7/4.8 use adaptive thinking (model decides when to think)
+        if (capabilities?.thinkingMode === 'adaptive') {
+            return { type: 'adaptive' };
+        }
         const budget = Math.max(Math.floor(maxTokens * 0.8), 1024);
         return { type: 'enabled', budget_tokens: budget };
     }
@@ -182,11 +186,16 @@ export function createAnthropicAdapter() {
         );
     }
 
-    function buildHeaders(apiKey) {
-        return {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        };
+    function buildHeaders(apiKey, capabilities) {
+        const headers = { 'Content-Type': 'application/json' };
+        // Native Anthropic uses x-api-key; third-party Anthropic-protocol providers use Bearer
+        if (capabilities?.anthropicVersion) {
+            headers['x-api-key'] = apiKey;
+            headers['anthropic-version'] = capabilities.anthropicVersion;
+        } else {
+            headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+        return headers;
     }
 
     function normalizeResponse(data, model) {
@@ -249,7 +258,9 @@ export function createAnthropicAdapter() {
             usage: {
                 prompt_tokens: data.usage?.input_tokens || 0,
                 completion_tokens: data.usage?.output_tokens || 0,
-                total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
+                total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+                cache_read_input_tokens: data.usage?.cache_read_input_tokens || 0,
+                cache_creation_input_tokens: data.usage?.cache_creation_input_tokens || 0
             }
         };
     }
@@ -295,7 +306,8 @@ export function createAnthropicAdapter() {
                 throw new Error('[AnthropicAdapter] apiKey is required in modelConfig');
             }
 
-            const { messages: rawMessages, systemPrompt } = extractSystemPrompt(request.messages);
+            const { messages: rawMessages, systemPrompt: extractedSystem } = extractSystemPrompt(request.messages);
+            const systemPrompt = extractedSystem ?? request.systemPrompt;
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = formatMessages(messages);
@@ -309,15 +321,26 @@ export function createAnthropicAdapter() {
 
             if (request.enable_thinking != null) {
                 body.thinking = request.enable_thinking
-                    ? buildThinkingConfig(request.maxTokens)
+                    ? buildThinkingConfig(request.maxTokens, capabilities)
                     : { type: 'disabled' };
             } else if (thinkingInHistory) {
-                body.thinking = buildThinkingConfig(request.maxTokens);
+                body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
             }
 
             if (systemPrompt) body.system = systemPrompt;
-            if (typeof request.temperature === 'number') body.temperature = request.temperature;
+            if (typeof request.temperature === 'number') {
+                // Anthropic: temperature must be 1 when thinking is enabled (non-disabled)
+                const thinkingActive = body.thinking && body.thinking.type !== 'disabled';
+                if (!thinkingActive || request.temperature === 1) {
+                    body.temperature = request.temperature;
+                }
+            }
             
+            // Prompt caching (capability-gated: only forward to providers that declare support)
+            if (request.cache_control && capabilities?.promptCaching) {
+                body.cache_control = request.cache_control;
+            }
+
             // Tools conversion
             if (request.tools) {
                 const { claudeTools, claudeToolChoice } = convertToolsFormat(request.tools, request.tool_choice);
@@ -353,7 +376,7 @@ export function createAnthropicAdapter() {
 
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
-                headers: buildHeaders(apiKey),
+                headers: buildHeaders(apiKey, capabilities),
                 signal: request.signal,
                 body: JSON.stringify(body)
             });
@@ -368,14 +391,15 @@ export function createAnthropicAdapter() {
         },
 
         async *streamComplete(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
             const model = adapterModel || 'claude-3-opus-20240229';
 
             if (!apiKey) {
                 throw new Error('[AnthropicAdapter] apiKey is required in modelConfig');
             }
 
-            const { messages: rawMessages, systemPrompt } = extractSystemPrompt(request.messages);
+            const { messages: rawMessages, systemPrompt: extractedSystem } = extractSystemPrompt(request.messages);
+            const systemPrompt = extractedSystem ?? request.systemPrompt;
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = formatMessages(messages);
@@ -390,14 +414,25 @@ export function createAnthropicAdapter() {
 
             if (request.enable_thinking != null) {
                 body.thinking = request.enable_thinking
-                    ? buildThinkingConfig(request.maxTokens)
+                    ? buildThinkingConfig(request.maxTokens, capabilities)
                     : { type: 'disabled' };
             } else if (thinkingInHistory) {
-                body.thinking = buildThinkingConfig(request.maxTokens);
+                body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
             }
 
             if (systemPrompt) body.system = systemPrompt;
-            if (typeof request.temperature === 'number') body.temperature = request.temperature;
+            if (typeof request.temperature === 'number') {
+                // Anthropic: temperature must be 1 when thinking is enabled (non-disabled)
+                const thinkingActive = body.thinking && body.thinking.type !== 'disabled';
+                if (!thinkingActive || request.temperature === 1) {
+                    body.temperature = request.temperature;
+                }
+            }
+
+            // Prompt caching (capability-gated: only forward to providers that declare support)
+            if (request.cache_control && capabilities?.promptCaching) {
+                body.cache_control = request.cache_control;
+            }
 
             // Tools conversion
             if (request.tools) {
@@ -432,7 +467,7 @@ export function createAnthropicAdapter() {
 
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
-                headers: buildHeaders(apiKey),
+                headers: buildHeaders(apiKey, capabilities),
                 signal: request.signal,
                 body: JSON.stringify(body)
             });
@@ -715,7 +750,7 @@ export function createAnthropicAdapter() {
          * Used by the model router for accurate context window display.
          */
         async countMessageTokens(messages, modelConfig) {
-            const { endpoint, apiKey, adapterModel } = modelConfig;
+            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
             const model = adapterModel || 'claude-3-opus-20240229';
 
             const { messages: rawMessages, systemPrompt } = extractSystemPrompt(messages);
@@ -728,10 +763,7 @@ export function createAnthropicAdapter() {
             try {
                 const res = await httpRequest(`${endpoint}/v1/messages/count_tokens`, {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: buildHeaders(apiKey, capabilities),
                     body: JSON.stringify(body)
                 });
                 const data = await res.json();

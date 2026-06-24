@@ -3,6 +3,9 @@
 > **CRITICAL AI AGENT RULE: DO NOT KILL NODE PROCESSES**
 > **NEVER use `taskkill`, `Stop-Process`, `kill`, or any other commands to stop or manage Node processes. This machine runs multiple unrelated background node services. Let the user handle ALL server restarts and process management. NEVER start or stop node processes yourself.**
 >
+> **CRITICAL AI AGENT RULE: DO NOT RESTART THE GATEWAY**
+> **The LLM Gateway is a central part of the user's workflow — it proxies all LLM traffic for active development sessions. NEVER start, stop, or restart the gateway yourself. The user will restart it at opportune moments after you've made changes. Announce when changes require a restart, but wait for the user to do it.**
+>
 > **CRITICAL SECURITY RULE: DO NOT PUSH `config.json` TO REMOTES**
 > **`config.json` contains live API keys and must never be committed or pushed to any remote. Keep secrets local and use `config.example.json` for shareable configuration changes.**
 >

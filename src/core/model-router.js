@@ -421,7 +421,9 @@ export class ModelRouter {
             extra_body: request.extra_body,
             // Normalized thinking control
             enable_thinking: thinking.enable_thinking,
-            chat_template_kwargs: thinking.chat_template_kwargs
+            chat_template_kwargs: thinking.chat_template_kwargs,
+            // Anthropic prompt caching (automatic + explicit breakpoints)
+            cache_control: request.cache_control
         };
     }
 

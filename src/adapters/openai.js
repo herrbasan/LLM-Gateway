@@ -411,6 +411,12 @@ function applyThinkingControl(payload, request, capabilities) {
             enable_thinking: request.enable_thinking
         };
     }
+
+    // xAI/Grok uses reasoning_effort (none/low/medium/high) instead of enable_thinking.
+    // Map boolean enable_thinking to reasoning_effort for models that declare support.
+    if (request.enable_thinking != null && capabilities?.reasoningEffort) {
+        payload.reasoning_effort = request.enable_thinking ? 'high' : 'none';
+    }
     
     // Strict reasoning history constraint for upstream APIs (like Moonshot/Kimi/Deepseek).
     // Assistant messages containing tool calls MUST natively possess a `reasoning_content` property, even if empty.
