@@ -745,17 +745,6 @@ export class ChatHandler {
           });
           return;
         }
-
-        if (shouldLogAttempt) {
-          logger.info('WS send success', {
-            connectionId: connection.id,
-            requestId: metadata.requestId || summary.requestId || null,
-            event: metadata.event || summary.event,
-            readyState: describeReadyState(connection.ws.readyState),
-            bufferedAmount: connection.ws.bufferedAmount || 0,
-            details: metadata.details || null
-          });
-        }
       });
     } catch (error) {
       logger.warn('WS send threw synchronously', {
@@ -800,12 +789,6 @@ function summarizePayload(payload) {
       summary.phase = params.phase || null;
     }
 
-    if (parsed.method === 'chat.delta') {
-      const content = params.choices?.[0]?.delta?.content || '';
-      summary.contentChars = content.length;
-      summary.contentPreview = content.slice(0, 120);
-    }
-
     if (parsed.method === 'chat.done') {
       summary.cancelled = params.cancelled === true;
       summary.totalDurationMs = params.telemetry?.total_duration_ms ?? null;
@@ -846,17 +829,13 @@ function shouldLogWsSendAttempt(metadata, summary) {
   const event = metadata.event || summary.event;
   const details = metadata.details || {};
 
+  // Only log terminal events and exceptional conditions — never stream chunks
   if (event === 'chat.done' || event === 'chat.error' || event === 'error_response' || event === 'response') {
     return true;
   }
 
   if (event === 'chat.progress') {
     return details.phase === 'network_throttled' || details.phase === 'reasoning_started';
-  }
-
-  if (event === 'chat.delta') {
-    const chunkIndex = details.chunkIndex || 0;
-    return chunkIndex === 1 || chunkIndex % 200 === 0;
   }
 
   return false;

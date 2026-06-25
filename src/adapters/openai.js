@@ -29,6 +29,14 @@ export function createOpenAIAdapter() {
             applyLogprobParams(payload, request);
             applyThinkingControl(payload, request, capabilities);
 
+            // Strip parameters the model doesn't support (e.g. reasoning models reject temperature)
+            const excludeParams = capabilities?.excludeParams;
+            if (Array.isArray(excludeParams)) {
+                for (const key of excludeParams) {
+                    delete payload[key];
+                }
+            }
+
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/chat/completions`, {
                 method: 'POST',
@@ -72,6 +80,14 @@ export function createOpenAIAdapter() {
 
             if (request.stream_options) {
                 payload.stream_options = request.stream_options;
+            }
+
+            // Strip parameters the model doesn't support (e.g. reasoning models reject temperature)
+            const excludeParams = capabilities?.excludeParams;
+            if (Array.isArray(excludeParams)) {
+                for (const key of excludeParams) {
+                    delete payload[key];
+                }
             }
 
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
@@ -157,6 +173,14 @@ export function createOpenAIAdapter() {
                 payload.dimensions = dimensions;
             }
 
+            // Strip parameters the model doesn't support
+            const excludeParamsEmb = capabilities?.excludeParams;
+            if (Array.isArray(excludeParamsEmb)) {
+                for (const key of excludeParamsEmb) {
+                    delete payload[key];
+                }
+            }
+
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/embeddings`, {
                 method: 'POST',
@@ -189,6 +213,14 @@ export function createOpenAIAdapter() {
             const supportsSize = capabilities?.supportsSizeParameter !== false;
             if (supportsSize) {
                 payload.size = request.size || '1024x1024';
+            }
+
+            // Strip parameters the model doesn't support
+            const excludeParamsImg = capabilities?.excludeParams;
+            if (Array.isArray(excludeParamsImg)) {
+                for (const key of excludeParamsImg) {
+                    delete payload[key];
+                }
             }
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
@@ -238,6 +270,14 @@ export function createOpenAIAdapter() {
 
             if (request.speed) payload.speed = request.speed;
 
+            // Strip parameters the model doesn't support
+            const excludeParamsTTS = capabilities?.excludeParams;
+            if (Array.isArray(excludeParamsTTS)) {
+                for (const key of excludeParamsTTS) {
+                    delete payload[key];
+                }
+            }
+
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/audio/speech`, {
                 method: 'POST',
@@ -271,6 +311,14 @@ export function createOpenAIAdapter() {
             };
 
             if (request.quality) payload.quality = request.quality;
+
+            // Strip parameters the model doesn't support
+            const excludeParamsVid = capabilities?.excludeParams;
+            if (Array.isArray(excludeParamsVid)) {
+                for (const key of excludeParamsVid) {
+                    delete payload[key];
+                }
+            }
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
             const res = await httpRequest(`${endpoint}/videos/generations`, {

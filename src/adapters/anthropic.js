@@ -374,6 +374,14 @@ export function createAnthropicAdapter() {
                 }))
             });
 
+            // Strip parameters the model doesn't support (e.g. reasoning models reject temperature)
+            const excludeParams = modelConfig?.capabilities?.excludeParams;
+            if (Array.isArray(excludeParams)) {
+                for (const key of excludeParams) {
+                    delete body[key];
+                }
+            }
+
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
                 headers: buildHeaders(apiKey, capabilities),
@@ -465,6 +473,14 @@ export function createAnthropicAdapter() {
                 }))
             });
 
+            // Strip parameters the model doesn't support (e.g. reasoning models reject temperature)
+            const excludeParams = modelConfig?.capabilities?.excludeParams;
+            if (Array.isArray(excludeParams)) {
+                for (const key of excludeParams) {
+                    delete body[key];
+                }
+            }
+
             const res = await httpRequest(`${endpoint}/v1/messages`, {
                 method: 'POST',
                 headers: buildHeaders(apiKey, capabilities),
@@ -474,7 +490,7 @@ export function createAnthropicAdapter() {
 
             if (!res.ok) {
                 const errorStr = await res.text();
-                logger.error('Anthropic API Streaming Error', { status: res.status, body: errorStr }, 'AnthropicAdapter');
+                logger.error('Anthropic API Streaming Error', null, { status: res.status, body: errorStr }, 'AnthropicAdapter');
                 throw new Error(`Anthropic API Streaming Error (${res.status}): ${errorStr}`);
             }
 
@@ -513,7 +529,7 @@ export function createAnthropicAdapter() {
                         try {
                             const event = JSON.parse(data);
                             if (event.type === 'error') {
-                                logger.error('Anthropic stream emitted error event', { error: event.error }, 'AnthropicAdapter');
+                                logger.error('Anthropic stream emitted error event', null, { error: event.error }, 'AnthropicAdapter');
                                 throw new Error(`Upstream API Stream Error: ${event.error?.message || JSON.stringify(event.error)}`);
                             }
                             if (event.type === 'message_start' && event.message?.usage) {

@@ -165,7 +165,7 @@ export class StreamHandler {
             // If zero content was delivered, Copilot throws "Response contained no choices."
             // Surface a clear error here so the root cause isn't hidden behind Copilot's generic message.
             if (this.isActive && !hasContent) {
-                logger.error('Stream produced zero content chunks', {
+                logger.error('Stream produced zero content chunks', null, {
                     seenUpstreamUsage,
                     context: contextPayload
                 }, 'StreamHandler');
@@ -190,7 +190,7 @@ export class StreamHandler {
             }
         } catch (err) {
             if (!isAbortError(err)) {
-                logger.error('Streaming error', { error: err.message, stack: err.stack }, 'StreamHandler');
+                logger.error('Streaming error', err, null, 'StreamHandler');
                 // Surface the error to the client so Copilot doesn't just see
                 // a truncated stream and throw "Response contained no choices."
                 if (this.isActive) {
@@ -223,7 +223,7 @@ export class StreamHandler {
     }
 
     error(err) {
-        logger.error('Stream error', { error: err.message, stack: err.stack }, 'StreamHandler');
+        logger.error('Stream error', err, null, 'StreamHandler');
         this.cleanup();
         if (!this.res.writableEnded) {
             this.res.end();

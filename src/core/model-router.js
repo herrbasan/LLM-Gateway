@@ -118,12 +118,6 @@ export class ModelRouter {
         const { id: modelId, config: modelConfig } = this.registry.resolveModel(effectiveRequest.model, 'chat');
         const adapter = this._getAdapter(modelConfig.adapter);
 
-        logger.info('Routing chat completion', {
-            model: modelId,
-            adapter: modelConfig.adapter,
-            task: taskInfo?.id || null
-        }, 'ModelRouter');
-
         // Transform request to adapter format
         const opts = this._buildChatOptions(effectiveRequest, modelConfig);
 
