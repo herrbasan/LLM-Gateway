@@ -3,16 +3,101 @@
  * Stateless - model config passed per-request.
  */
 
+import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { request as httpRequest } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger();
+
+const CACHE_DIR = path.join(process.cwd(), 'logs', 'gemini-signatures');
+let cleanedCache = false;
+
+// Ensure the directory exists
+async function ensureCacheDir() {
+    try {
+        if (!existsSync(CACHE_DIR)) {
+            await fs.mkdir(CACHE_DIR, { recursive: true });
+        }
+    } catch (e) {
+        logger.error(`Failed to create gemini signature cache dir: ${e.message}`, {}, 'GeminiAdapter');
+    }
+}
+
+// Memory cache for super-fast lookups during a live session
+const memorySignatures = new Map();
+
+async function saveSignature(callId, signature) {
+    if (!callId || !signature) return;
+    memorySignatures.set(callId, signature);
+    
+    await ensureCacheDir();
+    const filePath = path.join(CACHE_DIR, `${callId}.txt`);
+    try {
+        await fs.writeFile(filePath, signature, 'utf8');
+    } catch (e) {
+        logger.error(`Failed to save gemini signature for ${callId} to disk: ${e.message}`, {}, 'GeminiAdapter');
+    }
+}
+
+async function getSignature(callId) {
+    if (!callId) return null;
+    if (memorySignatures.has(callId)) {
+        return memorySignatures.get(callId);
+    }
+    
+    const filePath = path.join(CACHE_DIR, `${callId}.txt`);
+    try {
+        if (existsSync(filePath)) {
+            const signature = await fs.readFile(filePath, 'utf8');
+            const trimmed = signature.trim();
+            memorySignatures.set(callId, trimmed);
+            return trimmed;
+        }
+    } catch (e) {
+        // Silent catch for missing files/reading errors
+    }
+    return null;
+}
+
+async function pruneOldSignatures() {
+    if (cleanedCache) return;
+    cleanedCache = true;
+    
+    await ensureCacheDir();
+    try {
+        const files = await fs.readdir(CACHE_DIR);
+        const now = Date.now();
+        // Keep signatures for 7 days
+        const maxAge = 7 * 24 * 60 * 60 * 1000;
+        
+        let pruned = 0;
+        for (const file of files) {
+            if (!file.endsWith('.txt')) continue;
+            const filePath = path.join(CACHE_DIR, file);
+            const stat = await fs.stat(filePath);
+            if (now - stat.mtimeMs > maxAge) {
+                await fs.unlink(filePath);
+                pruned++;
+            }
+        }
+        if (pruned > 0) {
+            logger.info(`Pruned ${pruned} stale Gemini signatures from disk cache`, {}, 'GeminiAdapter');
+        }
+    } catch (e) {
+        // Silent catch during startup pruning
+    }
+}
 
 /**
  * Creates a Gemini adapter instance.
  * No config needed at factory time - pure protocol handler.
  */
 export function createGeminiAdapter() {
+    // Lazy prune stale signature cache on start
+    pruneOldSignatures().catch(() => {});
+
     return {
         name: 'gemini',
 
@@ -29,7 +114,7 @@ export function createGeminiAdapter() {
                 throw new Error('[GeminiAdapter] apiKey is required in modelConfig');
             }
 
-            const payload = buildChatPayload(request, capabilities);
+            const payload = await buildChatPayload(request, capabilities);
 
             const res = await httpRequest(`${endpoint}/models/${model}:generateContent?key=${apiKey}`, {
                 method: 'POST',
@@ -49,20 +134,35 @@ export function createGeminiAdapter() {
             const parts = candidate?.content?.parts || [];
             let outText = '';
             let tool_calls = [];
+            let lastFnObj = null;
 
-            parts.forEach(p => {
+            for (const p of parts) {
                 if (p.text) outText += p.text;
                 if (p.functionCall) {
+                    lastFnObj = {
+                        name: p.functionCall.name,
+                        arguments: JSON.stringify(p.functionCall.args || {})
+                    };
+                    const callId = `call_${Math.random().toString(36).substring(2, 11)}`;
+                    
+                    if (p.functionCall.thought_signature) {
+                        await saveSignature(callId, p.functionCall.thought_signature);
+                    }
+                    
                     tool_calls.push({
-                        id: `call_${Math.random().toString(36).substring(2, 11)}`,
+                        id: callId,
                         type: 'function',
-                        function: {
-                            name: p.functionCall.name,
-                            arguments: JSON.stringify(p.functionCall.args || {})
-                        }
+                        function: lastFnObj
                     });
                 }
-            });
+                
+                if (p.thought_signature != null && lastFnObj) {
+                    const lastToolCall = tool_calls[tool_calls.length - 1];
+                    if (lastToolCall) {
+                        await saveSignature(lastToolCall.id, p.thought_signature);
+                    }
+                }
+            }
 
             const message = { role: 'assistant', content: outText || null };
             if (tool_calls.length > 0) message.tool_calls = tool_calls;
@@ -106,7 +206,7 @@ export function createGeminiAdapter() {
                 throw new Error('[GeminiAdapter] apiKey is required in modelConfig');
             }
 
-            const payload = buildChatPayload(request, capabilities);
+            const payload = await buildChatPayload(request, capabilities);
 
             const res = await httpRequest(`${endpoint}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`, {
                 method: 'POST',
@@ -119,6 +219,8 @@ export function createGeminiAdapter() {
             const processId = `gemini-${Date.now()}`;
             let buffer = '';
             let hasEmittedTools = false;
+            let pendingThoughtSignature = null; // cross-SSE-chunk pairing
+            let lastEmittedCallId = null; // stream-level active call reference
 
             try {
                 while (true) {
@@ -153,10 +255,43 @@ export function createGeminiAdapter() {
                         let outText = '';
                         const toolParts = [];
 
-                        parts.forEach(p => {
-                            if (p.text) outText += p.text;
-                            if (p.functionCall) toolParts.push(p.functionCall);
-                        });
+                        // Gemini 3.5 emits thought_signature as a separate Part adjacent to functionCall.
+                        // It can arrive in the same SSE chunk or a subsequent one, so we pair across chunks.
+                        let lastFuncCallIdx = -1;
+                        let hasThoughtOnly = false;
+                        for (const p of parts) {
+                            if (p.text) { outText += p.text; hasThoughtOnly = false; }
+                            if (p.functionCall) {
+                                // Attach any pending thought_signature from a previous chunk
+                                if (pendingThoughtSignature != null) {
+                                    p.functionCall.thought_signature = pendingThoughtSignature;
+                                    pendingThoughtSignature = null;
+                                }
+                                toolParts.push(p.functionCall);
+                                lastFuncCallIdx = toolParts.length - 1;
+                                hasThoughtOnly = false;
+                            }
+                            if (p.thought_signature != null) {
+                                if (lastFuncCallIdx >= 0) {
+                                    toolParts[lastFuncCallIdx].thought_signature = p.thought_signature;
+                                } else if (lastEmittedCallId) {
+                                    // If we already yielded the tool call in a prior chunk, map it directly to that callId
+                                    await saveSignature(lastEmittedCallId, p.thought_signature);
+                                } else {
+                                    // No functionCall in this chunk, and no emitted call yet — save for the next one
+                                    pendingThoughtSignature = p.thought_signature;
+                                }
+                                hasThoughtOnly = true;
+                            }
+                            if (p.thought != null) {
+                                hasThoughtOnly = true;
+                            }
+                        }
+
+                        // Suppress chunks that only contain thought parts (Gemini 3.5 reasoning).
+                        // Yielding empty deltas confuses Copilot. Skip them — let real content trigger
+                        // the SSE handler's hasContent flag when it arrives.
+                        if (hasThoughtOnly && !outText && toolParts.length === 0) continue;
 
                         const usage = payloadData.usageMetadata ? {
                             prompt_tokens: payloadData.usageMetadata.promptTokenCount || 0,
@@ -212,10 +347,19 @@ export function createGeminiAdapter() {
                             if (!finishReason) finishReason = 'tool_calls';
 
                             for (let i = 0; i < toolParts.length; i++) {
-                                const callId = `call_${Math.random().toString(36).substring(2, 11)}`;
                                 const f = toolParts[i];
+                                const callId = `call_${Math.random().toString(36).substring(2, 11)}`;
+                                lastEmittedCallId = callId;
                                 
+                                if (f.thought_signature) {
+                                    await saveSignature(callId, f.thought_signature);
+                                } else if (pendingThoughtSignature) {
+                                    await saveSignature(callId, pendingThoughtSignature);
+                                    pendingThoughtSignature = null;
+                                }
+
                                 // Chunk 1: Initialize tool call with id, type, name (no arguments)
+                                const initFn = { name: f.name, arguments: '' };
                                 yield {
                                     id: processId,
                                     object: 'chat.completion.chunk',
@@ -229,7 +373,7 @@ export function createGeminiAdapter() {
                                                 index: i,
                                                 id: callId,
                                                 type: 'function',
-                                                function: { name: f.name, arguments: '' }
+                                                function: initFn
                                             }]
                                         },
                                         finish_reason: null
@@ -542,6 +686,46 @@ function mapSizeToAspectRatio(size) {
 
 // Helper functions
 
+/**
+ * JSON Schema keywords that Gemini's API rejects.
+ * Gemini only supports a minimal subset of JSON Schema for function declarations.
+ * We take a defensive approach: strip all meta-schema annotations (keys starting with '$')
+ * plus known VS Code / OpenAPI / Copilot extensions that Gemini rejects.
+ *
+ * This list is not exhaustive — any unknown key will cause a Gemini 400.
+ * Strategy: blocklist known offenders + strip all $ prefix keys as a blanket catch-all,
+ * since Gemini supports exactly zero JSON Schema meta-annotations.
+ */
+const GEMINI_UNSUPPORTED_SCHEMA_KEYS = new Set([
+    '$comment', '$schema', '$id', '$ref', '$defs', 'definitions',
+    'default', 'examples', 'example', 'deprecated', 'writeOnly', 'readOnly',
+    'unevaluatedProperties', 'unevaluatedItems', 'contains',
+    'patternProperties', 'propertyNames', 'dependencies', 'dependentRequired',
+    'dependentSchemas', 'if', 'then', 'else', 'allOf', 'oneOf', 'not',
+    'format',               // Gemini validates format strictly and rejects unknown formats
+    'enumDescriptions',     // VS Code JSON Schema extension
+    'markdownDescription',  // VS Code JSON Schema extension
+    'markdownEnumDescriptions', // VS Code JSON Schema extension
+    'doNotSuggest',         // VS Code / OpenAPI extension
+]);
+
+function sanitizeSchemaForGemini(schema) {
+    if (!schema || typeof schema !== 'object') return schema;
+    if (Array.isArray(schema)) {
+        return schema.map(sanitizeSchemaForGemini);
+    }
+    const cleaned = {};
+    for (const [key, value] of Object.entries(schema)) {
+        // Blanket strip all $ prefix keys (meta-schema annotations, no known $ key is valid for Gemini)
+        if (key.startsWith('$')) continue;
+        if (GEMINI_UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
+        // Strip any key starting with known vendor extension prefixes
+        if (key.startsWith('x-') || key.startsWith('X-')) continue;
+        cleaned[key] = sanitizeSchemaForGemini(value);
+    }
+    return cleaned;
+}
+
 function buildGeminiTools(openAiTools) {
     if (!openAiTools || !openAiTools.length) return undefined;
     
@@ -554,7 +738,7 @@ function buildGeminiTools(openAiTools) {
                 description: f.description || ''
             };
             if (f.parameters) {
-                decl.parameters = f.parameters;
+                decl.parameters = sanitizeSchemaForGemini(f.parameters);
             }
             return decl;
         });
@@ -579,16 +763,21 @@ function buildGeminiToolConfig(toolChoice) {
     return undefined;
 }
 
-function buildChatPayload(request, capabilities) {
+async function buildChatPayload(request, capabilities) {
     const messages = request.messages || [];
     const systemMsg = messages.find(m => m.role === 'system');
     const otherMessages = messages.filter(m => m.role !== 'system');
 
-    const payload = {
-        contents: otherMessages.map(m => ({
+    const contents = [];
+    for (const m of otherMessages) {
+        contents.push({
             role: m.role === 'assistant' ? 'model' : 'user',
-            parts: buildMessageParts(m)
-        })),
+            parts: await buildMessageParts(m)
+        });
+    }
+
+    const payload = {
+        contents,
         generationConfig: {}
     };
 
@@ -635,7 +824,7 @@ function buildChatPayload(request, capabilities) {
     return payload;
 }
 
-function buildMessageParts(message) {
+async function buildMessageParts(message) {
     const parts = [];
 
     if (message.role === 'tool') {
@@ -658,20 +847,34 @@ function buildMessageParts(message) {
     }
 
     if (message.role === 'assistant' && message.tool_calls) {
-        message.tool_calls.forEach(tc => {
+        // Emit functionCall and thought_signature parts in echoed history,
+        // resolving the original thought_signature via the tool call id from disk.
+        for (const tc of message.tool_calls) {
             if (tc.type === 'function' && tc.function) {
                 let args = {};
                 if (tc.function.arguments) {
                     try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
                 }
-                parts.push({
-                    functionCall: {
-                        name: tc.function.name,
-                        args
-                    }
-                });
+
+                const sig = await getSignature(tc.id);
+                if (sig) {
+                    parts.push({
+                        functionCall: {
+                            name: tc.function.name,
+                            args
+                        }
+                    });
+                    parts.push({
+                        thought_signature: sig
+                    });
+                } else {
+                    // Fallback: If no signature is cached for this tool call, we MUST NOT 
+                    // emit an active functionCall part without it, as Gemini 3.5 will reject it with a 400.
+                    // Instead, fallback to standard text representation which Gemini accepts without a signature.
+                    parts.push({ text: `[Called: ${tc.function.name}(${JSON.stringify(args)})]` });
+                }
             }
-        });
+        }
     }
 
     if (Array.isArray(message.content)) {
