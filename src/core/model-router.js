@@ -555,31 +555,17 @@ export class ModelRouter {
     }
 
     /**
-     * Estimate tokens for messages.
+     * Estimate tokens for messages using local tiktoken.
+     * No upstream API calls — the provider bills for those.
      */
-    async _estimateMessagesTokens(messages, adapter, modelConfig) {
-        if (adapter && typeof adapter.countMessageTokens === 'function') {
-            try {
-                const nativeCount = await adapter.countMessageTokens(messages, modelConfig);
-                if (typeof nativeCount === 'number' && Number.isFinite(nativeCount)) {
-                    return nativeCount;
-                }
-            } catch (err) {
-                logger.warn('Native message token count failed, falling back to estimator', {
-                    adapter: modelConfig?.adapter,
-                    model: modelConfig?.adapterModel,
-                    error: err.message
-                }, 'ModelRouter');
-            }
-        }
-
+    async _estimateMessagesTokens(messages, _adapter, modelConfig) {
         let total = 3; // Base overhead for the request formatting
         for (const m of messages) {
             total += 4; // Base overhead for each message (role, formatting)
             if (Array.isArray(m.content)) {
-                total += await this.tokenEstimator.estimate(m.content, adapter, modelConfig.adapterModel);
+                total += await this.tokenEstimator.estimate(m.content, null, modelConfig.adapterModel);
             } else {
-                total += await this.tokenEstimator.estimate(String(m.content || ''), adapter, modelConfig.adapterModel);
+                total += await this.tokenEstimator.estimate(String(m.content || ''), null, modelConfig.adapterModel);
             }
         }
         return total;

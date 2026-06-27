@@ -23,7 +23,7 @@
 - **v1.x**: Provider-centric architecture (archived docs in `docs/_Archive/`)
 - **Task-based query system**: Named tasks with preset model + parameters, client overrides apply (COMPLETE)
 - **Chat cancellation**: WebSocket `chat.cancel` and HTTP disconnect abort propagation are implemented for fetch-based chat adapters
-- **Per-model `maxOutputTokens`**: Omitted `max_tokens` values fall back to `capabilities.maxOutputTokens` declared in each model config. Required for Anthropic-adapter upstreams (Kimi, GLM, DeepSeek, MiniMax). OpenAI-adapter upstreams omit the field and use their own default.
+- **Per-model `maxOutputTokens`**: Omitted `max_tokens` values fall back to `capabilities.maxOutputTokens` declared in each model config. Required for Anthropic-adapter upstreams (Kimi, DeepSeek, MiniMax). OpenAI-adapter upstreams omit the field and use their own default.
 - **WebSocket context telemetry**: `chat.progress` context stats are kept authoritative during streaming and `chat.done` now carries final context metadata
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
 - **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST and WebSocket with adapter-specific format conversion (COMPLETE)
@@ -222,7 +222,30 @@ The gateway does not synthesize output token budgets. For each model:
 - If omitted and the model declares `capabilities.maxOutputTokens`, that value is sent upstream.
 - If omitted and no `maxOutputTokens` is declared, the field is omitted (OpenAI-adapter upstreams provide their own default; Anthropic-adapter upstreams will reject the request).
 
-This means Anthropic-adapter models (Kimi, GLM, DeepSeek, MiniMax) **must** declare `capabilities.maxOutputTokens` in `config.json`.
+This means Anthropic-adapter models (Kimi, DeepSeek, MiniMax) **must** declare `capabilities.maxOutputTokens` in `config.json`.
+
+### GLM Models — OpenAI Adapter (z.ai Context Caching)
+
+**2026-06-27**: All GLM chat models (`glm5-chat`, `glm5-turbo-chat`, `glm5v-turbo-chat`) switched from `anthropic` to `openai` adapter to leverage z.ai's automatic context caching (~50% cost reduction on repeated context).
+
+z.ai's context caching is:
+- **Automatic** — no client-side `cache_control` config needed; the platform detects repeated content
+- **Endpoint-specific** — only available on the OpenAI-compatible `/api/paas/v4` endpoint, NOT the Anthropic protocol endpoint
+- **Transparent billing** — cached token count appears in `usage.prompt_tokens_details.cached_tokens`
+
+**Old Anthropic endpoint** (for reference if we need to switch back):
+```
+endpoint: "https://api.z.ai/api/anthropic"
+adapterModel variants: "glm-5.2" / "glm-5-turbo" / "glm-5v-turbo"
+```
+
+**Current OpenAI endpoint**:
+```
+endpoint: "https://api.z.ai/api/paas/v4"
+adapterModel variants: "glm-5" / "glm-5-turbo" / "glm-5v-turbo"
+```
+
+> **Trade-off**: The Anthropic adapter had rich thinking control and native tool-call format conversion. The openai adapter uses standard OpenAI tool format. If thinking control or Anthropic-native tools become critical, switch back by restoring the old endpoint and adapter + changing adapterModel back to `glm-5.2`.
 
 ### Thinking Control (Per-Request)
 The gateway supports disabling/enabling model reasoning per-request from both REST and WebSocket endpoints. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.

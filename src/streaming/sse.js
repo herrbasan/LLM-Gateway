@@ -95,21 +95,8 @@ export class StreamHandler {
                 // Track whether upstream provided usage data
                 if (chunk.usage && (chunk.usage.prompt_tokens != null || chunk.usage.total_tokens != null)) {
                     seenUpstreamUsage = true;
-
-                    // Override prompt_tokens with our estimate — upstream may report
-                    // only uncached tokens (DeepSeek disk caching) or tokenizer-specific
-                    // counts that don't reflect total context usage for the client display.
-                    if (contextPayload && typeof contextPayload.used_tokens === 'number') {
-                        const upstreamCompletion = chunk.usage.completion_tokens ?? 0;
-                        chunk = {
-                            ...chunk,
-                            usage: {
-                                prompt_tokens: contextPayload.used_tokens,
-                                completion_tokens: upstreamCompletion,
-                                total_tokens: contextPayload.used_tokens + upstreamCompletion
-                            }
-                        };
-                    }
+                    // Upstream provider's actual usage numbers pass through unchanged.
+                    // Client accumulates token counts itself across the conversation.
                 }
 
                 // Skip metadata-only chunks with empty choices (e.g. response.in_progress).

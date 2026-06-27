@@ -117,15 +117,8 @@ export function createChatHandler(router, ticketRegistry) {
             const { context, ...response } = result;
             const normalized = normalizeResponse(response);
 
-            // Override upstream usage with gateway's cumulative context estimate.
-            // Upstream may report only uncached tokens (DeepSeek disk caching)
-            // or tokenizer-specific counts that don't reflect full conversation usage.
-            if (context && typeof context.used_tokens === 'number') {
-                if (!normalized.usage) normalized.usage = {};
-                normalized.usage.prompt_tokens = context.used_tokens;
-                if (!normalized.usage.completion_tokens) normalized.usage.completion_tokens = 0;
-                normalized.usage.total_tokens = context.used_tokens + (normalized.usage.completion_tokens || 0);
-            }
+            // Upstream provider's actual usage numbers pass through unchanged.
+            // Client accumulates token counts itself across the conversation.
 
             res.status(200).json(normalized);
 
