@@ -536,6 +536,8 @@ export function createAnthropicAdapter() {
                                 inputTokens = event.message.usage.input_tokens || 0;
                                 if (event.message.content) {
                                     logger.info('Message start content blocks', {
+                                        inputTokens,
+                                        outputTokens: event.message.usage.output_tokens,
                                         blockCount: event.message.content.length,
                                         blockTypes: event.message.content.map(b => b.type),
                                         thinkingSignature: event.message.content.find(b => b.type === 'thinking')?.signature?.substring(0, 40)
