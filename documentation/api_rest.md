@@ -274,13 +274,12 @@ curl http://localhost:3400/v1/chat/completions \
 data: {"id":"...","choices":[{"delta":{"content":"Hello"}}]}
 data: {"id":"...","choices":[{"delta":{"content":" world"}}]}
 
-event: context.status
-data: {"window_size":1048576,"used_tokens":2800,"available_tokens":1045776}
+data: {"id":"chatcmpl-gw-...","object":"chat.completion.chunk","created":...,"model":"","choices":[],"usage":{"prompt_tokens":2800,"completion_tokens":0,"total_tokens":2800}}
 
 data: [DONE]
 ```
 
-> Oversized streaming requests are rejected with `413 Payload Too Large` (or a `202 Accepted` ticket if `X-Async: true` was set). The gateway does not inject compaction progress events into the stream.
+> Oversized streaming requests are rejected with `413 Payload Too Large` (or a `202 Accepted` ticket if `X-Async: true` was set). The gateway does not inject gateway-specific progress events into the stream.
 
 If the HTTP client disconnects during streaming or before a non-streaming response completes, the gateway aborts the upstream provider request for fetch-based chat adapters instead of continuing generation in the background.
 

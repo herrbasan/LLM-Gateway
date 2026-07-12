@@ -165,12 +165,12 @@ export class StreamHandler {
                 })}\n\n`);
             }
 
-            // Emit full context stats as a named SSE event so clients get
-            // window_size, available_tokens, and strategy_applied — not just
-            // used_tokens from the overridden usage chunk.
-            if (this.isActive && contextPayload) {
-                this.emitEvent('context.status', contextPayload);
-            }
+            // Do not emit gateway-specific named SSE events (e.g. context.status)
+            // inside an OpenAI-compatible chat completion stream. Clients that
+            // consume every data: line as a chat.completion.chunk fail schema
+            // validation because the payload has no choices/error union. Context
+            // metadata is still available on WebSocket chat.progress and the
+            // final usage chunk's prompt_tokens/total_tokens.
 
             if (this.isActive) {
                 this.res.write('data: [DONE]\n\n');
