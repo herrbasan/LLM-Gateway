@@ -265,6 +265,8 @@
   
   "ws": {
     "localOnly": false,
+    "accessKey": null,
+    "_comment_accessKey": "Set to a secret string or use env var GATEWAY_ACCESS_KEY. Null = gateway open.",
     "whitelistIps": ["192.168.*"]
   },
   

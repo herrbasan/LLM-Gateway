@@ -15,6 +15,7 @@ import { createVideosHandler } from './routes/videos.js';
 import { createSystemEventsHandler } from './routes/events.js';
 import { createConfigGetHandler, createConfigStoreHandler } from './routes/config.js';
 import { createLogsHandler } from './routes/logs.js';
+import { createApiKeyMiddleware } from './middleware/api-key.js';
 import { ModelRouter } from './core/model-router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
 import { getLogger } from './utils/logger.js';
@@ -43,6 +44,9 @@ export function createServer(config) {
 
   // Basic middleware
   app.use(express.json({ limit: '300mb' }));
+
+  // API key protection — all routes except /health and /help require a valid key
+  app.use(createApiKeyMiddleware(config));
 
   // Help endpoint
   const __filename = fileURLToPath(import.meta.url);
