@@ -320,9 +320,13 @@ export function createAnthropicAdapter() {
             };
 
             if (request.enable_thinking != null) {
-                body.thinking = request.enable_thinking
-                    ? buildThinkingConfig(request.maxTokens, capabilities)
-                    : { type: 'disabled' };
+                if (request.enable_thinking) {
+                    body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
+                } else if (capabilities?.thinkingMode !== 'adaptive') {
+                    // Adaptive-only models (e.g. Fable 5) reject thinking.type.disabled;
+                    // omitting the field entirely gives their default adaptive behavior.
+                    body.thinking = { type: 'disabled' };
+                }
             } else if (thinkingInHistory) {
                 body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
             }
@@ -335,7 +339,7 @@ export function createAnthropicAdapter() {
                     body.temperature = request.temperature;
                 }
             }
-            
+
             // Prompt caching (capability-gated: only forward to providers that declare support)
             if (request.cache_control && capabilities?.promptCaching) {
                 body.cache_control = request.cache_control;
@@ -421,9 +425,13 @@ export function createAnthropicAdapter() {
             };
 
             if (request.enable_thinking != null) {
-                body.thinking = request.enable_thinking
-                    ? buildThinkingConfig(request.maxTokens, capabilities)
-                    : { type: 'disabled' };
+                if (request.enable_thinking) {
+                    body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
+                } else if (capabilities?.thinkingMode !== 'adaptive') {
+                    // Adaptive-only models (e.g. Fable 5) reject thinking.type.disabled;
+                    // omitting the field entirely gives their default adaptive behavior.
+                    body.thinking = { type: 'disabled' };
+                }
             } else if (thinkingInHistory) {
                 body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
             }
