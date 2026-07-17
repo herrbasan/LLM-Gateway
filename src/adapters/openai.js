@@ -188,6 +188,13 @@ export function createOpenAIAdapter() {
                 body: JSON.stringify(payload)
             });
 
+            if (!res.ok) {
+                const body = await res.text().catch(() => '');
+                const err = new Error(`OpenAI Embedding HTTP ${res.status}: ${body.slice(0, 500)}`);
+                err.status = res.status;
+                throw err;
+            }
+
             const data = await res.json();
             if (data.error) {
                 throw new Error(`OpenAI Embedding Error: ${data.error.message}`);
