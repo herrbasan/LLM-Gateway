@@ -7,7 +7,7 @@ const MODEL_TYPES = ['chat', 'embedding', 'image', 'audio', 'video'];
 
 const REQUIRED_MODEL_FIELDS = ['type', 'adapter', 'capabilities'];
 
-const ADAPTER_TYPES = ['gemini', 'openai', 'anthropic', 'responses', 'llamacpp'];
+const ADAPTER_TYPES = ['gemini', 'openai', 'anthropic', 'responses'];
 
 /**
  * Validates a model configuration object.

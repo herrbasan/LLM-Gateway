@@ -5,53 +5,40 @@
   "models": {
     "_comment": "=== LLM GATEWAY MODEL CONFIGURATION ===",
     
-    "_comment_llamacpp": "--- llama.cpp (llama-cpp-gateway Manager) ---",
-    "_comment_llamacpp_note": "Start manager first: node D:\\DEV\\llama-cpp-gateway\\src\\manager\\server.js",
+    "_comment_llamacpp": "--- llama.cpp wrapper (OpenAI-compatible) ---",
+    "_comment_llamacpp_note": "The wrapper is a standalone process manager for llama-server. Configure launch params (pooling, ctxSize, etc.) in the wrapper's models.json, not here. The gateway only needs adapterModel (the model name) and endpoint.",
     
     "llama-chat": {
       "type": "chat",
-      "adapter": "llamacpp",
-      "endpoint": "http://localhost:4080",
+      "adapter": "openai",
+      "endpoint": "http://localhost:4080/v1",
+      "adapterModel": "publisher/model-name",
       "maxTokens": 8192,
-      "hardTokenCap": 10000,
+      "extraBody": {
+        "stop": ["<end_of_turn>"]
+      },
       "capabilities": {
-        "contextWindow": 64000,
+        "contextWindow": 128000,
         "vision": true,
         "streaming": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "tools": true
       },
       "imageInputLimit": {
         "maxDimension": 2048,
         "maxFileSize": 52428800,
         "supportedFormats": ["png", "jpeg", "gif", "webp"]
-      },
-      "localInference": {
-        "enabled": true,
-        "modelPath": "D:/models/chat-model.gguf",
-        "mmproj": "D:/models/mmproj-f16.gguf",
-        "contextSize": 64000,
-        "gpuLayers": 99,
-        "flashAttention": true,
-        "mlock": true
       }
     },
     
     "llama-embed": {
       "type": "embedding",
-      "adapter": "llamacpp",
-      "endpoint": "http://localhost:4080",
+      "adapter": "openai",
+      "endpoint": "http://localhost:4080/v1",
+      "adapterModel": "publisher/embedding-model-name",
       "capabilities": {
-        "contextWindow": 512,
-        "dimensions": 1024
-      },
-      "localInference": {
-        "enabled": true,
-        "modelPath": "D:/models/embedding-model.gguf",
-        "contextSize": 512,
-        "gpuLayers": 99,
-        "embedding": true,
-        "pooling": "mean",
-        "mlock": true
+        "contextWindow": 32768,
+        "dimensions": 2560
       }
     },
     

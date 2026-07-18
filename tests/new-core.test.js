@@ -46,7 +46,7 @@ const VALID_CONFIG = {
         },
         'local-llama': {
             type: 'chat',
-            adapter: 'llamacpp',
+            adapter: 'openai',
             endpoint: 'http://localhost:11434',
             capabilities: {
                 contextWindow: 128000,

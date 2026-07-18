@@ -84,7 +84,7 @@ describe('Configuration Manager', () => {
       expect(['chat', 'embedding', 'image', 'audio', 'video']).to.include(modelConfig.type);
       
       // Verify adapter is valid
-      expect(['gemini', 'openai', 'anthropic', 'responses', 'llamacpp']).to.include(modelConfig.adapter);
+      expect(['gemini', 'openai', 'anthropic', 'responses']).to.include(modelConfig.adapter);
     }
   });
 });

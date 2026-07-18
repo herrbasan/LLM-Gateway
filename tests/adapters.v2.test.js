@@ -35,7 +35,7 @@ describe('Adapters v2 - Real World', () => {
             expect(adapters.has('anthropic')).to.be.true;
             expect(adapters.has('responses')).to.be.true;
             expect(adapters.has('alibaba')).to.be.false;
-            expect(adapters.has('llamacpp')).to.be.true;
+            expect(adapters.has('openai')).to.be.true;
         });
 
         it('should have correct interface on each adapter', () => {

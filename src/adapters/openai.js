@@ -431,6 +431,16 @@ function applyStandardParams(payload, request, modelConfig) {
     if (request.logit_bias) payload.logit_bias = request.logit_bias;
     if (request.user) payload.user = request.user;
     if (request.n != null) payload.n = request.n;
+
+    // Config-level extraBody (applied to all requests for this model)
+    if (modelConfig?.extraBody) {
+        Object.assign(payload, modelConfig.extraBody);
+    }
+
+    // Request-level extra_body (overrides config)
+    if (request.extra_body) {
+        Object.assign(payload, request.extra_body);
+    }
 }
 
 function applyFormatParams(payload, request, capabilities) {
