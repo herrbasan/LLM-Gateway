@@ -106,6 +106,22 @@ export class StreamHandler {
                     continue;
                 }
 
+                // Attach the gateway's context telemetry to the chunk that carries
+                // finish_reason. This is the natural "done" marker for OpenAI-spec
+                // clients — and for our chat app's SSE parser (which reads
+                // dataObj.context only when choices[0].finish_reason is present).
+                // Without this, the chat app's per-message and overall context
+                // displays freeze on the value computed at chat-load time.
+                // Copilot ignores extra fields on a chunk, so this is spec-safe.
+                if (choice?.finish_reason && contextPayload && typeof contextPayload.window_size === 'number') {
+                    chunk.context = {
+                        window_size: contextPayload.window_size,
+                        used_tokens: contextPayload.used_tokens ?? 0,
+                        available_tokens: contextPayload.available_tokens ?? 0,
+                        strategy_applied: contextPayload.strategy_applied ?? false
+                    };
+                }
+
                 const payloadStr = `data: ${JSON.stringify(chunk)}\n\n`;
 
                 const canContinue = this.res.write(payloadStr);
