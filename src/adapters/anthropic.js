@@ -4,7 +4,7 @@
  * Supports: Anthropic Claude, MiniMax, Qwen (Anthropic mode)
  */
 
-import { request as httpRequest } from '../utils/http.js';
+import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
 
 export function createAnthropicAdapter() {
@@ -524,7 +524,7 @@ export function createAnthropicAdapter() {
 
             try {
                 while (true) {
-                    const { done, value } = await reader.read();
+                    const { done, value } = await readWithDeadline(reader);
                     if (done) break;
 
                     buffer += decoder.decode(value, { stream: true });

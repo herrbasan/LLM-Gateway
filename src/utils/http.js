@@ -54,6 +54,41 @@ export function isAbortError(error) {
         || error?.message === 'Request aborted';
 }
 
+// Default mid-stream read deadline: an upstream that stops sending chunks but
+// holds the connection open is hung. Reasoning models legitimately pause
+// >60s between chunks, so this is a per-read deadline (reset each chunk), not
+// a total stream timeout. Override via LLM_GW_STREAM_READ_DEADLINE_MS.
+export const STREAM_READ_DEADLINE_MS =
+    Number(process.env.LLM_GW_STREAM_READ_DEADLINE_MS) > 0
+        ? Number(process.env.LLM_GW_STREAM_READ_DEADLINE_MS)
+        : 120000;
+
+/**
+ * reader.read() with a deadline. If no chunk arrives within `ms`, the stream
+ * is treated as hung: the reader is cancelled (which aborts the upstream
+ * fetch body) and an UPSTREAM_TIMEOUT error is thrown. Per-read, so long
+ * thinking pauses under the deadline are fine.
+ */
+export async function readWithDeadline(reader, ms = STREAM_READ_DEADLINE_MS) {
+    let timer;
+    try {
+        return await Promise.race([
+            reader.read(),
+            new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    // Cancel the underlying body so the upstream connection is torn down.
+                    reader.cancel().catch(() => {});
+                    const err = new Error(`Upstream stalled: no stream chunk within ${ms}ms`);
+                    err.code = 'UPSTREAM_TIMEOUT';
+                    reject(err);
+                }, ms);
+            })
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 export async function request(url, options = {}) {
     const retryOptions = { ...DEFAULT_RETRY_OPTIONS, ...(options.retry || {}) };
     let attempt = 0;

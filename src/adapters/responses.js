@@ -11,7 +11,7 @@
  * This adapter passes through native Responses API format without translation.
  */
 
-import { request as httpRequest } from '../utils/http.js';
+import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 
 export function createResponsesAdapter() {
     return {
@@ -99,7 +99,7 @@ export function createResponsesAdapter() {
 
             try {
                 while (true) {
-                    const { done, value } = await reader.read();
+                    const { done, value } = await readWithDeadline(reader);
                     if (done) break;
 
                     buffer += decoder.decode(value, { stream: true });

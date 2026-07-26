@@ -6,7 +6,7 @@
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { request as httpRequest } from '../utils/http.js';
+import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger();
@@ -224,7 +224,7 @@ export function createGeminiAdapter() {
 
             try {
                 while (true) {
-                    const { done, value } = await reader.read();
+                    const { done, value } = await readWithDeadline(reader);
                     if (done) break;
 
                     buffer += decoder.decode(value, { stream: true });

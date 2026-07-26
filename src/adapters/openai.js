@@ -3,7 +3,7 @@
  * Stateless - model config passed per-request.
  */
 
-import { request as httpRequest } from '../utils/http.js';
+import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 
 export function createOpenAIAdapter() {
     return {
@@ -124,7 +124,7 @@ export function createOpenAIAdapter() {
 
             try {
                 while (true) {
-                    const { done, value } = await reader.read();
+                    const { done, value } = await readWithDeadline(reader);
                     if (done) break;
 
                     buffer += decoder.decode(value, { stream: true });
