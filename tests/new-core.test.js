@@ -305,15 +305,14 @@ describe('ModelRouter', () => {
         expect(list.data).to.have.length(4);
     });
 
-    it('should prefer native whole-message token counting when available', async () => {
+    it('should estimate tokens via local tiktoken (no upstream calls)', async () => {
         const count = await router._estimateMessagesTokens(
             [{ role: 'user', content: 'Hello' }],
-            {
-                countMessageTokens: async () => 4321
-            },
+            null,
             VALID_CONFIG.models['gemini-flash']
         );
 
-        expect(count).to.equal(4321);
+        // 3 (request overhead) + 4 (message overhead) + tiktoken('Hello') = 1 token
+        expect(count).to.equal(8);
     });
 });

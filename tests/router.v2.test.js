@@ -51,11 +51,11 @@ describe('ModelRouter v2 - Real World', () => {
 
         it('throws on type mismatch', () => {
             const embedModel = Object.keys(config.models).find(
-                id => config.models[id].type === 'embedding'
+                id => config.models[id].type === 'embedding' && !config.models[id].disabled
             );
             
             if (!embedModel) {
-                console.log('[SKIP] No embedding model to test');
+                console.log('[SKIP] No enabled embedding model to test');
                 return;
             }
 

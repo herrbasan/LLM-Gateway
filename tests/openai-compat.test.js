@@ -121,6 +121,7 @@ describe('OpenAI Compatibility', () => {
         it('returns { error: { message, type, code } } from server', async () => {
             const { createServer } = await import('../src/server.js');
             const config = await import('../src/config.js').then(m => m.loadConfig());
+            config.authDisabled = true;
             const app = createServer(config);
             const request = (await import('supertest')).default;
 

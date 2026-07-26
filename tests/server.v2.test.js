@@ -15,6 +15,7 @@ describe('Server v2 - Real World', () => {
 
     before(async () => {
         config = await loadConfig();
+        config.authDisabled = true;
         app = createServer(config);
     });
 
@@ -70,13 +71,13 @@ describe('Server v2 - Real World', () => {
         });
 
         it('returns 400 for wrong model type', async () => {
-            // Find an embedding model
+            // Find an enabled embedding model
             const embedModel = Object.entries(config.models).find(
-                ([_, m]) => m.type === 'embedding'
+                ([_, m]) => m.type === 'embedding' && !m.disabled
             );
             
             if (!embedModel) {
-                console.log('[SKIP] No embedding model to test');
+                console.log('[SKIP] No enabled embedding model to test');
                 return;
             }
 

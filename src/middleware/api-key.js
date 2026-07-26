@@ -40,6 +40,14 @@ function readAccessKeyFromEnvFile() {
  * Public: /health, /help.
  */
 export function createApiKeyMiddleware(config) {
+  // Explicit test/integration escape hatch: config.authDisabled === true
+  // bypasses key checking entirely. Must be set deliberately in config —
+  // never inferred from environment. Production configs must not set this.
+  if (config.authDisabled === true) {
+    logger.warn('[Auth] authDisabled=true — API key checks bypassed', {}, 'Auth');
+    return (req, res, next) => next();
+  }
+
   const expectedKey =
     (config.accessKey && String(config.accessKey).trim()) ||
     readAccessKeyFromEnvFile() ||

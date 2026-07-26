@@ -5,7 +5,7 @@
  * 
  * Prerequisites:
  *   1. Start the gateway:  npm start
- *   2. Have at least one LLM provider running (e.g. lmstudio, ollama)
+ *   2. Have at least one LLM provider running (e.g. llama.cpp wrapper, ollama)
  *   3. Run:  npm run test:integration
  * 
  * The BASE_URL defaults to http://localhost:3400 (override with LLM_GW_URL env var).

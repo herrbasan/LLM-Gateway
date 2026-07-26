@@ -91,6 +91,7 @@ describe('Phase 9: Load Testing & Memory Bounds', function () {
         config.concurrency.defaultMaxConcurrent = 100;
         config.concurrency.defaultQueueDepth = 1000;
 
+        config.authDisabled = true;
         app = createServer(config);
         server = http.createServer(app);
         await new Promise(resolve => server.listen(0, resolve));

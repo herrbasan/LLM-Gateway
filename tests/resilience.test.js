@@ -14,7 +14,7 @@ describe('Resilience & Circuit Breaker', () => {
         // All requests to it will fail with ECONNREFUSED, tripping the circuit breaker.
         config.models['fake-down'] = {
             type: 'chat',
-            adapter: 'lmstudio',
+            adapter: 'openai',
             endpoint: 'http://localhost:55555',
             adapterModel: 'fake-model',
             capabilities: {
@@ -28,6 +28,7 @@ describe('Resilience & Circuit Breaker', () => {
         config.tasks = config.tasks || {};
         config.tasks.query = { model: 'fake-down', default: true };
 
+        config.authDisabled = true;
         app = createServer(config);
     });
 
@@ -36,12 +37,12 @@ describe('Resilience & Circuit Breaker', () => {
         expect(response.status).to.equal(200);
         expect(response.body).to.have.property('status', 'ok');
         expect(response.body).to.have.property('adapters');
-        expect(response.body.adapters).to.have.property('lmstudio');
+        expect(response.body.adapters).to.have.property('openai');
 
-        const lmstudioBreakers = response.body.adapters.lmstudio;
-        expect(lmstudioBreakers).to.have.property('chat');
-        expect(lmstudioBreakers.chat).to.have.property('state', 'CLOSED');
-        expect(lmstudioBreakers.chat).to.have.property('totalRequests', 0);
+        const openaiBreakers = response.body.adapters.openai;
+        expect(openaiBreakers).to.have.property('chat');
+        expect(openaiBreakers.chat).to.have.property('state', 'CLOSED');
+        expect(openaiBreakers.chat).to.have.property('totalRequests', 0);
     });
 
     it('should trip the circuit breaker for fake model', async function () {
@@ -60,7 +61,7 @@ describe('Resilience & Circuit Breaker', () => {
         }
 
         const response = await supertest(app).get('/health');
-        const chatMetrics = response.body.adapters.lmstudio.chat;
+        const chatMetrics = response.body.adapters.openai.chat;
 
         // It failed 4 times (meaning it tripped on the 3rd and fast-failed on the 4th)
         expect(['OPEN', 'HALF-OPEN']).to.include(chatMetrics.state);
