@@ -48,43 +48,61 @@ export function createAdapters() {
 }
 
 function wrapWithCircuitBreaker(adapterType, adapter) {
-    const breakers = {
-        chat: new CircuitBreaker(`${adapterType}:chat`, BREAKER_DEFAULTS.chat.threshold, BREAKER_DEFAULTS.chat.resetTimeoutMs),
-        stream: new CircuitBreaker(`${adapterType}:stream`, BREAKER_DEFAULTS.stream.threshold, BREAKER_DEFAULTS.stream.resetTimeoutMs),
-        embed: new CircuitBreaker(`${adapterType}:embed`, BREAKER_DEFAULTS.embed.threshold, BREAKER_DEFAULTS.embed.resetTimeoutMs),
-        image: new CircuitBreaker(`${adapterType}:image`, BREAKER_DEFAULTS.image.threshold, BREAKER_DEFAULTS.image.resetTimeoutMs),
-        audio: new CircuitBreaker(`${adapterType}:audio`, BREAKER_DEFAULTS.audio.threshold, BREAKER_DEFAULTS.audio.resetTimeoutMs),
-        list: new CircuitBreaker(`${adapterType}:list`, BREAKER_DEFAULTS.list.threshold, BREAKER_DEFAULTS.list.resetTimeoutMs)
+    // Per-model breakers, lazily created: `${modelId}:${workload}`.
+    // Sharing one breaker across all models on an adapter meant one flaky
+    // upstream fast-failed every other model using that adapter protocol.
+    const breakerMap = new Map();
+
+    const getBreaker = (workload, modelKey) => {
+        const key = `${modelKey}:${workload}`;
+        let b = breakerMap.get(key);
+        if (!b) {
+            const d = BREAKER_DEFAULTS[workload];
+            b = new CircuitBreaker(key, d.threshold, d.resetTimeoutMs);
+            breakerMap.set(key, b);
+        }
+        return b;
     };
 
-    const methodMap = {
-        chatComplete: breakers.chat,
-        createEmbedding: breakers.embed,
-        generateImage: breakers.image,
-        synthesizeSpeech: breakers.audio,
-        listModels: breakers.list
-    };
-
-    const streamMethodMap = {
-        streamComplete: breakers.stream
-    };
+    // Stable per-request model key. The router stamps request.__modelId;
+    // fall back to adapterModel, then 'unknown' for direct/test callers.
+    const modelKeyOf = (modelConfig, request) =>
+        (request && request.__modelId) || modelConfig?.adapterModel || 'unknown';
 
     const wrapped = Object.create(adapter);
 
-    wrapped.circuitBreakers = breakers;
+    // Expose a live view for /health. Iterated fresh each call so per-model
+    // breakers created after startup appear.
+    Object.defineProperty(wrapped, 'circuitBreakers', {
+        get() {
+            const out = {};
+            for (const [key, breaker] of breakerMap.entries()) {
+                out[key] = breaker;
+            }
+            return out;
+        }
+    });
 
-    for (const [method, breaker] of Object.entries(methodMap)) {
+    const methodWorkload = {
+        chatComplete: 'chat',
+        createEmbedding: 'embed',
+        generateImage: 'image',
+        synthesizeSpeech: 'audio',
+        listModels: 'list'
+    };
+
+    for (const [method, workload] of Object.entries(methodWorkload)) {
         if (typeof adapter[method] === 'function') {
             wrapped[method] = (modelConfig, ...args) =>
-                breaker.fire(() => adapter[method].call(adapter, modelConfig, ...args));
+                getBreaker(workload, modelKeyOf(modelConfig, args[0]))
+                    .fire(() => adapter[method].call(adapter, modelConfig, ...args));
         }
     }
 
-    for (const [method, breaker] of Object.entries(streamMethodMap)) {
-        if (typeof adapter[method] === 'function') {
-            wrapped[method] = (modelConfig, ...args) =>
-                breaker.fireStream(() => adapter[method].call(adapter, modelConfig, ...args));
-        }
+    if (typeof adapter.streamComplete === 'function') {
+        wrapped.streamComplete = (modelConfig, ...args) =>
+            getBreaker('stream', modelKeyOf(modelConfig, args[0]))
+                .fireStream(() => adapter.streamComplete.call(adapter, modelConfig, ...args));
     }
 
     return wrapped;

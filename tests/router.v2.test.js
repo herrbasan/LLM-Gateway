@@ -93,11 +93,12 @@ describe('ModelRouter v2 - Real World', () => {
             }
         });
 
-        it('each adapter has circuit breakers', () => {
+        it('each adapter exposes a per-model circuit breaker registry', () => {
             for (const [name, adapter] of router.adapters.entries()) {
-                expect(adapter.circuitBreakers, `Adapter ${name} missing circuit breakers`).to.exist;
-                expect(adapter.circuitBreakers.chat, `Adapter ${name} missing chat breaker`).to.exist;
-                expect(adapter.circuitBreakers.embed, `Adapter ${name} missing embed breaker`).to.exist;
+                // Per-model breakers are created lazily per `${modelId}:${workload}`
+                // on first request, so the registry is an object (possibly empty
+                // until traffic arrives), not a fixed set of 6 eager breakers.
+                expect(adapter.circuitBreakers, `Adapter ${name} missing circuit breakers`).to.be.an('object');
             }
         });
     });

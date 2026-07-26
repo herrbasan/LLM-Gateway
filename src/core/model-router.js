@@ -141,7 +141,8 @@ export class ModelRouter {
             ...opts,
             messages,
             maxTokens: resolvedMaxTokens,
-            sessionId: effectiveRequest.sessionId || effectiveRequest.session_id || null
+            sessionId: effectiveRequest.sessionId || effectiveRequest.session_id || null,
+            __modelId: modelId
         };
 
         logger.info('Chat request prepared', {
@@ -497,6 +498,9 @@ export class ModelRouter {
         const effectiveModel = useFallback ? taskInfo.fallback : primaryModel;
 
         const { id: modelId, config: modelConfig } = this.registry.resolveModel(effectiveModel, expectedType);
+
+        // Stamp the resolved model id so per-model circuit breakers key on it.
+        resolvedRequest.__modelId = modelId;
 
         logger.info(`Routing ${expectedType}`, {
             model: modelId,

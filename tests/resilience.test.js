@@ -40,9 +40,9 @@ describe('Resilience & Circuit Breaker', () => {
         expect(response.body.adapters).to.have.property('openai');
 
         const openaiBreakers = response.body.adapters.openai;
-        expect(openaiBreakers).to.have.property('chat');
-        expect(openaiBreakers.chat).to.have.property('state', 'CLOSED');
-        expect(openaiBreakers.chat).to.have.property('totalRequests', 0);
+        // Per-model breakers are keyed `${modelId}:${workload}` and created
+        // lazily on first request, so none exist for fake-down yet.
+        expect(openaiBreakers).to.be.an('object');
     });
 
     it('should trip the circuit breaker for fake model', async function () {
@@ -61,7 +61,7 @@ describe('Resilience & Circuit Breaker', () => {
         }
 
         const response = await supertest(app).get('/health');
-        const chatMetrics = response.body.adapters.openai.chat;
+        const chatMetrics = response.body.adapters.openai['fake-down:chat'];
 
         // It failed 4 times (meaning it tripped on the 3rd and fast-failed on the 4th)
         expect(['OPEN', 'HALF-OPEN']).to.include(chatMetrics.state);

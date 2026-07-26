@@ -28,15 +28,11 @@ export class CircuitBreaker {
     async fire(action) {
         this.metrics.totalRequests++;
 
-        if (this.state === 'OPEN') {
-            if (Date.now() - this.lastFailureTime > this.resetTimeoutMs) {
-                this.state = 'HALF-OPEN';
-            } else {
-                this.metrics.shortCircuitedRequests++;
-                const err = new Error(`[CircuitBreaker] Fast fail: Circuit is OPEN for provider '${this.name}'`);
-                err.status = 503;
-                throw err;
-            }
+        if (!this._tryPass()) {
+            this.metrics.shortCircuitedRequests++;
+            const err = new Error(`[CircuitBreaker] Fast fail: Circuit is OPEN for provider '${this.name}'`);
+            err.status = 503;
+            throw err;
         }
 
         try {
@@ -50,21 +46,39 @@ export class CircuitBreaker {
                 this.onSuccess();
             }
             throw error;
+        } finally {
+            this._releaseProbe();
         }
+    }
+
+    // Returns true if this request may proceed. On OPEN past the reset timeout,
+    // exactly one request becomes the HALF-OPEN probe; concurrent requests during
+    // the probe window are rejected so a stampede can't re-trip the breaker.
+    _tryPass() {
+        if (this.state === 'OPEN') {
+            if (Date.now() - this.lastFailureTime <= this.resetTimeoutMs) return false;
+            this.state = 'HALF-OPEN';
+            this._probeInFlight = false;
+        }
+        if (this.state === 'HALF-OPEN') {
+            if (this._probeInFlight) return false; // single-probe only
+            this._probeInFlight = true;
+        }
+        return true;
+    }
+
+    _releaseProbe() {
+        if (this.state !== 'HALF-OPEN') this._probeInFlight = false;
     }
 
     async *fireStream(action) {
         this.metrics.totalRequests++;
 
-        if (this.state === 'OPEN') {
-            if (Date.now() - this.lastFailureTime > this.resetTimeoutMs) {
-                this.state = 'HALF-OPEN';
-            } else {
-                this.metrics.shortCircuitedRequests++;
-                const err = new Error(`[CircuitBreaker] Fast fail: Circuit is OPEN for provider '${this.name}'`);
-                err.status = 503;
-                throw err;
-            }
+        if (!this._tryPass()) {
+            this.metrics.shortCircuitedRequests++;
+            const err = new Error(`[CircuitBreaker] Fast fail: Circuit is OPEN for provider '${this.name}'`);
+            err.status = 503;
+            throw err;
         }
 
         let streamStarted = false;
@@ -87,6 +101,8 @@ export class CircuitBreaker {
                  this.onSuccess(); // It failed cleanly via client validation error
             }
             throw error;
+        } finally {
+            this._releaseProbe();
         }
     }
 
