@@ -182,11 +182,13 @@ export class MediaProcessorClient {
             
             if (!res.ok) {
                 const errorText = await res.text().catch(() => 'Unknown error');
-                logger.warn(`MediaService error: ${res.status} ${res.statusText}`, { error: errorText, sizeMB: (base64Data.length * 3 / 4 / 1024 / 1024).toFixed(2) }, 'MediaProcessor');
-                if (res.status === 413) {
-                    logger.error('Image too large for MediaService. Consider reducing image size or increasing MAX_FILE_SIZE_MB.', null, null, 'MediaProcessor');
-                }
-                return base64Data; // fallback to original
+                logger.error(`MediaService error: ${res.status} ${res.statusText}`, null, { error: errorText, sizeMB: (base64Data.length * 3 / 4 / 1024 / 1024).toFixed(2) }, 'MediaProcessor');
+                // Processing was explicitly requested and the media node failed.
+                // Returning the original would lie to the client (it believes it
+                // sent an optimized image). Fail loud instead.
+                const err = new Error(`MediaService failed: HTTP ${res.status} ${res.statusText}: ${errorText}`);
+                err.status = res.status === 413 ? 413 : 502;
+                throw err;
             }
 
             // Check content-type to debug SSE vs JSON issue
@@ -207,11 +209,18 @@ export class MediaProcessorClient {
             if (data.base64) {
                  return data.base64.replace(/^data:[^;]+;base64,/, '');
             }
-            return base64Data;
+            // The media node responded 200 but with no image data — that's a
+            // broken processor, not a reason to silently pass the original through.
+            throw new Error('[MediaProcessor] Response contained no base64 image data');
             
         } catch (error) {
-            logger.error(`Error communicating with media-processor node:`, null, { message: error.message, code: error.code }, 'MediaProcessor');
-            return base64Data; // Fail gracefully by returning original
+            // Already-shaped errors (from the !res.ok and no-data branches above)
+            // propagate as-is. Transport/parse failures get a diagnostic wrapper.
+            if (error.status) throw error;
+            const err = new Error(`MediaProcessor request failed: ${error.message}`);
+            err.status = 502;
+            err.code = error.code;
+            throw err;
         }
     }
 

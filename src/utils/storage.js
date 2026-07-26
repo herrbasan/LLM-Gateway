@@ -48,7 +48,14 @@ export class MediaStorage {
             throw new Error('[MediaStorage] Storage is disabled');
         }
 
-        await this._initPromise;
+        // A rejected init (e.g. transient EACCES) must not disable storage
+        // forever — reset so the next call retries the mkdir.
+        try {
+            await this._initPromise;
+        } catch (err) {
+            this._initPromise = this.ensureReady();
+            await this._initPromise;
+        }
 
         const id = `media_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
         const safeExt = this._safeExt(ext);
@@ -64,6 +71,13 @@ export class MediaStorage {
             url: `/v1/media/${fileName}`,
             createdAt: Date.now()
         };
+    }
+
+    // Creation time is embedded in the filename (media_<timestamp>_...) — parse
+    // that rather than stat.mtime, which any touch (AV scan, backup) resets.
+    _createdAtFromName(fileName) {
+        const match = fileName.match(/^media_(\d+)_/);
+        return match ? Number(match[1]) : null;
     }
 
     async saveBase64(base64Data, ext = '.bin') {
@@ -85,13 +99,19 @@ export class MediaStorage {
 
             const filePath = path.join(this.baseDir, entry.name);
             try {
-                const stat = await fs.stat(filePath);
-                if (now - stat.mtimeMs > this.ttlMs) {
+                // TTL keys off creation time from the filename, not mtime.
+                const createdAt = this._createdAtFromName(entry.name);
+                if (createdAt === null) continue; // not one of ours
+                if (now - createdAt > this.ttlMs) {
                     await fs.unlink(filePath);
                     evictedCount += 1;
                 }
-            } catch {
-                // Ignore races where file disappears during cleanup
+            } catch (err) {
+                // A file disappearing mid-cleanup is a benign race; a persistent
+                // EPERM (locked file) is not — log so it's not silently retried forever.
+                if (err.code !== 'ENOENT') {
+                    logger.warn(`evict_failed file=${entry.name} code=${err.code}`, {}, 'Storage');
+                }
             }
         }
 

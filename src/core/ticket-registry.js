@@ -1,5 +1,25 @@
 import crypto from 'node:crypto';
 import { systemEvents, EVENT_TYPES } from './events.js';
+import { getLogger } from '../utils/logger.js';
+
+const logger = getLogger();
+
+// Cap the retained event replay buffer. Without a cap, a long async stream
+// accumulates tens of thousands of chunk objects held for up to 1h. Late-joining
+// SSE clients only need a replay window, not the full history.
+const MAX_REPLAY_EVENTS = 1000;
+
+// Notify subscribers, isolating each so one throwing callback can't break the rest.
+function notify(subscribers, event) {
+    if (!subscribers) return;
+    for (const sub of subscribers) {
+        try {
+            sub(event);
+        } catch (err) {
+            logger.error('Ticket subscriber threw', err, null, 'TicketRegistry');
+        }
+    }
+}
 
 export class TicketRegistry {
     constructor() {
@@ -52,11 +72,7 @@ export class TicketRegistry {
             systemEvents.emit(EVENT_TYPES.TASK_UPDATED, { ticket: id, status, extra });
             Object.assign(ticket, extra);
             if (status === 'complete' || status === 'failed') {
-                if (ticket.subscribers) {
-                    for (const sub of ticket.subscribers) {
-                        sub({ type: 'status_update', status, extra });
-                    }
-                }
+                notify(ticket.subscribers, { type: 'status_update', status, extra });
             }
         }
     }
@@ -65,11 +81,11 @@ export class TicketRegistry {
         const ticket = this.getTicket(id);
         if (ticket) {
             ticket.events.push(event);
-            if (ticket.subscribers) {
-                for (const sub of ticket.subscribers) {
-                    sub(event);
-                }
+            // Drop oldest events beyond the replay window.
+            if (ticket.events.length > MAX_REPLAY_EVENTS) {
+                ticket.events.splice(0, ticket.events.length - MAX_REPLAY_EVENTS);
             }
+            notify(ticket.subscribers, event);
         }
     }
 }
