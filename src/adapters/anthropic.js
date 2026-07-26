@@ -743,47 +743,33 @@ export function createAnthropicAdapter() {
 
         async listModels(modelConfig) {
             const { endpoint, apiKey, capabilities } = modelConfig;
-            const contextWindow = capabilities?.contextWindow || 200000;
+            const contextWindow = capabilities?.contextWindow;
 
-            const defaultModels = [
-                { id: 'claude-3-opus-20240229', context_window: 200000, vision: true },
-                { id: 'claude-3-sonnet-20240229', context_window: 200000, vision: true },
-                { id: 'claude-3-haiku-20240307', context_window: 200000, vision: true },
-                { id: 'claude-3-5-sonnet-20241022', context_window: 200000, vision: true }
-            ];
+            // buildHeaders sends x-api-key + anthropic-version for native Anthropic,
+            // Bearer for third-party Anthropic-protocol providers. The previous
+            // hardcoded Bearer 401'd against the native endpoint, and the catch
+            // below then returned a fabricated model list as truth.
+            const res = await httpRequest(`${endpoint}/v1/models`, {
+                headers: buildHeaders(apiKey, capabilities)
+            });
+            const data = await res.json();
 
-            try {
-                const res = await httpRequest(`${endpoint}/v1/models`, {
-                    headers: { 'Authorization': `Bearer ${apiKey}` }
-                });
-                const data = await res.json();
-                
-                return (data.data || defaultModels).map(m => ({
-                    id: m.id,
-                    object: 'model',
-                    owned_by: 'anthropic',
-                    capabilities: {
-                        chat: true,
-                        vision: m.vision !== false && (m.id.includes('claude-3') || m.id.includes('vision')),
-                        structured_output: true,
-                        streaming: true,
-                        context_window: m.context_window || contextWindow
-                    }
-                }));
-            } catch {
-                return defaultModels.map(m => ({
-                    id: m.id,
-                    object: 'model',
-                    owned_by: 'anthropic',
-                    capabilities: {
-                        chat: true,
-                        vision: m.vision,
-                        structured_output: true,
-                        streaming: true,
-                        context_window: m.context_window
-                    }
-                }));
+            if (!Array.isArray(data.data)) {
+                throw new Error('[AnthropicAdapter] /v1/models returned no data array');
             }
+
+            return data.data.map(m => ({
+                id: m.id,
+                object: 'model',
+                owned_by: 'anthropic',
+                capabilities: {
+                    chat: true,
+                    vision: m.vision !== false && (m.id.includes('claude-3') || m.id.includes('vision')),
+                    structured_output: true,
+                    streaming: true,
+                    context_window: m.context_window ?? contextWindow
+                }
+            }));
         },
 
         /**
