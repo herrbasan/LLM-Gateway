@@ -851,13 +851,15 @@ async function buildMessageParts(message) {
         // resolving the original thought_signature via the tool call id from disk.
         for (const tc of message.tool_calls) {
             if (tc.type === 'function' && tc.function) {
-                let args = {};
+                let args = null;
                 if (tc.function.arguments) {
-                    try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
+                    try { args = JSON.parse(tc.function.arguments); } catch {
+                        logger.warn('Gemini history replay: malformed tool-call arguments, degrading to text', { tool: tc.function.name, preview: String(tc.function.arguments).slice(0, 120) }, 'GeminiAdapter');
+                    }
                 }
 
                 const sig = await getSignature(tc.id);
-                if (sig) {
+                if (sig && args) {
                     parts.push({
                         functionCall: {
                             name: tc.function.name,
@@ -868,10 +870,11 @@ async function buildMessageParts(message) {
                         thought_signature: sig
                     });
                 } else {
-                    // Fallback: If no signature is cached for this tool call, we MUST NOT 
-                    // emit an active functionCall part without it, as Gemini 3.5 will reject it with a 400.
-                    // Instead, fallback to standard text representation which Gemini accepts without a signature.
-                    parts.push({ text: `[Called: ${tc.function.name}(${JSON.stringify(args)})]` });
+                    // Fallback: If no signature is cached for this tool call (or its
+                    // arguments were unparseable), we MUST NOT emit an active
+                    // functionCall part without it, as Gemini 3.5 will reject it
+                    // with a 400. Use text representation, which Gemini accepts.
+                    parts.push({ text: `[Called: ${tc.function.name}(${tc.function.arguments ?? '{}'})]` });
                 }
             }
         }

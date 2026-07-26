@@ -2,6 +2,20 @@
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Scrub credentials from URLs before they land in error messages (and from
+// there, log files). Covers ?key= (Gemini), ?api_key=, ?access_token=, etc.
+function sanitizeUrl(url) {
+    try {
+        const u = new URL(url);
+        for (const param of ['key', 'api_key', 'apikey', 'access_token', 'token']) {
+            if (u.searchParams.has(param)) u.searchParams.set(param, 'REDACTED');
+        }
+        return u.toString();
+    } catch {
+        return url;
+    }
+}
+
 const DEFAULT_RETRY_OPTIONS = {
     maxRetries: 3,
     baseDelayMs: 500,
@@ -72,7 +86,7 @@ export async function request(url, options = {}) {
                 if (error.status) {
                     throw error;
                 }
-                throw Object.assign(new Error(`Fetch error against ${url}: ${error.message}`), { code: error.code || 'FETCH_ERROR' });
+                throw Object.assign(new Error(`Fetch error against ${sanitizeUrl(url)}: ${error.message}`), { code: error.code || 'FETCH_ERROR' });
             }
 
             let currentDelay = retryOptions.baseDelayMs * Math.pow(retryOptions.factor, attempt);

@@ -11,9 +11,16 @@ export function createAnthropicAdapter() {
     const logger = getLogger('AnthropicAdapter');
     function parseArguments(args) {
         if (typeof args === 'string') {
-            try { return JSON.parse(args); } catch { return {}; }
+            try { return JSON.parse(args); } catch {
+                // Fail loud: a malformed tool-call arguments string must not
+                // silently become {} — the tool would receive wrong input.
+                throw new Error(`[AnthropicAdapter] Malformed tool-call arguments JSON: ${args.slice(0, 120)}`);
+            }
         }
-        return args || {};
+        if (args == null) {
+            throw new Error('[AnthropicAdapter] Tool-call arguments missing (null/undefined)');
+        }
+        return args;
     }
 
     // Helper functions defined at factory scope
@@ -172,6 +179,9 @@ export function createAnthropicAdapter() {
         // Opus 4.7/4.8 use adaptive thinking (model decides when to think)
         if (capabilities?.thinkingMode === 'adaptive') {
             return { type: 'adaptive' };
+        }
+        if (typeof maxTokens !== 'number' || !Number.isFinite(maxTokens)) {
+            throw new Error('[AnthropicAdapter] thinking budget requires a finite maxTokens — declare capabilities.maxOutputTokens or send max_tokens');
         }
         const budget = Math.max(Math.floor(maxTokens * 0.8), 1024);
         return { type: 'enabled', budget_tokens: budget };
@@ -534,174 +544,179 @@ export function createAnthropicAdapter() {
                         }
                         if (data === '[DONE]') continue;
 
+                        // Parse the SSE frame outside the dispatch so a malformed
+                        // frame is tolerated but a real error is never swallowed.
+                        let event;
                         try {
-                            const event = JSON.parse(data);
-                            if (event.type === 'error') {
-                                logger.error('Anthropic stream emitted error event', null, { error: event.error }, 'AnthropicAdapter');
-                                throw new Error(`Upstream API Stream Error: ${event.error?.message || JSON.stringify(event.error)}`);
+                            event = JSON.parse(data);
+                        } catch {
+                            logger.warn('Anthropic stream: skipping unparseable SSE frame', { preview: data.slice(0, 160) }, 'AnthropicAdapter');
+                            continue;
+                        }
+
+                        if (event.type === 'error') {
+                            logger.error('Anthropic stream emitted error event', null, { error: event.error }, 'AnthropicAdapter');
+                            throw new Error(`Upstream API Stream Error: ${event.error?.message || JSON.stringify(event.error)}`);
+                        }
+                        if (event.type === 'message_start' && event.message?.usage) {
+                            inputTokens = event.message.usage.input_tokens || 0;
+                            if (event.message.content) {
+                                logger.info('Message start content blocks', {
+                                    inputTokens,
+                                    outputTokens: event.message.usage.output_tokens,
+                                    blockCount: event.message.content.length,
+                                    blockTypes: event.message.content.map(b => b.type),
+                                    thinkingSignature: event.message.content.find(b => b.type === 'thinking')?.signature?.substring(0, 40)
+                                });
                             }
-                            if (event.type === 'message_start' && event.message?.usage) {
-                                inputTokens = event.message.usage.input_tokens || 0;
-                                if (event.message.content) {
-                                    logger.info('Message start content blocks', {
-                                        inputTokens,
-                                        outputTokens: event.message.usage.output_tokens,
-                                        blockCount: event.message.content.length,
-                                        blockTypes: event.message.content.map(b => b.type),
-                                        thinkingSignature: event.message.content.find(b => b.type === 'thinking')?.signature?.substring(0, 40)
-                                    });
-                                }
-                            }
-                            if (event.type === 'content_block_stop') {
-                                if (event.content_block?.type === 'thinking') {
-                                    logger.info('Thinking block stop event', {
-                                        hasContentBlock: !!event.content_block,
-                                        signature: event.content_block?.signature?.substring(0, 40) || 'MISSING',
-                                        thinkingLength: event.content_block?.thinking?.length || 0,
-                                        allKeys: Object.keys(event.content_block || {})
-                                    });
-                                    if (event.content_block?.signature) {
-                                        thinkingSignature = event.content_block.signature;
-                                    }
-                                }
-                            }
-                            if (event.type === 'content_block_start' && event.content_block?.type === 'thinking') {
-                                if (!loggedBlockStart) {
-                                    logger.info('Thinking block start event', {
-                                        contentBlockKeys: Object.keys(event.content_block || {}),
-                                        hasSignature: !!event.content_block?.signature,
-                                        signaturePreview: event.content_block?.signature?.substring(0, 40),
-                                        fullBlock: JSON.stringify(event.content_block).substring(0, 200)
-                                    });
-                                    loggedBlockStart = true;
-                                }
+                        }
+                        if (event.type === 'content_block_stop') {
+                            if (event.content_block?.type === 'thinking') {
+                                logger.info('Thinking block stop event', {
+                                    hasContentBlock: !!event.content_block,
+                                    signature: event.content_block?.signature?.substring(0, 40) || 'MISSING',
+                                    thinkingLength: event.content_block?.thinking?.length || 0,
+                                    allKeys: Object.keys(event.content_block || {})
+                                });
                                 if (event.content_block?.signature) {
                                     thinkingSignature = event.content_block.signature;
                                 }
-                                yield {
-                                    id: event.message?.id || processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model,
-                                    provider: 'anthropic',
-                                    choices: [{
-                                        index: 0,
-                                        delta: { reasoning_content: '' },
-                                        finish_reason: null
-                                    }]
-                                };
                             }
-                            if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
-                                yield {
-                                    id: event.message?.id || processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model,
-                                    provider: 'anthropic',
-                                    choices: [{
-                                        index: 0,
-                                        delta: { reasoning_content: event.delta.thinking || '' },
-                                        finish_reason: null
-                                    }]
-                                };
+                        }
+                        if (event.type === 'content_block_start' && event.content_block?.type === 'thinking') {
+                            if (!loggedBlockStart) {
+                                logger.info('Thinking block start event', {
+                                    contentBlockKeys: Object.keys(event.content_block || {}),
+                                    hasSignature: !!event.content_block?.signature,
+                                    signaturePreview: event.content_block?.signature?.substring(0, 40),
+                                    fullBlock: JSON.stringify(event.content_block).substring(0, 200)
+                                });
+                                loggedBlockStart = true;
                             }
-                            if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-                                yield {
-                                    id: event.message?.id || processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model,
-                                    provider: 'anthropic',
-                                    choices: [{
-                                        index: 0,
-                                        delta: {
-                                            tool_calls: [{
-                                                index: event.index,
-                                                id: event.content_block.id,
-                                                type: 'function',
-                                                function: { name: event.content_block.name, arguments: '' }
-                                            }]
-                                        },
-                                        finish_reason: null
-                                    }]
-                                };
+                            if (event.content_block?.signature) {
+                                thinkingSignature = event.content_block.signature;
                             }
-                            if (event.type === 'content_block_delta' && event.delta?.type === 'input_json_delta') {
-                                yield {
-                                    id: event.message?.id || processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model,
-                                    provider: 'anthropic',
-                                    choices: [{
-                                        index: 0,
-                                        delta: {
-                                            tool_calls: [{
-                                                index: event.index,
-                                                function: { arguments: event.delta.partial_json }
-                                            }]
-                                        },
-                                        finish_reason: null
-                                    }]
-                                };
+                            yield {
+                                id: event.message?.id || processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model,
+                                provider: 'anthropic',
+                                choices: [{
+                                    index: 0,
+                                    delta: { reasoning_content: '' },
+                                    finish_reason: null
+                                }]
+                            };
+                        }
+                        if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+                            yield {
+                                id: event.message?.id || processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model,
+                                provider: 'anthropic',
+                                choices: [{
+                                    index: 0,
+                                    delta: { reasoning_content: event.delta.thinking || '' },
+                                    finish_reason: null
+                                }]
+                            };
+                        }
+                        if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+                            yield {
+                                id: event.message?.id || processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model,
+                                provider: 'anthropic',
+                                choices: [{
+                                    index: 0,
+                                    delta: {
+                                        tool_calls: [{
+                                            index: event.index,
+                                            id: event.content_block.id,
+                                            type: 'function',
+                                            function: { name: event.content_block.name, arguments: '' }
+                                        }]
+                                    },
+                                    finish_reason: null
+                                }]
+                            };
+                        }
+                        if (event.type === 'content_block_delta' && event.delta?.type === 'input_json_delta') {
+                            yield {
+                                id: event.message?.id || processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model,
+                                provider: 'anthropic',
+                                choices: [{
+                                    index: 0,
+                                    delta: {
+                                        tool_calls: [{
+                                            index: event.index,
+                                            function: { arguments: event.delta.partial_json }
+                                        }]
+                                    },
+                                    finish_reason: null
+                                }]
+                            };
+                        }
+                        if (event.type === 'content_block_delta' && event.delta?.text) {
+                            yield {
+                                id: event.message?.id || processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model,
+                                provider: 'anthropic',
+                                choices: [{
+                                    index: 0,
+                                    delta: { content: event.delta.text },
+                                    finish_reason: null
+                                }]
+                            };
+                        }
+                        if (event.type === 'message_delta') {
+                            if (event.usage) {
+                                outputTokens = event.usage.output_tokens || 0;
                             }
-                            if (event.type === 'content_block_delta' && event.delta?.text) {
-                                yield {
-                                    id: event.message?.id || processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model,
-                                    provider: 'anthropic',
-                                    choices: [{
-                                        index: 0,
-                                        delta: { content: event.delta.text },
-                                        finish_reason: null
-                                    }]
-                                };
-                            }
-                            if (event.type === 'message_delta') {
-                                if (event.usage) {
-                                    outputTokens = event.usage.output_tokens || 0;
-                                }
-                                let finishReason = event.delta?.stop_reason;
-                                if (finishReason === 'end_turn') finishReason = 'stop';
-                                else if (finishReason === 'tool_use') finishReason = 'tool_calls';
+                            let finishReason = event.delta?.stop_reason;
+                            if (finishReason === 'end_turn') finishReason = 'stop';
+                            else if (finishReason === 'tool_use') finishReason = 'tool_calls';
 
-                                // Emit finish_reason chunk (no usage — Copilot expects usage in a separate choices:[] chunk)
-                                const finishChunk = {
-                                    id: event.message?.id || processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model,
-                                    provider: 'anthropic',
-                                    choices: [{
-                                        index: 0,
-                                        delta: {},
-                                        finish_reason: finishReason || 'stop'
-                                    }]
-                                };
-                                if (thinkingSignature) {
-                                    finishChunk._thinking_signature = thinkingSignature;
-                                }
-                                yield finishChunk;
-
-                                // Emit usage-only chunk in standard OpenAI format (choices: [])
-                                yield {
-                                    id: event.message?.id || processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model,
-                                    provider: 'anthropic',
-                                    choices: [],
-                                    usage: {
-                                        prompt_tokens: inputTokens,
-                                        completion_tokens: outputTokens,
-                                        total_tokens: inputTokens + outputTokens
-                                    }
-                                };
+                            // Emit finish_reason chunk (no usage — Copilot expects usage in a separate choices:[] chunk)
+                            const finishChunk = {
+                                id: event.message?.id || processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model,
+                                provider: 'anthropic',
+                                choices: [{
+                                    index: 0,
+                                    delta: {},
+                                    finish_reason: finishReason || 'stop'
+                                }]
+                            };
+                            if (thinkingSignature) {
+                                finishChunk._thinking_signature = thinkingSignature;
                             }
-                        } catch {
-                            // Ignore parse errors
+                            yield finishChunk;
+
+                            // Emit usage-only chunk in standard OpenAI format (choices: [])
+                            yield {
+                                id: event.message?.id || processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model,
+                                provider: 'anthropic',
+                                choices: [],
+                                usage: {
+                                    prompt_tokens: inputTokens,
+                                    completion_tokens: outputTokens,
+                                    total_tokens: inputTokens + outputTokens
+                                }
+                            };
                         }
                     }
                 }
