@@ -26,25 +26,35 @@ export class FallbackTracker {
      * Switches subsequent requests to the fallback model for cooldownMs.
      */
     recordFailure(taskId, modelName, cooldownMs, error) {
+        const effectiveCooldown = cooldownMs ?? DEFAULT_COOLDOWN_MS;
         this.failures.set(taskId, {
             failedAt: Date.now(),
-            cooldownMs: cooldownMs || DEFAULT_COOLDOWN_MS,
+            cooldownMs: effectiveCooldown,
             model: modelName,
             error: error.message || String(error)
         });
         logger.warn('Task primary model failed, switching to fallback', {
             task: taskId,
             failedModel: modelName,
-            cooldownMs: cooldownMs || DEFAULT_COOLDOWN_MS,
+            cooldownMs: effectiveCooldown,
             error: error.message || String(error)
         }, 'FallbackTracker');
     }
 
     /**
-     * Record a success — clears any failure state for this task.
-     * Called when either primary or fallback succeeds.
+     * Record a success.
+     * @param {string} taskId
+     * @param {boolean} [servedByFallback=false] - true when the FALLBACK model
+     *   served the request. A fallback success must NOT clear the failure state:
+     *   the primary is still down, and the cooldown must run to expiry before
+     *   the primary is retried. Only a PRIMARY success clears state.
      */
-    recordSuccess(taskId) {
+    recordSuccess(taskId, servedByFallback = false) {
+        if (servedByFallback) {
+            // Fallback served — primary still down, keep the failure entry so
+            // shouldUseFallback keeps routing to the fallback until cooldown.
+            return;
+        }
         if (this.failures.has(taskId)) {
             logger.info('Task recovered, clearing fallback state', {
                 task: taskId

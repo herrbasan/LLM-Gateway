@@ -177,12 +177,14 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 
 **Default tasks:** When a request has no `model` and no `task`, the router finds the task with `"default": true` and uses its model. Each request type (chat, embedding, image, audio) should have exactly one default task.
 
-**Fallback models:** Tasks can declare a `"fallback"` model. When the primary model fails, the gateway:
+**Fallback models (embeddings ONLY):** Tasks of type `embedding` may declare a `"fallback"` model. This is the ONLY case fallback is permitted, because a local and cloud embedding model with identical weights and dimensions produce interchangeable vectors — the swap is invisible to correctness. When the primary embedding model fails, the gateway:
 1. Records the failure with a timestamp
-2. Routes subsequent requests to the fallback model for the cooldown period (`fallbackCooldownMinutes`, default 1 min)
+2. Routes subsequent embedding requests to the fallback for the cooldown period (`fallbackCooldownMinutes`, default 1 min). A fallback-served success does NOT clear the failure state — the cooldown runs to expiry.
 3. After cooldown expires, tries the primary again
-4. On success, clears the failure state immediately
+4. On a primary success, clears the failure state
 5. If the primary fails again, re-enters fallback mode
+
+**Chat (and image/audio/video) have NO fallback — by design.** Silently swapping the model mid-conversation would mean the user is suddenly talking to a different (and possibly inferior) model without realizing it. That is unacceptable. A dead chat model must fail loudly with a clear error, so the user sees it and switches deliberately. Do not add chat fallback.
 
 ```json
 "embed": {
