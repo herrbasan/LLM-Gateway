@@ -34,6 +34,14 @@ export function validateModelConfig(modelId, config) {
         throw new Error(`[Config] Model "${modelId}": endpoint is required for adapter "${config.adapter}"`);
     }
 
+    // adapterModel is required — the upstream model id. Without it the gateway
+    // would have to guess a model name (the "Guessing Game" anti-pattern).
+    // A model without a declared adapterModel is a broken config, not an
+    // opportunity to default to a stale placeholder.
+    if (!config.adapterModel || typeof config.adapterModel !== 'string') {
+        throw new Error(`[Config] Model "${modelId}": adapterModel is required and must be a non-empty string (the upstream model id)`);
+    }
+
     // Type validation
     if (!MODEL_TYPES.includes(config.type)) {
         throw new Error(`[Config] Model "${modelId}": invalid type "${config.type}". Must be one of: ${MODEL_TYPES.join(', ')}`);

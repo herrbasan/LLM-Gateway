@@ -108,7 +108,7 @@ export function createGeminiAdapter() {
          */
         async chatComplete(modelConfig, request) {
             const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
-            const model = adapterModel || 'gemini-pro';
+            const model = adapterModel;
 
             if (!apiKey) {
                 throw new Error('[GeminiAdapter] apiKey is required in modelConfig');
@@ -200,7 +200,7 @@ export function createGeminiAdapter() {
          */
         async *streamComplete(modelConfig, request) {
             const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
-            const model = adapterModel || 'gemini-pro';
+            const model = adapterModel;
 
             if (!apiKey) {
                 throw new Error('[GeminiAdapter] apiKey is required in modelConfig');
@@ -428,7 +428,7 @@ export function createGeminiAdapter() {
          */
         async createEmbedding(modelConfig, request) {
             const { endpoint, apiKey, adapterModel } = modelConfig;
-            const model = adapterModel || 'embedding-001';
+            const model = adapterModel;
 
             if (!apiKey) {
                 throw new Error('[GeminiAdapter] apiKey is required in modelConfig');
@@ -469,7 +469,7 @@ export function createGeminiAdapter() {
          */
         async generateImage(modelConfig, request) {
             const { endpoint, apiKey, adapterModel } = modelConfig;
-            const model = adapterModel || 'imagen-4.0-generate-001';
+            const model = adapterModel;
 
             if (!apiKey) {
                 throw new Error('[GeminiAdapter] apiKey is required for image generation');
@@ -528,7 +528,7 @@ export function createGeminiAdapter() {
                 throw new Error('[GeminiAdapter] TTS not enabled for this model');
             }
 
-            const model = adapterModel || 'gemini-2.0-flash-exp';
+            const model = adapterModel;
 
             const payload = {
                 contents: [{
@@ -569,7 +569,7 @@ export function createGeminiAdapter() {
          */
         async generateVideo(modelConfig, request) {
             const { endpoint, apiKey, adapterModel } = modelConfig;
-            const model = adapterModel || 'veo-3.1-generate-preview';
+            const model = adapterModel;
 
             if (!apiKey) {
                 throw new Error('[GeminiAdapter] apiKey is required for video generation');

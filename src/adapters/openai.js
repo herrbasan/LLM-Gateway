@@ -14,7 +14,7 @@ export function createOpenAIAdapter() {
          */
         async chatComplete(modelConfig, request) {
             const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
-            const model = adapterModel || 'gpt-4';
+            const model = adapterModel;
 
             const payload = {
                 model,
@@ -63,7 +63,7 @@ export function createOpenAIAdapter() {
          */
         async *streamComplete(modelConfig, request) {
             const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
-            const model = adapterModel || 'gpt-4';
+            const model = adapterModel;
 
             const payload = {
                 model,
@@ -161,7 +161,7 @@ export function createOpenAIAdapter() {
          */
         async createEmbedding(modelConfig, request) {
             const { endpoint, apiKey, adapterModel, headers: customHeaders, capabilities } = modelConfig;
-            const model = adapterModel || 'text-embedding-3-small';
+            const model = adapterModel;
 
             const payload = {
                 input: Array.isArray(request.input) ? request.input : [request.input],
@@ -210,7 +210,7 @@ export function createOpenAIAdapter() {
             const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
 
             const payload = {
-                model: adapterModel || 'dall-e-3',
+                model: adapterModel,
                 prompt: request.prompt,
                 n: request.n || 1,
                 response_format: 'b64_json'
@@ -269,7 +269,7 @@ export function createOpenAIAdapter() {
             }
 
             const payload = {
-                model: adapterModel || 'tts-1',
+                model: adapterModel,
                 input: request.input,
                 voice,
                 response_format: request.response_format || 'mp3'
@@ -311,7 +311,7 @@ export function createOpenAIAdapter() {
             const { endpoint, apiKey, adapterModel, headers: customHeaders } = modelConfig;
 
             const payload = {
-                model: adapterModel || 'sora-1',
+                model: adapterModel,
                 prompt: request.prompt,
                 duration: request.duration || 5,
                 resolution: request.resolution || '720p'

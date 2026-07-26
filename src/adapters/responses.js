@@ -519,7 +519,7 @@ function convertMessagesToInput(messages) {
  */
 function buildPayload(request, modelConfig, adapterModel, isStreaming = false) {
     const payload = {
-        model: adapterModel || request.model || 'gpt-4o'
+        model: adapterModel || request.model
     };
 
     // Input is required for Responses API (replaces messages)

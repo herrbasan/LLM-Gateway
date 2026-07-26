@@ -39,6 +39,7 @@ const VALID_CONFIG = {
             adapter: 'openai',
             endpoint: 'https://api.openai.com/v1',
             apiKey: '${OPENAI_API_KEY}',
+            adapterModel: 'dall-e-3',
             capabilities: {
                 maxResolution: '1024x1024',
                 supportedFormats: ['png', 'jpeg']
@@ -48,6 +49,7 @@ const VALID_CONFIG = {
             type: 'chat',
             adapter: 'openai',
             endpoint: 'http://localhost:11434',
+            adapterModel: 'llama-local',
             capabilities: {
                 contextWindow: 128000,
                 vision: false,
@@ -87,6 +89,7 @@ describe('Config Schema', () => {
                 type: 'chat',
                 adapter: 'gemini',
                 endpoint: 'https://api.example.com',
+                adapterModel: 'gemini-2.0-flash-001',
                 capabilities: {
                     contextWindow: 100000,
                     vision: true,
@@ -111,6 +114,7 @@ describe('Config Schema', () => {
                 type: 'invalid-type',
                 adapter: 'gemini',
                 endpoint: 'https://api.example.com',
+                adapterModel: 'some-model',
                 capabilities: { contextWindow: 1000 }
             };
             expect(() => validateModelConfig('test-model', config))
@@ -122,6 +126,7 @@ describe('Config Schema', () => {
                 type: 'chat',
                 adapter: 'unknown-adapter',
                 endpoint: 'https://api.example.com',
+                adapterModel: 'some-model',
                 capabilities: { contextWindow: 1000 }
             };
             expect(() => validateModelConfig('test-model', config))
@@ -133,6 +138,7 @@ describe('Config Schema', () => {
                 type: 'chat',
                 adapter: 'gemini',
                 endpoint: 'https://api.example.com',
+                adapterModel: 'some-model',
                 capabilities: { contextWindow: 'not-a-number' }
             };
             expect(() => validateModelConfig('test-model', config))

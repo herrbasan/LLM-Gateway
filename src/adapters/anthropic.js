@@ -310,7 +310,7 @@ export function createAnthropicAdapter() {
 
         async chatComplete(modelConfig, request) {
             const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
-            const model = adapterModel || 'claude-3-opus-20240229';
+            const model = adapterModel;
 
             if (!apiKey) {
                 throw new Error('[AnthropicAdapter] apiKey is required in modelConfig');
@@ -414,7 +414,7 @@ export function createAnthropicAdapter() {
 
         async *streamComplete(modelConfig, request) {
             const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
-            const model = adapterModel || 'claude-3-opus-20240229';
+            const model = adapterModel;
 
             if (!apiKey) {
                 throw new Error('[AnthropicAdapter] apiKey is required in modelConfig');
@@ -792,7 +792,7 @@ export function createAnthropicAdapter() {
          */
         async countMessageTokens(messages, modelConfig) {
             const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
-            const model = adapterModel || 'claude-3-opus-20240229';
+            const model = adapterModel;
 
             const { messages: rawMessages, systemPrompt } = extractSystemPrompt(messages);
             const normalized = normalizeMessages(rawMessages);
