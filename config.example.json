@@ -249,14 +249,9 @@
     "enabled": true,
     "endpoint": "http://localhost:3500"
   },
-  
-  "ws": {
-    "localOnly": false,
-    "accessKey": null,
-    "_comment_accessKey": "Set to a secret string or use env var GATEWAY_ACCESS_KEY. Null = gateway open.",
-    "whitelistIps": ["192.168.*"]
-  },
-  
+
+  "accessKey": null,
+
   "tasks": {
     "_comment": "=== TASK-BASED QUERY SYSTEM ===",
     "_comment_note": "Tasks define semantic routing with preset parameters. Client request params override task defaults.",

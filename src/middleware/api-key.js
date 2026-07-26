@@ -35,19 +35,19 @@ function readAccessKeyFromEnvFile() {
 /**
  * Express middleware — enforces API key on all protected routes.
  *
- * Key priority: config.ws.accessKey > .env file > process.env (legacy).
+ * Key priority: config.accessKey > .env file > process.env (legacy).
  * If no key is configured anywhere, every protected request gets 401.
  * Public: /health, /help.
  */
 export function createApiKeyMiddleware(config) {
   const expectedKey =
-    (config.ws?.accessKey && String(config.ws.accessKey).trim()) ||
+    (config.accessKey && String(config.accessKey).trim()) ||
     readAccessKeyFromEnvFile() ||
     (process.env.GATEWAY_ACCESS_KEY && String(process.env.GATEWAY_ACCESS_KEY).trim()) ||
     null;
 
   logger.info('[Auth] API key middleware active', {
-    keySource: config.ws?.accessKey ? 'config' : expectedKey ? 'env' : 'none',
+    keySource: config.accessKey ? 'config' : expectedKey ? 'env' : 'none',
   }, 'Auth');
 
   if (!expectedKey) {

@@ -32,18 +32,8 @@ async function main() {
       console.log(`Log file: ${logger.getSessionInfo().logFile}`);
     });
 
-    // Initialize WebSocket Server
-    const { setupWebSocketServer } = await import('./websocket/server.js');
-    const wsServer = setupWebSocketServer(server, app, config, {
-      router: app.locals.router,
-      ticketRegistry: app.locals.ticketRegistry
-    });
-
     const shutdown = (signal) => {
       logger.info(`Received ${signal}, shutting down...`, {}, 'System');
-      if (wsServer && wsServer.shutdown) {
-        try { wsServer.shutdown(); } catch(e) {}
-      }
       server.close(() => {
         logger.close();
         process.exit(0);
