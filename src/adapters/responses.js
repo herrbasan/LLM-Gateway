@@ -96,6 +96,7 @@ export function createResponsesAdapter() {
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
+            resetToolCallTracking();
 
             try {
                 while (true) {
@@ -122,7 +123,22 @@ export function createResponsesAdapter() {
                                 // Transform Responses API events to Chat Completions format
                                 const transformed = transformStreamingEvent(parsed);
                                 if (transformed) {
+                                    // Copilot BYOK expects usage in a separate
+                                    // choices:[] chunk, not on the finish chunk.
+                                    const followUpUsage = transformed.__usage;
+                                    delete transformed.__usage;
                                     yield transformed;
+                                    if (followUpUsage) {
+                                        yield {
+                                            id: transformed.id,
+                                            object: 'chat.completion.chunk',
+                                            created: transformed.created,
+                                            model: transformed.model,
+                                            choices: [],
+                                            usage: followUpUsage,
+                                            provider: 'openai'
+                                        };
+                                    }
                                 }
                             } catch (e) {
                                 if (data.length > 0 && data !== '[DONE]') {
@@ -228,6 +244,37 @@ export function createResponsesAdapter() {
  * Transform Responses API streaming events to Chat Completions format.
  * The Responses API has different event types that need to be mapped.
  */
+// Per-stream tool call index map: Responses output items → OpenAI tool_calls
+// index. Reset per stream. Keyed by item_id/call_id so argument deltas and the
+// initial added event correlate to the same tool_calls[] index.
+const toolCallIndexes = new Map();
+let nextToolCallIndex = 0;
+
+function toolCallIndexFor(itemId) {
+    const key = itemId || `__auto_${nextToolCallIndex}`;
+    if (!toolCallIndexes.has(key)) {
+        toolCallIndexes.set(key, nextToolCallIndex++);
+    }
+    return toolCallIndexes.get(key);
+}
+
+function resetToolCallTracking() {
+    toolCallIndexes.clear();
+    nextToolCallIndex = 0;
+}
+
+// Translate Responses-API usage field names to Chat-Completions usage shape.
+function translateUsage(usage) {
+    if (!usage) return undefined;
+    const prompt = usage.input_tokens ?? usage.prompt_tokens;
+    const completion = usage.output_tokens ?? usage.completion_tokens;
+    return {
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+        total_tokens: usage.total_tokens ?? ((prompt ?? 0) + (completion ?? 0))
+    };
+}
+
 function transformStreamingEvent(event) {
     // Handle error events
     if (event.error) {
@@ -253,14 +300,17 @@ function transformStreamingEvent(event) {
             }
             return null;
 
-        // Tool call events - map to function_call format
+        // Tool call argument deltas - map to tool_calls[] (OpenAI spec).
         case 'response.function_call_arguments.delta':
             if (event.delta) {
                 return {
                     choices: [{
                         index: 0,
-                        delta: { 
-                            function_call: { arguments: event.delta }
+                        delta: {
+                            tool_calls: [{
+                                index: toolCallIndexFor(event.item_id),
+                                function: { arguments: event.delta }
+                            }]
                         }
                     }],
                     provider: 'openai'
@@ -273,7 +323,8 @@ function transformStreamingEvent(event) {
         case 'response.in_progress':
             return null;
 
-        // Response completed
+        // Response completed: finish_reason chunk carries NO usage — Copilot
+        // BYOK expects usage in a separate choices:[] chunk (see usageChunk below).
         case 'response.completed':
         case 'response.done':
             return {
@@ -286,8 +337,9 @@ function transformStreamingEvent(event) {
                     delta: {},
                     finish_reason: event.response?.status === 'completed' ? 'stop' : null
                 }],
-                usage: event.response?.usage,
-                provider: 'openai'
+                provider: 'openai',
+                // Stashed for the stream loop to emit as a follow-up chunk.
+                __usage: translateUsage(event.response?.usage)
             };
 
         // Reasoning events (o-series models) - map to extended thinking format
@@ -349,17 +401,19 @@ function transformStreamingEvent(event) {
                 provider: 'openai'
             };
 
-        // Tool call lifecycle events - pass through for tool handling
+        // Tool call lifecycle events - emit tool_calls[] init chunk (id/type/name).
         case 'response.output_item.added':
             if (event.item?.type === 'function_call') {
                 return {
                     choices: [{
                         index: 0,
                         delta: {
-                            function_call: {
-                                name: event.item.name,
-                                call_id: event.item.call_id
-                            }
+                            tool_calls: [{
+                                index: toolCallIndexFor(event.item.id || event.item.call_id),
+                                id: event.item.call_id || event.item.id,
+                                type: 'function',
+                                function: { name: event.item.name, arguments: '' }
+                            }]
                         }
                     }],
                     provider: 'openai'
