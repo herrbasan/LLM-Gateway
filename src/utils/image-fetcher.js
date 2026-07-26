@@ -92,6 +92,35 @@ export class ImageFetcher {
     }
 
     /**
+     * Fetches with manual redirect handling, validating every hop against the
+     * same SSRF rules as the initial URL. fetch()'s default redirect:'follow'
+     * would let a public URL 302 to a private/metadata address (169.254.169.254).
+     */
+    async fetchWithRedirectValidation(startUrl, fetchOptions = {}, maxHops = 5) {
+        let currentUrl = startUrl;
+        for (let hop = 0; hop <= maxHops; hop++) {
+            // Validate each URL before requesting it (initial + every redirect target)
+            this.validateUrl(currentUrl);
+
+            const res = await fetch(currentUrl, { ...fetchOptions, redirect: 'manual' });
+
+            // 3xx redirect — validate the Location and follow manually
+            if (res.status >= 300 && res.status < 400) {
+                const location = res.headers.get('location');
+                if (!location) {
+                    throw new Error(`Redirect (${res.status}) with no Location header`);
+                }
+                // Resolve relative redirects against the current URL
+                currentUrl = new URL(location, currentUrl).toString();
+                continue;
+            }
+
+            return res;
+        }
+        throw new Error(`Too many redirects (>${maxHops}) fetching image`);
+    }
+
+    /**
      * Fetches an image from a remote URL
      */
     async fetchImage(url) {
@@ -103,8 +132,8 @@ export class ImageFetcher {
         // Validate the URL
         this.validateUrl(url);
 
-        // Fetch with HEAD first to check size
-        const headRes = await fetch(url, { method: 'HEAD' });
+        // Fetch with HEAD first to check size (redirects validated per hop)
+        const headRes = await this.fetchWithRedirectValidation(url, { method: 'HEAD' });
         if (!headRes.ok) {
             throw new Error(`Failed to fetch image: HTTP ${headRes.status}`);
         }
@@ -124,7 +153,7 @@ export class ImageFetcher {
         const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
 
         try {
-            const res = await fetch(url, { 
+            const res = await this.fetchWithRedirectValidation(url, {
                 signal: controller.signal,
                 headers: {
                     'Accept': 'image/*'

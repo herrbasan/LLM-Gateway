@@ -21,8 +21,25 @@ const DEFAULT_RETRY_OPTIONS = {
     baseDelayMs: 500,
     maxDelayMs: 10000,
     factor: 2,
-    statusCodesToRetry: [429, 500, 502, 503, 504]
+    // Only genuine gateway-level transients are retried. 429 is a rate-limit
+    // signal the circuit breaker must see (retrying hides + delays it). 500 on
+    // a non-idempotent chat POST risks double token spend. Neither is retried.
+    statusCodesToRetry: [502, 503, 504],
+    // First-byte deadline: how long to wait for the response headers before
+    // treating the upstream as hung. Per-read inter-chunk deadlines are the
+    // SSE layer's concern, not this wrapper's.
+    firstByteTimeoutMs: 60000
 };
+
+// True only for real transport failures — never for application bugs thrown
+// inside the try block (which must not be retried).
+function isNetworkError(error) {
+    return error.name === 'TypeError'
+        || error.code === 'ECONNREFUSED'
+        || error.code === 'ECONNRESET'
+        || error.code === 'ETIMEDOUT'
+        || (typeof error.message === 'string' && error.message.includes('fetch failed'));
+}
 
 function createAbortError() {
     const error = new Error('Request aborted');
@@ -49,9 +66,17 @@ export async function request(url, options = {}) {
     }
 
     while (attempt <= retryOptions.maxRetries) {
+        // Compose the caller's abort signal with a first-byte deadline.
+        // AbortSignal.any is Node >= 20.3; if the caller passed no signal, the
+        // timeout alone guards against a hung upstream.
+        const signals = [AbortSignal.timeout(retryOptions.firstByteTimeoutMs)];
+        if (fetchOptions.signal) signals.push(fetchOptions.signal);
+        const attemptSignal = AbortSignal.any(signals);
+
         try {
             const response = await fetch(url, {
                 ...fetchOptions,
+                signal: attemptSignal,
                 headers: {
                     'Content-Type': 'application/json',
                     ...(fetchOptions.headers || {})
@@ -75,16 +100,32 @@ export async function request(url, options = {}) {
 
             return response;
         } catch (error) {
-            if (isAbortError(error) || fetchOptions.signal?.aborted) {
+            // A genuine client abort (caller cancelled) must surface as an abort,
+            // not be retried. Distinguish it from a first-byte timeout abort.
+            if (fetchOptions.signal?.aborted) {
                 throw createAbortError();
             }
 
-            const isNetworkError = !error.status || error.name === 'TypeError' || error.code === 'ECONNREFUSED' || error.message.includes('fetch');
-            const shouldRetry = (error.isRetriable || isNetworkError) && attempt < retryOptions.maxRetries;
+            // First-byte deadline exceeded — the upstream accepted the connection
+            // but never sent response headers. Retriable on early attempts, a
+            // hung-upstream error on the final attempt.
+            const isFirstByteTimeout = error.name === 'TimeoutError';
 
-            if (!shouldRetry) {
+            const retriable = (error.isRetriable || isNetworkError(error) || isFirstByteTimeout)
+                && attempt < retryOptions.maxRetries;
+
+            if (!retriable) {
                 if (error.status) {
                     throw error;
+                }
+                if (isFirstByteTimeout) {
+                    throw Object.assign(
+                        new Error(`Upstream hung: no response headers within ${retryOptions.firstByteTimeoutMs}ms from ${sanitizeUrl(url)}`),
+                        { code: 'UPSTREAM_TIMEOUT' }
+                    );
+                }
+                if (isAbortError(error)) {
+                    throw createAbortError();
                 }
                 throw Object.assign(new Error(`Fetch error against ${sanitizeUrl(url)}: ${error.message}`), { code: error.code || 'FETCH_ERROR' });
             }
