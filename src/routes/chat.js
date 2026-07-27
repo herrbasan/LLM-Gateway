@@ -58,8 +58,7 @@ export function createChatHandler(router, ticketRegistry) {
                     if (result?.stream === true && result?.generator) {
                         await streamHandler.process(
                             result.generator,
-                            result.context,
-                            requestBody.stream_options
+                            result.context
                         );
                     } else {
                         const err = new Error('[ChatRoute] Invalid streaming response: expected { stream: true, generator }');

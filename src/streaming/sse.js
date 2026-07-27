@@ -39,13 +39,6 @@ export class StreamHandler {
         this.res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     }
 
-    emitDeltaEvent(chunk) {
-        if (!this.isActive) return;
-        if (!this.started) this.start();
-        const payloadStr = `data: ${JSON.stringify(chunk)}\n\n`;
-        this.res.write(payloadStr);
-    }
-
     cleanup() {
         this.isActive = false;
         if (this.heartbeatInterval) {
@@ -54,7 +47,7 @@ export class StreamHandler {
         }
     }
 
-    async process(chunkGenerator, contextPayload = null, streamOptions = undefined) {
+    async process(chunkGenerator, contextPayload = null) {
         this.start();
 
         let seenUpstreamUsage = false;

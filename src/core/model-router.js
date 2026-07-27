@@ -169,9 +169,6 @@ export class ModelRouter {
             result.context = context;
         }
 
-        // Extract thinking tags from non-streaming content
-        const message = result.choices?.[0]?.message;
-
         return result;
     }
 
@@ -573,18 +570,6 @@ export class ModelRouter {
             }
         }
         return total;
-    }
-
-    /**
-     * Build context payload.
-     */
-    _buildContextPayload(contextWindow, usedTokens, strategyApplied) {
-        return {
-            window_size: contextWindow,
-            used_tokens: usedTokens,
-            available_tokens: Math.max(0, contextWindow - usedTokens),
-            strategy_applied: strategyApplied
-        };
     }
 
     /**
