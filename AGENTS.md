@@ -22,22 +22,21 @@
 - **v2.0**: Model-centric architecture (COMPLETE)
 - **v1.x**: Provider-centric architecture (archived docs in `docs/_Archive/`)
 - **Task-based query system**: Named tasks with preset model + parameters, client overrides apply (COMPLETE)
-- **Chat cancellation**: WebSocket `chat.cancel` and HTTP disconnect abort propagation are implemented for fetch-based chat adapters
+- **Chat cancellation**: HTTP client disconnect aborts the upstream provider request for fetch-based chat adapters. (The WebSocket transport was removed — see below.)
 - **Per-model `maxOutputTokens`**: Omitted `max_tokens` values fall back to `capabilities.maxOutputTokens` declared in each model config. Required for Anthropic-adapter upstreams (Kimi, DeepSeek, MiniMax). OpenAI-adapter upstreams omit the field and use their own default.
-- **WebSocket context telemetry**: `chat.progress` context stats are kept authoritative during streaming and `chat.done` now carries final context metadata
+- **Context telemetry (SSE)**: The gateway attaches a `context` object to the `finish_reason` chunk and injects a final usage chunk so REST clients get cumulative token counts.
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
-- **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST and WebSocket with adapter-specific format conversion (COMPLETE)
+- **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST with adapter-specific format conversion (COMPLETE)
 - **OpenAI Responses API**: `POST /v1/responses` proxies to the `responses` adapter with streaming and non-streaming support
 - **Video generation**: `POST /v1/videos/generations` routes to Gemini (Veo) and OpenAI adapters
 - **Admin endpoints**: `/config` (GET) and `/config/store` (POST) for config management with hot-reload (localhost-only)
 - **Queryable logs**: `GET /logs` with filters for level, type, sessionId, limit
-- **WebSocket binary media**: `media.start/stop` for binary file uploads with `gateway-media://` URL injection into chat messages
-- **WebSocket audio**: `audio.start/stop/vad` for binary audio stream negotiation (framework in place)
+
+> **WebSocket transport removed (2026-07-26).** The `src/websocket/` subsystem, the `ws` dependency, and the `ws` config section were deleted. The gateway is now REST/SSE only. See the codebase review (`docs/codebase-review-2026-07-24.md`) for rationale.
 
 ## Documentation
 
 - [REST API](../documentation/api_rest.md) - Standard HTTP interface
-- [WebSocket API](../documentation/api_websocket.md) - JSON-RPC real-time interface
 
 ## Overall Design & Architecture
 
@@ -49,16 +48,15 @@ The LLM Gateway is a lightweight, high-performance Node.js API that sits between
 - **Adapters (`src/adapters/`)**: Normalizes upstream LLM APIs into a unified standard interface.
 - **Core (`src/core/`)**: Handles model routing, ticket registries for async jobs, and circuit breaking for resilience.
 - **Context Management (`src/context/`)**: Performs token estimation for context telemetry only. The gateway is stateless; context compaction is a client concern.
-- **Dual Interfaces**:
-  - **HTTP/REST (`src/routes/`, `src/streaming/`)**: Standard OpenAI-compatible endpoints with Server-Sent Events (SSE).
-  - **WebSocket (`src/websocket/`)**: Low-latency, bi-directional JSON-RPC protocol supporting active chat cancellation, binary media/audio, and multiplexing.
+- **Interface**:
+  - **HTTP/REST (`src/routes/`, `src/streaming/`)**: Standard OpenAI-compatible endpoints with Server-Sent Events (SSE). This is the only transport.
 - **Utilities (`src/utils/`)**: Image fetching (SSRF-safe), media processing client, response normalization, thinking tag stripping, file-based media storage.
 
 ### Model-Centric Design (v2.0)
 
 Each model is independently configured with:
 - **Type**: chat, embedding, image, audio, video
-- **Adapter**: Protocol handler (gemini, openai, alibaba, responses, etc.)
+- **Adapter**: Protocol handler (gemini, openai, anthropic, responses)
 - **Capabilities**: Explicit declaration (contextWindow, vision, thinking, excludeParams, etc.)
 - **Endpoint/Auth**: Per-model configuration
 - **Disabled**: Set `disabled: true` to temporarily disable a model without removing it from config
@@ -93,11 +91,8 @@ Disabled models:
 | `responses` | OpenAI Responses API (newer format) | chat | — |
 | `anthropic` | Anthropic Claude API | chat | Requires `max_tokens`; falls back to `capabilities.maxOutputTokens` if client omits it |
 | `gemini` | Google Gemini API | chat, embedding, image, audio, video | — |
-| `kimi` | Moonshot Kimi API (native HTTP) | chat | — |
-| `alibaba` | Alibaba Cloud AI (unified) | chat, embedding, image, audio | — |
-| `llamacpp` | llama.cpp local server | chat, embedding | — |
 
-> **Note:** The `alibaba` adapter handles all Alibaba/DashScope functionality (chat, embeddings, TTS, images). For Kimi, use the `kimi` adapter (native HTTP).
+> Only these four adapters are registered (`src/core/adapters.js`) and validated (`config-schema.js`). A config naming any other adapter (e.g. the removed `kimi`/`alibaba`/`llamacpp`) fails validation at startup.
 
 ### REST Endpoints
 
@@ -119,22 +114,6 @@ Disabled models:
 | GET | `/config` | Get raw config (localhost-only) |
 | POST | `/config/store` | Save config + hot-reload (localhost-only) |
 | GET | `/logs` | Queryable structured log access |
-
-### WebSocket Methods
-
-| Method | Description |
-|--------|-------------|
-| `session.initialize` | Authentication via access_key |
-| `chat.create` | Initiate chat completion stream |
-| `chat.append` | Append message to buffer and generate |
-| `chat.cancel` | Cancel active generation |
-| `settings.update` | Acknowledge settings change |
-| `audio.start` | Start audio stream (format negotiation) |
-| `audio.stop` | Stop audio stream |
-| `audio.vad` | Voice Activity Detection event |
-| `media.start` | Start binary media upload stream |
-| `media.stop` | Complete media upload stream |
-| `ping` | Returns pong with timestamp |
 
 ### Stateless Operation
 
@@ -165,7 +144,7 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 }
 ```
 
-**Request:** `"task": "query"` in the request body (HTTP or WebSocket).
+**Request:** `"task": "query"` in the request body (REST).
 
 **Merge behavior:** `finalRequest = { ...taskDefaults, ...clientRequestBody }` — client params always win.
 
@@ -202,18 +181,15 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 - `POST /v1/images/generations` — accepts `task` param
 - `POST /v1/audio/speech` — accepts `task` param
 - `POST /v1/videos/generations` — accepts `task` param
-- WebSocket `chat.create` / `chat.append` — accepts `task` in params
 
 ## Development Notes
 
 ### Active Chat Behavior
 
-- WebSocket clients cancel generation with `chat.cancel` and `params.request_id`
 - HTTP chat requests abort upstream generation when the client disconnects
-- OpenAI-spec responses do not include gateway-specific `context` metadata; usage `prompt_tokens` is still overridden with the gateway's context estimate
-- WebSocket `chat.done` includes final `context` metadata for client persistence
+- OpenAI-spec responses do not include gateway-specific `context` metadata as a separate named event; the gateway attaches `context` to the `finish_reason` chunk and injects a final usage chunk so clients get cumulative token counts. Usage `prompt_tokens` is overridden with the gateway's context estimate.
 - Kimi chat requests sanitize prior assistant thinking traces before estimation and upstream dispatch
-- Kimi native token counting uses dedicated Moonshot tokenizer endpoints when available and falls back to estimator logic if token estimation is unavailable
+- Token estimation is local tiktoken only (telemetry). No upstream tokenizer endpoints are called.
 - Qwen models support `enable_thinking` toggle via `extraBody.chat_template_kwargs` — set to `false` to disable verbose reasoning
 
 ### Max Output Tokens
@@ -250,10 +226,10 @@ adapterModel variants: "glm-5" / "glm-5-turbo" / "glm-5v-turbo"
 > **Trade-off**: The Anthropic adapter had rich thinking control and native tool-call format conversion. The openai adapter uses standard OpenAI tool format. If thinking control or Anthropic-native tools become critical, switch back by restoring the old endpoint and adapter + changing adapterModel back to `glm-5.2`.
 
 ### Thinking Control (Per-Request)
-The gateway supports disabling/enabling model reasoning per-request from both REST and WebSocket endpoints. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.
+The gateway supports disabling/enabling model reasoning per-request over REST. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.
 
 **Resolution priority** (highest wins):
-1. Request-level `enable_thinking` (REST body or WS params)
+1. Request-level `enable_thinking` (REST body)
 2. Request-level `extra_body.chat_template_kwargs.enable_thinking` (REST)
 3. Request-level `chat_template_kwargs.enable_thinking` (REST)
 4. Config-level `extraBody.chat_template_kwargs.enable_thinking` (model config)
@@ -269,11 +245,6 @@ The gateway supports disabling/enabling model reasoning per-request from both RE
 { "enable_thinking": false }
 ```
 
-**WebSocket usage (gateway-native):**
-```json
-{ "enable_thinking": false }
-```
-
 **Config default:**
 ```json
 "my-model": { "extraBody": { "chat_template_kwargs": { "enable_thinking": false } } }
@@ -284,8 +255,6 @@ The gateway supports disabling/enabling model reasoning per-request from both RE
 | Adapter | `enable_thinking` becomes | Gate |
 |---------|--------------------------|------|
 | `openai` | `chat_template_kwargs.enable_thinking` | Only if `capabilities.thinking === "chat_template_kwargs"` |
-| `llamacpp` | `chat_template_kwargs.enable_thinking` | Always (llama.cpp native param) |
-| `alibaba` | `enable_thinking` (top-level) | Always |
 | `gemini` | `generationConfig.thinkingConfig` | Always |
 | `anthropic` | `thinking` block | Always |
 | `responses` | `reasoning.effort` | Always |
@@ -296,35 +265,23 @@ The gateway supports disabling/enabling model reasoning per-request from both RE
 
 ### Local Inference (llama.cpp)
 
-The gateway routes to external llama.cpp servers via the `llamacpp` adapter. Local inference configuration (`localInference`) in model config is passed to the server endpoint — the gateway does not manage `llama-server.exe` processes itself.
+The gateway routes to external llama.cpp servers over the standard `openai` adapter (llama.cpp exposes an OpenAI-compatible API). A separate `llamacpp` adapter no longer exists in the registry.
 
 **Config Example:**
 ```json
 "llama-chat": {
-  "adapter": "llamacpp",
-  "endpoint": "http://localhost:4080",
-  "capabilities": { "contextWindow": 64000, "vision": true },
-  "localInference": {
-    "enabled": true,
-    "modelPath": "D:/models/chat-model.gguf",
-    "mmproj": "D:/models/mmproj-f16.gguf",
-    "contextSize": 64000,
-    "gpuLayers": 99,
-    "flashAttention": true,
-    "mlock": true
-  }
+  "adapter": "openai",
+  "endpoint": "http://localhost:4080/v1",
+  "adapterModel": "publisher/model-name",
+  "capabilities": { "contextWindow": 64000, "vision": true }
 }
 ```
-
-**Files:**
-- `src/adapters/llamacpp.js` - OpenAI-compatible API adapter
 
 ### Media Processing
 
 - **Image Fetcher** (`src/utils/image-fetcher.js`): Fetches remote images with SSRF protection and size limits
 - **Media Processor Client** (`src/utils/media-client.js`): External image processing service client for resize/transcode/quality optimization. Opt-in via `request.image_processing` options.
 - **Media Storage** (`src/utils/storage.js`): File-based media storage with TTL-based eviction
-- **WebSocket Binary Media**: `media.start/stop` protocol with `gateway-media://` URL scheme for injecting uploaded files into chat messages
 
 ### Logging
 

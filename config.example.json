@@ -22,8 +22,10 @@
         "vision": true,
         "streaming": true,
         "structuredOutput": true,
-        "tools": true
+        "tools": true,
+        "thinking": "chat_template_kwargs"
       },
+      "_comment_thinking": "capabilities.thinking='chat_template_kwargs' lets enable_thinking reach llama.cpp/Qwen upstreams via the openai adapter.",
       "imageInputLimit": {
         "maxDimension": 2048,
         "maxFileSize": 52428800,
@@ -189,10 +191,10 @@
       }
     },
     
-    "_comment_alibaba": "--- Alibaba Cloud (DashScope) ---",
+    "_comment_alibaba": "--- Alibaba/DashScope: route via the openai adapter (DashScope's OpenAI-compatible endpoint). The separate 'alibaba' adapter was removed from the registry. ---",
     "alibaba-chat": {
       "type": "chat",
-      "adapter": "alibaba",
+      "adapter": "openai",
       "endpoint": "https://coding-intl.dashscope.aliyuncs.com/v1",
       "apiKey": "your-dashscope-api-key",
       "adapterModel": "qwen3.5-plus",
@@ -201,8 +203,10 @@
         "maxOutputTokens": 65536,
         "vision": true,
         "structuredOutput": true,
-        "streaming": true
-      }
+        "streaming": true,
+        "excludeParams": ["top_p"]
+      },
+      "_comment_excludeParams": "excludeParams strips params the upstream rejects (e.g. reasoning models that reject sampling params)."
     },
     
     "_comment_dashscope_compat": "--- DashScope via OpenAI-compatible endpoint ---",
@@ -251,6 +255,13 @@
   },
 
   "accessKey": null,
+
+  "mediaStorage": {
+    "_comment": "File-based media storage for generated images/audio. TTL keyed on creation time (parsed from filename).",
+    "enabled": true,
+    "ttlMinutes": 60,
+    "cleanupIntervalMs": 60000
+  },
 
   "tasks": {
     "_comment": "=== TASK-BASED QUERY SYSTEM ===",
