@@ -1,5 +1,10 @@
-import dotenv from 'dotenv';
-dotenv.config();
+// Load .env into process.env (native, Node >= 21.7). Mirrors dotenv's
+// behavior of silently skipping a missing file.
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env file — config may rely entirely on process.env already set.
+}
 
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';

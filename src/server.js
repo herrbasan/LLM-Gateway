@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -33,14 +32,32 @@ export function createServer(config) {
   app.locals.router = router;
   app.locals.ticketRegistry = ticketRegistry;
 
-  // CORS middleware
-  const corsOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : true;
-  app.use(cors({
-    origin: corsOrigins,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Async']
-  }));
+  // CORS middleware (native, replaces the 'cors' package).
+  // origin: CORS_ORIGINS env (comma-separated allowlist) or reflect any origin.
+  // Auth is Bearer-header based, not cookies, so reflecting origin is acceptable.
+  const corsAllowlist = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : null;
+  const ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
+  const ALLOWED_HEADERS = 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Async';
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      const allowed = corsAllowlist
+        ? (corsAllowlist.includes(origin) ? origin : null)
+        : origin; // reflect
+      if (allowed) {
+        res.setHeader('Access-Control-Allow-Origin', allowed);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
+    }
+    // Preflight
+    if (req.method === 'OPTIONS') {
+      res.setHeader('Access-Control-Allow-Methods', ALLOWED_METHODS);
+      res.setHeader('Access-Control-Allow-Headers', ALLOWED_HEADERS);
+      return res.sendStatus(204);
+    }
+    next();
+  });
 
   // Basic middleware
   app.use(express.json({ limit: '300mb' }));
