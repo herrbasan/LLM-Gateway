@@ -74,7 +74,7 @@ export function createResponsesHandler(router, ticketRegistry) {
                     }
                 } catch (err) {
                     if (isAbortError(err)) {
-                        logger.info('Streaming responses request aborted by client', {}, 'ResponsesRoute');
+                        logger.debug('Streaming responses request aborted by client', {}, 'ResponsesRoute');
                         return;
                     }
                     if (!res.writableEnded) {
@@ -93,7 +93,7 @@ export function createResponsesHandler(router, ticketRegistry) {
 
         } catch (err) {
             if (isAbortError(err)) {
-                logger.info('Request aborted by client', {}, 'ResponsesRoute');
+                logger.debug('Request aborted by client', {}, 'ResponsesRoute');
                 return;
             }
             next(err);

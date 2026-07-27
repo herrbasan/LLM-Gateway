@@ -68,7 +68,7 @@ export function createChatHandler(router, ticketRegistry) {
                     }
                 } catch (err) {
                     if (isAbortError(err)) {
-                        logger.info('Streaming request aborted by client', {}, 'ChatRoute');
+                        logger.debug('Streaming request aborted by client', {}, 'ChatRoute');
                         return;
                     }
                     const errorResponse = { error: { message: err.message, type: 'internal_error', code: err.code || 'INTERNAL_ERROR' } };
@@ -123,7 +123,7 @@ export function createChatHandler(router, ticketRegistry) {
 
         } catch (err) {
             if (isAbortError(err)) {
-                logger.info('Request aborted by client', {}, 'ChatRoute');
+                logger.debug('Request aborted by client', {}, 'ChatRoute');
                 return;
             }
             next(err);

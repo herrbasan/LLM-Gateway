@@ -145,7 +145,7 @@ export class ModelRouter {
             __modelId: modelId
         };
 
-        logger.info('Chat request prepared', {
+        logger.debug('Chat request prepared', {
             model: modelId,
             adapter: modelConfig.adapter,
             stream: effectiveRequest.stream === true,
@@ -499,7 +499,7 @@ export class ModelRouter {
         // Stamp the resolved model id so per-model circuit breakers key on it.
         resolvedRequest.__modelId = modelId;
 
-        logger.info(`Routing ${expectedType}`, {
+        logger.debug(`Routing ${expectedType}`, {
             model: modelId,
             adapter: modelConfig.adapter,
             task: taskInfo?.id || null,

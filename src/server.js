@@ -13,7 +13,7 @@ import { createAudioSpeechHandler } from './routes/audio.js';
 import { createVideosHandler } from './routes/videos.js';
 import { createSystemEventsHandler } from './routes/events.js';
 import { createConfigGetHandler, createConfigStoreHandler } from './routes/config.js';
-import { createLogsHandler } from './routes/logs.js';
+import { createLogsHandler, createLogLevelHandler } from './routes/logs.js';
 import { createApiKeyMiddleware } from './middleware/api-key.js';
 import { ModelRouter } from './core/model-router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
@@ -192,6 +192,9 @@ export function createServer(config) {
 
   // Logs endpoint
   app.get('/logs', createLogsHandler());
+
+  // Runtime log-level control (localhost-only)
+  app.all('/logs/level', createLogLevelHandler());
 
 
   // Media generation endpoints

@@ -373,21 +373,6 @@ export function createAnthropicAdapter() {
                 body.tool_choice = { type: 'tool', name: 'generate_response' };
             }
 
-            logger.info('Non-stream request', {
-                inputMessageCount: rawMessages.length,
-                normalizedCount: messages.length,
-                merged: rawMessages.length - messages.length,
-                thinkingInHistory,
-                thinkingConfig: body.thinking,
-                assistantMessages: messages.filter(m => m.role === 'assistant').map(m => ({
-                    hasReasoningContent: !!m.reasoning_content,
-                    reasoningContentLength: m.reasoning_content?.length || 0,
-                    hasToolCalls: !!m.tool_calls,
-                    toolCallCount: m.tool_calls?.length || 0,
-                    contentPreview: typeof m.content === 'string' ? m.content?.substring(0, 80) : '[array]'
-                }))
-            });
-
             // Strip parameters the model doesn't support (e.g. reasoning models reject temperature)
             const excludeParams = modelConfig?.capabilities?.excludeParams;
             if (Array.isArray(excludeParams)) {
@@ -469,28 +454,6 @@ export function createAnthropicAdapter() {
                 }
             }
 
-            logger.info('Stream request', {
-                inputMessageCount: rawMessages.length,
-                normalizedCount: messages.length,
-                merged: rawMessages.length - messages.length,
-                thinkingInHistory,
-                thinkingConfig: body.thinking,
-                assistantMessages: messages.filter(m => m.role === 'assistant').map(m => ({
-                    hasReasoningContent: !!m.reasoning_content,
-                    hasThinkingBlocks: !!m.thinking_blocks,
-                    thinkingBlockSignatures: m.thinking_blocks?.map(b => b.signature?.substring(0, 30) || 'NONE'),
-                    reasoningContentLength: m.reasoning_content?.length || 0,
-                    hasContentArray: Array.isArray(m.content),
-                    hasToolCalls: !!m.tool_calls,
-                    toolCallCount: m.tool_calls?.length || 0,
-                    contentPreview: typeof m.content === 'string' ? m.content?.substring(0, 80) : null
-                })),
-                formattedAssistantMessages: formattedMessages.filter(m => m.role === 'assistant').map(m => ({
-                    contentBlockTypes: Array.isArray(m.content) ? m.content.map(b => b.type) : null,
-                    thinkingSignatures: Array.isArray(m.content) ? m.content.filter(b => b.type === 'thinking').map(b => b.signature?.substring(0, 30) || 'NONE') : null
-                }))
-            });
-
             // Strip parameters the model doesn't support (e.g. reasoning models reject temperature)
             const excludeParams = modelConfig?.capabilities?.excludeParams;
             if (Array.isArray(excludeParams)) {
@@ -520,7 +483,6 @@ export function createAnthropicAdapter() {
             let outputTokens = 0;
             let thinkingSignature = null;
             let thinkingText = '';
-            let loggedBlockStart = false;
 
             try {
                 while (true) {
@@ -560,39 +522,15 @@ export function createAnthropicAdapter() {
                         }
                         if (event.type === 'message_start' && event.message?.usage) {
                             inputTokens = event.message.usage.input_tokens || 0;
-                            if (event.message.content) {
-                                logger.info('Message start content blocks', {
-                                    inputTokens,
-                                    outputTokens: event.message.usage.output_tokens,
-                                    blockCount: event.message.content.length,
-                                    blockTypes: event.message.content.map(b => b.type),
-                                    thinkingSignature: event.message.content.find(b => b.type === 'thinking')?.signature?.substring(0, 40)
-                                });
-                            }
                         }
                         if (event.type === 'content_block_stop') {
                             if (event.content_block?.type === 'thinking') {
-                                logger.info('Thinking block stop event', {
-                                    hasContentBlock: !!event.content_block,
-                                    signature: event.content_block?.signature?.substring(0, 40) || 'MISSING',
-                                    thinkingLength: event.content_block?.thinking?.length || 0,
-                                    allKeys: Object.keys(event.content_block || {})
-                                });
                                 if (event.content_block?.signature) {
                                     thinkingSignature = event.content_block.signature;
                                 }
                             }
                         }
                         if (event.type === 'content_block_start' && event.content_block?.type === 'thinking') {
-                            if (!loggedBlockStart) {
-                                logger.info('Thinking block start event', {
-                                    contentBlockKeys: Object.keys(event.content_block || {}),
-                                    hasSignature: !!event.content_block?.signature,
-                                    signaturePreview: event.content_block?.signature?.substring(0, 40),
-                                    fullBlock: JSON.stringify(event.content_block).substring(0, 200)
-                                });
-                                loggedBlockStart = true;
-                            }
                             if (event.content_block?.signature) {
                                 thinkingSignature = event.content_block.signature;
                             }

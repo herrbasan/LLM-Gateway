@@ -1,9 +1,45 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getLogger } from '../utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const LOG_LEVELS = ['debug', 'info', 'warn', 'error'];
+
+/**
+ * Runtime log-level control. The gateway runs quiet by default (errors only);
+ * flip to 'debug' while actively working on it, back to 'error' when done.
+ * Localhost-only — this is an admin lever, not a public knob.
+ *
+ * GET /logs/level         → { level }
+ * POST /logs/level        → body { level } → { level, previous }
+ */
+export function createLogLevelHandler() {
+    return (req, res) => {
+        const ip = req.socket.remoteAddress;
+        const isLocalhost = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+        if (!isLocalhost) {
+            return res.status(403).json({ error: 'Log level control restricted to localhost' });
+        }
+
+        const logger = getLogger();
+
+        if (req.method === 'GET') {
+            return res.json({ level: logger.getLevel(), levels: LOG_LEVELS });
+        }
+
+        // POST
+        const level = String(req.body?.level || '').toLowerCase();
+        if (!LOG_LEVELS.includes(level)) {
+            return res.status(400).json({ error: `Invalid level "${req.body?.level}". Must be one of: ${LOG_LEVELS.join(', ')}` });
+        }
+        const previous = logger.getLevel();
+        logger.setLevel(level);
+        res.json({ level, previous });
+    };
+}
 
 /**
  * Log entry parsing regex

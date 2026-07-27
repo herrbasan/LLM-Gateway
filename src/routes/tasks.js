@@ -1,7 +1,4 @@
 import { StreamHandler } from '../streaming/sse.js';
-import { getLogger } from '../utils/logger.js';
-
-const logger = getLogger();
 
 export function createTaskListHandler(router) {
     return async (req, res, next) => {
@@ -30,8 +27,6 @@ export function createTasksHandler(ticketRegistry) {
 
             if (!ticket.first_polled_at) {
                 ticket.first_polled_at = Date.now();
-                const ageMs = ticket.first_polled_at - ticket.created_at;
-                logger.info(`Async ticket polled`, { ageMs, ticket: ticket.id }, 'Tasks');
             }
 
             const response = {

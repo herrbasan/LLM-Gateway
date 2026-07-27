@@ -9,6 +9,9 @@ describe('GET /logs', () => {
     beforeEach(() => {
         resetLogger();
         logger = getLogger();
+        // Write all levels — the test verifies the logs route reads INFO/WARN/ERROR
+        // entries, so the logger must not be gated to errors-only.
+        logger.setLevel('debug');
         handler = createLogsHandler();
         
         // Generate some test log entries

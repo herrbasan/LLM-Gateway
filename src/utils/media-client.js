@@ -151,8 +151,6 @@ export class MediaProcessorClient {
 
         const { maxDimension, format, quality = 85 } = options;
 
-        logger.info(`Processing: maxDimension=${maxDimension}, format=${format}, quality=${quality}`, {}, 'MediaProcessor');
-
         const endpoint = `${this.config.endpoint}/v1/optimize/image`;
         try {
             const body = {
@@ -191,10 +189,6 @@ export class MediaProcessorClient {
                 throw err;
             }
 
-            // Check content-type to debug SSE vs JSON issue
-            const contentType = res.headers.get('content-type');
-            logger.info(`MediaProcessor response content-type: ${contentType}`, {}, 'MediaProcessor');
-            
             // Clone response for potential error debugging
             const resClone = res.clone();
             let data;
