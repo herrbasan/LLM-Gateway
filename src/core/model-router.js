@@ -567,9 +567,9 @@ export class ModelRouter {
         for (const m of messages) {
             total += 4; // Base overhead for each message (role, formatting)
             if (Array.isArray(m.content)) {
-                total += await this.tokenEstimator.estimate(m.content, null, modelConfig.adapterModel);
+                total += this.tokenEstimator.estimate(m.content, null, modelConfig.adapterModel);
             } else {
-                total += await this.tokenEstimator.estimate(String(m.content || ''), null, modelConfig.adapterModel);
+                total += this.tokenEstimator.estimate(String(m.content || ''), null, modelConfig.adapterModel);
             }
         }
         return total;
