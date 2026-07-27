@@ -483,11 +483,14 @@ function applyThinkingControl(payload, request, capabilities) {
         payload.reasoning_effort = request.enable_thinking ? 'high' : 'none';
     }
     
-    // Strict reasoning history constraint for upstream APIs (like Moonshot/Kimi/Deepseek).
-    // Assistant messages containing tool calls MUST natively possess a `reasoning_content` property, even if empty.
-    // We apply this universally because adding an empty property does not harm standard models,
-    // while preventing 400 Bad Request errors on any upstream model that suddenly enforces it.
-    if (Array.isArray(payload.messages)) {
+    // Strict reasoning history constraint for upstream APIs that enforce it
+    // (Moonshot/Kimi/DeepSeek). Assistant messages containing tool calls MUST
+    // natively possess a `reasoning_content` property, even if empty.
+    // This is a non-spec field: only inject it for models that explicitly
+    // declare capabilities.reasoningContent === true. Applying it universally
+    // mutated history for every upstream (incl. real OpenAI/Grok/OpenRouter)
+    // and copied the entire messages array on every request for no benefit.
+    if (capabilities?.reasoningContent === true && Array.isArray(payload.messages)) {
         payload.messages = payload.messages.map(msg => {
             if (msg.role === 'assistant' && (msg.tool_calls != null || msg.function_call != null) && msg.reasoning_content == null) {
                 return { ...msg, reasoning_content: "" };
