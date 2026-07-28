@@ -77,8 +77,9 @@ export function createResponsesHandler(router, ticketRegistry) {
                         logger.debug('Streaming responses request aborted by client', {}, 'ResponsesRoute');
                         return;
                     }
+                    logger.error(err.message, null, { type: err.type, code: err.code }, 'ResponsesRoute');
                     if (!res.writableEnded) {
-                        res.write(`data: ${JSON.stringify({ error: { message: err.message, type: 'internal_error', code: err.code || 'INTERNAL_ERROR' } })}\n\n`);
+                        res.write(`data: ${JSON.stringify({ error: { message: err.message, type: err.type || 'internal_error', code: err.code || 'INTERNAL_ERROR', ...(err.retryAfter != null && { retryAfter: err.retryAfter }) } })}\n\n`);
                     }
                 } finally {
                     clearInterval(heartbeat);

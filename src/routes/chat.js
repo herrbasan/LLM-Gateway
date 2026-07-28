@@ -71,7 +71,14 @@ export function createChatHandler(router, ticketRegistry) {
                         logger.debug('Streaming request aborted by client', {}, 'ChatRoute');
                         return;
                     }
-                    const errorResponse = { error: { message: err.message, type: 'internal_error', code: err.code || 'INTERNAL_ERROR' } };
+                    const errorResponse = {
+                        error: {
+                            message: err.message,
+                            type: err.type || 'internal_error',
+                            code: err.code || 'INTERNAL_ERROR',
+                            ...(err.retryAfter != null && { retryAfter: err.retryAfter })
+                        }
+                    };
                     streamHandler.end(errorResponse);
                 }
                 return;

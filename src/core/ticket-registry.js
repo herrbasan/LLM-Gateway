@@ -16,7 +16,7 @@ function notify(subscribers, event) {
         try {
             sub(event);
         } catch (err) {
-            logger.error('Ticket subscriber threw', err, null, 'TicketRegistry');
+            logger.error(`Ticket subscriber threw: ${err.message}`, null, null, 'TicketRegistry');
         }
     }
 }

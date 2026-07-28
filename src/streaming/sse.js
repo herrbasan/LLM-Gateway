@@ -161,13 +161,10 @@ export class StreamHandler {
             // If zero content was delivered, Copilot throws "Response contained no choices."
             // Surface a clear error here so the root cause isn't hidden behind Copilot's generic message.
             if (this.isActive && !hasContent) {
-                logger.error('Stream produced zero content chunks', null, {
-                    seenUpstreamUsage,
-                    context: contextPayload
-                }, 'StreamHandler');
+                logger.error('Stream produced zero content', null, contextPayload, 'StreamHandler');
                 this.res.write(`data: ${JSON.stringify({
                     error: {
-                        message: 'Stream produced no content. The upstream model returned no text, tool calls, or reasoning. This may indicate an API error, an empty model response, or a format mismatch.',
+                        message: 'Upstream returned no content.',
                         type: 'zero_content_error',
                         code: 'ZERO_CONTENT'
                     }
@@ -186,15 +183,14 @@ export class StreamHandler {
             }
         } catch (err) {
             if (!isAbortError(err)) {
-                logger.error('Streaming error', err, null, 'StreamHandler');
-                // Surface the error to the client so Copilot doesn't just see
-                // a truncated stream and throw "Response contained no choices."
+                logger.error(err.message, null, { type: err.type, code: err.code }, 'StreamHandler');
                 if (this.isActive) {
                     this.res.write(`data: ${JSON.stringify({
                         error: {
-                            message: err.message || 'Unknown streaming error',
-                            type: 'stream_error',
-                            code: err.code || 'STREAM_ERROR'
+                            message: err.message,
+                            type: err.type || 'stream_error',
+                            code: err.code || 'STREAM_ERROR',
+                            ...(err.retryAfter != null && { retryAfter: err.retryAfter })
                         }
                     })}\n\n`);
                 }
@@ -218,11 +214,4 @@ export class StreamHandler {
         }
     }
 
-    error(err) {
-        logger.error('Stream error', err, null, 'StreamHandler');
-        this.cleanup();
-        if (!this.res.writableEnded) {
-            this.res.end();
-        }
-    }
 }

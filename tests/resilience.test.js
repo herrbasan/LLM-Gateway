@@ -79,6 +79,7 @@ describe('Resilience & Circuit Breaker', () => {
 
          expect(response.status).to.equal(503);
          expect(response.body).to.have.property('error');
-         expect(response.body.error.message).to.include('Circuit is OPEN');
+         expect(response.body.error.message).to.include('temporarily unavailable');
+         expect(response.body.error.code).to.equal('MODEL_UNAVAILABLE');
     });
 });

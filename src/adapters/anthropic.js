@@ -735,7 +735,7 @@ export function createAnthropicAdapter() {
                 if (typeof data.input_tokens === 'number') {
                     return data.input_tokens;
                 }
-                logger.warn('count_tokens returned unexpected format', { data }, 'AnthropicAdapter');
+                logger.warn('count_tokens returned unexpected format', { keys: Object.keys(data), input_tokens: data.input_tokens }, 'AnthropicAdapter');
             } catch (err) {
                 logger.warn('count_tokens failed, falling back to estimator', {
                     error: err.message,

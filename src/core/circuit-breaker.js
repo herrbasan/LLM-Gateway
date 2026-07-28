@@ -30,9 +30,7 @@ export class CircuitBreaker {
 
         if (!this._tryPass()) {
             this.metrics.shortCircuitedRequests++;
-            const err = new Error(`[CircuitBreaker] Fast fail: Circuit is OPEN for provider '${this.name}'`);
-            err.status = 503;
-            throw err;
+            throw this._openCircuitError();
         }
 
         try {
@@ -71,14 +69,34 @@ export class CircuitBreaker {
         if (this.state !== 'HALF-OPEN') this._probeInFlight = false;
     }
 
+    /**
+     * Build the error thrown when the breaker rejects a request.
+     * The message is user-facing — no internal jargon. The provider key
+     * and retry window are attached as structured fields for programmatic
+     * clients (e.g. Copilot BYOK error display).
+     */
+    _openCircuitError() {
+        const model = this.name.split(':')[0];
+        const retryMs = Math.max(0, this.resetTimeoutMs - (Date.now() - this.lastFailureTime));
+        const retrySec = Math.ceil(retryMs / 1000);
+        const err = new Error(
+            `Model '${model}' is temporarily unavailable — repeated upstream failures detected. `
+            + `Retry in ${retrySec}s or use a different model.`
+        );
+        err.status = 503;
+        err.type = 'model_unavailable';
+        err.code = 'MODEL_UNAVAILABLE';
+        err.provider = this.name;
+        err.retryAfter = retrySec;
+        return err;
+    }
+
     async *fireStream(action) {
         this.metrics.totalRequests++;
 
         if (!this._tryPass()) {
             this.metrics.shortCircuitedRequests++;
-            const err = new Error(`[CircuitBreaker] Fast fail: Circuit is OPEN for provider '${this.name}'`);
-            err.status = 503;
-            throw err;
+            throw this._openCircuitError();
         }
 
         let streamStarted = false;

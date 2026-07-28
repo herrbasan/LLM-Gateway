@@ -235,7 +235,7 @@ export function createServer(config) {
       if (msg.includes('413 Payload Too Large')) status = 413;
       else if (msg.includes('Unknown model')) status = 404;
       else if (msg.includes('does not support')) status = 400;
-      else if (msg.includes('Circuit is OPEN')) status = 503;
+      else if (msg.includes('temporarily unavailable')) status = 503;
       else if (msg.includes('429') || msg.includes('Too Many Requests')) status = 429;
       else if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT')) status = 502;
     }
