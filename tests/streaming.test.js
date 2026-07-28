@@ -52,4 +52,66 @@ describe('Streaming & SSE', () => {
         handler.cleanup();
         expect(res.body).to.include(': heartbeat\n\n');
     });
+
+    it('should re-throw (not flush SSE headers) when the generator errors before any content', async () => {
+        const res = new MockResponse();
+        const handler = new StreamHandler(res);
+
+        async function* failingGenerator() {
+            throw new Error('Upstream fetch failed');
+        }
+
+        let caught;
+        try {
+            await handler.process(failingGenerator());
+        } catch (err) {
+            caught = err;
+        }
+
+        // The error must propagate so the caller can send a proper HTTP error.
+        expect(caught).to.exist;
+        expect(caught.message).to.equal('Upstream fetch failed');
+        // SSE headers must NOT have been flushed — response is still mutable.
+        expect(res.headers['Content-Type']).to.be.undefined;
+        expect(res.body).to.equal('');
+        expect(res.writableEnded).to.be.false;
+    });
+
+    it('should re-throw ZERO_CONTENT when the generator yields nothing sendable', async () => {
+        const res = new MockResponse();
+        const handler = new StreamHandler(res);
+
+        async function* emptyGenerator() {
+            // yields only metadata-only chunks that get skipped
+            yield { choices: [] };
+        }
+
+        let caught;
+        try {
+            await handler.process(emptyGenerator());
+        } catch (err) {
+            caught = err;
+        }
+
+        expect(caught).to.exist;
+        expect(caught.code).to.equal('ZERO_CONTENT');
+        expect(res.headers['Content-Type']).to.be.undefined;
+        expect(res.body).to.equal('');
+    });
+
+    it('should flush headers only on first content chunk, not upfront', async () => {
+        const res = new MockResponse();
+        const handler = new StreamHandler(res);
+
+        async function* slowGenerator() {
+            yield { choices: [{ delta: { content: 'hello' } }] };
+            yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+        }
+
+        await handler.process(slowGenerator());
+
+        expect(res.headers['Content-Type']).to.equal('text/event-stream');
+        expect(res.body).to.include('"content":"hello"');
+        expect(res.body).to.include('data: [DONE]');
+    });
 });

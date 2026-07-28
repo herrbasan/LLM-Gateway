@@ -50,7 +50,13 @@ export function createChatHandler(router, ticketRegistry) {
             // Handle streaming
             if (isStream && !isAsync) {
                 const streamHandler = new StreamHandler(res);
-                streamHandler.start();
+                // NOTE: start() is NOT called here. StreamHandler.process() defers
+                // flushing SSE headers until the first content chunk is ready. This
+                // keeps the HTTP response mutable so that if the upstream fetch
+                // fails before producing any content, we can respond with a proper
+                // HTTP error status + JSON body (which Copilot surfaces clearly)
+                // instead of a 200 OK SSE stream carrying an error chunk that
+                // Copilot ignores → "Response contained no choices."
 
                 try {
                     const result = await router.routeChatCompletion(requestBody);
@@ -63,14 +69,29 @@ export function createChatHandler(router, ticketRegistry) {
                     } else {
                         const err = new Error('[ChatRoute] Invalid streaming response: expected { stream: true, generator }');
                         err.status = 500;
-                        const errorResponse = { error: { message: err.message, type: 'internal_error', code: 'INVALID_RESPONSE' } };
-                        streamHandler.end(errorResponse);
+                        throw err;
                     }
                 } catch (err) {
                     if (isAbortError(err)) {
                         logger.debug('Streaming request aborted by client', {}, 'ChatRoute');
                         return;
                     }
+                    // If SSE headers were never flushed, respond with a proper
+                    // HTTP error. This is the path that surfaces upstream fetch
+                    // failures / zero-content as a real error to Copilot.
+                    if (!res.headersSent) {
+                        const status = err.status || 502;
+                        return res.status(status).json({
+                            error: {
+                                message: err.message,
+                                type: err.type || 'upstream_error',
+                                code: err.code || 'UPSTREAM_ERROR',
+                                ...(err.retryAfter != null && { retryAfter: err.retryAfter })
+                            }
+                        });
+                    }
+                    // Headers already sent (mid-stream failure): emit in-band
+                    // SSE error chunk as a last resort.
                     const errorResponse = {
                         error: {
                             message: err.message,

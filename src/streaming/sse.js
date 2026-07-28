@@ -48,12 +48,25 @@ export class StreamHandler {
     }
 
     async process(chunkGenerator, contextPayload = null) {
-        this.start();
-
         let seenUpstreamUsage = false;
         let hasContent = false;
+        // Headers are NOT flushed up front. We defer start() until the first
+        // chunk is ready to be written. This keeps the HTTP response mutable
+        // (status code + body) until we know the upstream actually produced
+        // output. If the generator throws or ends with nothing to send, the
+        // caller can still respond with a proper HTTP error status + JSON body
+        // — which Copilot's BYOK consumer surfaces clearly, instead of the
+        // generic "Response contained no choices" it emits when an SSE stream
+        // delivers only an in-band error chunk (which it ignores).
+        let headersSent = false;
 
-
+        const sendChunk = (chunk) => {
+            if (!headersSent) {
+                this.start();
+                headersSent = true;
+            }
+            return this.res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        };
 
         try {
             for await (let chunk of chunkGenerator) {
@@ -73,8 +86,6 @@ export class StreamHandler {
                     }
 
                     // Track whether this chunk contributes meaningful content.
-                    // Copilot's BYOK parser accumulates delta.content across chunks;
-                    // if no chunk ever delivers content, it throws "Response contained no choices."
                     if (
                         (typeof delta.content === 'string' && delta.content.length > 0) ||
                         delta.tool_calls != null ||
@@ -115,9 +126,7 @@ export class StreamHandler {
                     };
                 }
 
-                const payloadStr = `data: ${JSON.stringify(chunk)}\n\n`;
-
-                const canContinue = this.res.write(payloadStr);
+                const canContinue = sendChunk(chunk);
                 if (!canContinue) {
                     await new Promise(resolve => {
                         const cleanup = () => {
@@ -138,7 +147,7 @@ export class StreamHandler {
             // Always inject the gateway's context estimate as a final usage chunk
             // if upstream didn't provide usage or provided partial (cached-only) data.
             // This ensures clients always see the full cumulative token count.
-            if (this.isActive && contextPayload && typeof contextPayload.used_tokens === 'number') {
+            if (headersSent && contextPayload && typeof contextPayload.used_tokens === 'number') {
                 const usage = {
                     prompt_tokens: contextPayload.used_tokens ?? 0,
                     completion_tokens: 0,
@@ -154,21 +163,32 @@ export class StreamHandler {
                     choices: [],
                     usage
                 };
-                this.res.write(`data: ${JSON.stringify(injectedChunk)}\n\n`);
+                sendChunk(injectedChunk);
             }
 
             // CRITICAL: Copilot's BYOK parser accumulates delta.content across chunks.
-            // If zero content was delivered, Copilot throws "Response contained no choices."
-            // Surface a clear error here so the root cause isn't hidden behind Copilot's generic message.
-            if (this.isActive && !hasContent) {
+            // If zero content was delivered AND we never flushed SSE headers, the
+            // upstream produced nothing. Re-throw so the caller responds with a
+            // proper HTTP error status + JSON body — which Copilot surfaces clearly.
+            // (If headers were already sent — mid-stream truncation — we can only
+            // emit an in-band error chunk; that path is handled below.)
+            if (!hasContent) {
                 logger.error('Stream produced zero content', null, contextPayload, 'StreamHandler');
-                this.res.write(`data: ${JSON.stringify({
+                if (!headersSent) {
+                    const err = new Error('Upstream returned no content.');
+                    err.code = 'ZERO_CONTENT';
+                    err.type = 'zero_content_error';
+                    throw err;
+                }
+                // Headers already sent (some non-content chunk went out): emit the
+                // in-band error as a last resort.
+                sendChunk({
                     error: {
                         message: 'Upstream returned no content.',
                         type: 'zero_content_error',
                         code: 'ZERO_CONTENT'
                     }
-                })}\n\n`);
+                });
             }
 
             // Do not emit gateway-specific named SSE events (e.g. context.status)
@@ -178,12 +198,27 @@ export class StreamHandler {
             // metadata is attached to the finish_reason chunk and the final
             // injected usage chunk's prompt_tokens/total_tokens.
 
-            if (this.isActive) {
+            if (headersSent && this.isActive) {
                 this.res.write('data: [DONE]\n\n');
             }
         } catch (err) {
-            if (!isAbortError(err)) {
+            if (isAbortError(err)) {
+                // Client disconnected. If we never sent headers, nothing to do.
+                // If we did, just clean up.
+            } else {
                 logger.error(err.message, null, { type: err.type, code: err.code }, 'StreamHandler');
+                if (!headersSent) {
+                    // Never started the SSE stream — re-throw so the caller can
+                    // respond with a proper HTTP error status + JSON body. This
+                    // is the path that fixes Copilot's "Response contained no
+                    // choices": the upstream fetch failed before any content,
+                    // so we surface it as a real HTTP error instead of a 200 OK
+                    // SSE stream carrying an error chunk Copilot ignores.
+                    throw err;
+                }
+                // Headers already sent (mid-stream failure): in-band error chunk
+                // is the only option. Copilot may not surface it, but the chat
+                // app and other spec-aware clients will.
                 if (this.isActive) {
                     this.res.write(`data: ${JSON.stringify({
                         error: {
@@ -197,7 +232,7 @@ export class StreamHandler {
             }
         } finally {
             this.cleanup();
-            if (!this.res.writableEnded) {
+            if (headersSent && !this.res.writableEnded) {
                 this.res.end();
             }
         }
