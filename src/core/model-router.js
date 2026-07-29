@@ -162,7 +162,8 @@ export class ModelRouter {
             return {
                 stream: true,
                 generator: adapter.streamComplete(modelConfig, finalOpts),
-                context
+                context,
+                meta: { model: modelId, adapter: modelConfig.adapter }
             };
         } else {
             result = await adapter.chatComplete(modelConfig, finalOpts);

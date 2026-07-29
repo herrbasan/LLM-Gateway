@@ -58,13 +58,15 @@ export function createChatHandler(router, ticketRegistry) {
                 // instead of a 200 OK SSE stream carrying an error chunk that
                 // Copilot ignores → "Response contained no choices."
 
+                let result;
                 try {
-                    const result = await router.routeChatCompletion(requestBody);
+                    result = await router.routeChatCompletion(requestBody);
 
                     if (result?.stream === true && result?.generator) {
                         await streamHandler.process(
                             result.generator,
-                            result.context
+                            result.context,
+                            result.meta
                         );
                     } else {
                         const err = new Error('[ChatRoute] Invalid streaming response: expected { stream: true, generator }');
@@ -86,6 +88,7 @@ export function createChatHandler(router, ticketRegistry) {
                                 message: err.message,
                                 type: err.type || 'upstream_error',
                                 code: err.code || 'UPSTREAM_ERROR',
+                                ...(result?.meta || {}),
                                 ...(err.retryAfter != null && { retryAfter: err.retryAfter })
                             }
                         });
@@ -97,6 +100,7 @@ export function createChatHandler(router, ticketRegistry) {
                             message: err.message,
                             type: err.type || 'internal_error',
                             code: err.code || 'INTERNAL_ERROR',
+                            ...(result?.meta || {}),
                             ...(err.retryAfter != null && { retryAfter: err.retryAfter })
                         }
                     };

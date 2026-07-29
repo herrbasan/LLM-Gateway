@@ -26,9 +26,18 @@ const DEFAULT_RETRY_OPTIONS = {
     // a non-idempotent chat POST risks double token spend. Neither is retried.
     statusCodesToRetry: [502, 503, 504],
     // First-byte deadline: how long to wait for the response headers before
-    // treating the upstream as hung. Per-read inter-chunk deadlines are the
-    // SSE layer's concern, not this wrapper's.
-    firstByteTimeoutMs: 60000
+    // treating the upstream as hung. Reasoning models (DeepSeek, Kimi) can
+    // legitimately spend 60–90s thinking before the first SSE header, so 60s
+    // was too aggressive — it aborted valid long-thinking requests and, worse,
+    // the circuit breaker counted those aborts as failures, opening after 3
+    // and locking the model out. 120s accommodates thinking latency; the
+    // per-read stream deadline (STREAM_READ_DEADLINE_MS) still guards against
+    // a genuinely hung mid-stream connection. Override via
+    // LLM_GW_FIRST_BYTE_TIMEOUT_MS.
+    firstByteTimeoutMs:
+        Number(process.env.LLM_GW_FIRST_BYTE_TIMEOUT_MS) > 0
+            ? Number(process.env.LLM_GW_FIRST_BYTE_TIMEOUT_MS)
+            : 120000
 };
 
 // True only for real transport failures — never for application bugs thrown
@@ -144,7 +153,15 @@ export async function request(url, options = {}) {
             // First-byte deadline exceeded — the upstream accepted the connection
             // but never sent response headers. Retriable on early attempts, a
             // hung-upstream error on the final attempt.
-            const isFirstByteTimeout = error.name === 'TimeoutError';
+            // When the timeout fires through AbortSignal.any(), the rejection may
+            // surface as a TimeoutError, an AbortError, or a bare DOMException
+            // carrying code 23 ("The operation was aborted due to timeout") —
+            // depending on which composed signal the runtime attributes it to.
+            // The caller's own signal was already ruled out above, so any of
+            // these means OUR deadline fired.
+            const isFirstByteTimeout = error.name === 'TimeoutError'
+                || error.name === 'AbortError'
+                || error.code === 23;
 
             const retriable = (error.isRetriable || isNetworkError(error) || isFirstByteTimeout)
                 && attempt < retryOptions.maxRetries;

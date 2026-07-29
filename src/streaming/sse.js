@@ -47,9 +47,13 @@ export class StreamHandler {
         }
     }
 
-    async process(chunkGenerator, contextPayload = null) {
+    async process(chunkGenerator, contextPayload = null, meta = null) {
         let seenUpstreamUsage = false;
         let hasContent = false;
+        // meta: { model, adapter } — identifies the operation in error logs so a
+        // hung upstream names its model instead of arriving as an anonymous
+        // timeout. Falls back to {} so log lines never carry undefined fields.
+        const opMeta = meta || {};
         // Headers are NOT flushed up front. We defer start() until the first
         // chunk is ready to be written. This keeps the HTTP response mutable
         // (status code + body) until we know the upstream actually produced
@@ -206,7 +210,7 @@ export class StreamHandler {
                 // Client disconnected. If we never sent headers, nothing to do.
                 // If we did, just clean up.
             } else {
-                logger.error(err.message, null, { type: err.type, code: err.code }, 'StreamHandler');
+                logger.error(err.message, null, { ...opMeta, type: err.type, code: err.code }, 'StreamHandler');
                 if (!headersSent) {
                     // Never started the SSE stream — re-throw so the caller can
                     // respond with a proper HTTP error status + JSON body. This
