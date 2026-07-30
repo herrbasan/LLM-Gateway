@@ -111,9 +111,19 @@ export async function request(url, options = {}) {
 
     while (attempt <= retryOptions.maxRetries) {
         // Compose the caller's abort signal with a first-byte deadline.
-        // AbortSignal.any is Node >= 20.3; if the caller passed no signal, the
-        // timeout alone guards against a hung upstream.
-        const signals = [AbortSignal.timeout(retryOptions.firstByteTimeoutMs)];
+        // The deadline uses a CANCELLABLE controller (not AbortSignal.timeout)
+        // so we can disarm it the instant response headers arrive. AbortSignal
+        // .timeout() stays live for the whole request and would otherwise fire
+        // mid-stream after firstByteTimeoutMs of WALL time, tearing down a
+        // healthy, actively-streaming body and surfacing a bogus "aborted due
+        // to timeout" (code 23) even though chunks were flowing. Mid-stream
+        // liveness is readWithDeadline's job (per-read, resets each chunk).
+        const firstByteController = new AbortController();
+        const firstByteTimer = setTimeout(
+            () => firstByteController.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')),
+            retryOptions.firstByteTimeoutMs
+        );
+        const signals = [firstByteController.signal];
         if (fetchOptions.signal) signals.push(fetchOptions.signal);
         const attemptSignal = AbortSignal.any(signals);
 
@@ -126,6 +136,13 @@ export async function request(url, options = {}) {
                     ...(fetchOptions.headers || {})
                 }
             });
+
+            // Headers received — the first-byte phase is over. Disarm the
+            // deadline so it cannot fire during body streaming. We only clear
+            // the timer; we do NOT abort the controller, because attemptSignal
+            // (AbortSignal.any) is still bound to the response body reader and
+            // aborting it would tear down the live stream.
+            clearTimeout(firstByteTimer);
 
             if (!response.ok) {
                 if (retryOptions.statusCodesToRetry.includes(response.status) && attempt < retryOptions.maxRetries) {
@@ -144,6 +161,11 @@ export async function request(url, options = {}) {
 
             return response;
         } catch (error) {
+            // Stop the first-byte timer if it hasn't fired yet (fetch rejected
+            // for another reason). If it DID fire, firstByteController.signal
+            // .aborted is true and that's our timeout, distinguished below.
+            clearTimeout(firstByteTimer);
+
             // A genuine client abort (caller cancelled) must surface as an abort,
             // not be retried. Distinguish it from a first-byte timeout abort.
             if (fetchOptions.signal?.aborted) {
@@ -152,16 +174,11 @@ export async function request(url, options = {}) {
 
             // First-byte deadline exceeded — the upstream accepted the connection
             // but never sent response headers. Retriable on early attempts, a
-            // hung-upstream error on the final attempt.
-            // When the timeout fires through AbortSignal.any(), the rejection may
-            // surface as a TimeoutError, an AbortError, or a bare DOMException
-            // carrying code 23 ("The operation was aborted due to timeout") —
-            // depending on which composed signal the runtime attributes it to.
-            // The caller's own signal was already ruled out above, so any of
-            // these means OUR deadline fired.
-            const isFirstByteTimeout = error.name === 'TimeoutError'
-                || error.name === 'AbortError'
-                || error.code === 23;
+            // hung-upstream error on the final attempt. We detect it by whether
+            // OUR deadline controller fired (its signal aborted without the
+            // client's signal being aborted), which is unambiguous now that the
+            // deadline is retired the moment headers arrive.
+            const isFirstByteTimeout = firstByteController.signal.aborted;
 
             const retriable = (error.isRetriable || isNetworkError(error) || isFirstByteTimeout)
                 && attempt < retryOptions.maxRetries;
