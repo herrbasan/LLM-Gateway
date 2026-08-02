@@ -59,6 +59,8 @@ export function createChatHandler(router, ticketRegistry) {
                 // Copilot ignores → "Response contained no choices."
 
                 let result;
+                const _streamStart = Date.now();
+                logger.error('Stream start', null, { model: req.body?.model, msgCount: req.body?.messages?.length, streamId: _streamStart }, 'ChatRoute');
                 try {
                     result = await router.routeChatCompletion(requestBody);
 
@@ -68,6 +70,7 @@ export function createChatHandler(router, ticketRegistry) {
                             result.context,
                             result.meta
                         );
+                        logger.error('Stream end', null, { model: req.body?.model, durationMs: Date.now() - _streamStart, streamId: _streamStart }, 'ChatRoute');
                     } else {
                         const err = new Error('[ChatRoute] Invalid streaming response: expected { stream: true, generator }');
                         err.status = 500;

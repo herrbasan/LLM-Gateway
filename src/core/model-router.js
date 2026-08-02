@@ -249,6 +249,11 @@ export class ModelRouter {
      * Passthrough — no batching, no chunking. The llama-cpp-gateway owns
      * all embedding batching/chunking logic since it has real ctxSize, VRAM,
      * and concurrency state.
+     *
+     * Model guarantee: embeddings ALWAYS route to the model configured for
+     * the default 'embedding'-type task. Client-supplied model is ignored —
+     * a wrong-dimension embed model (e.g. 3072 vs 2560) would silently
+     * corrupt the consuming VDB. The gateway owns this decision.
      */
     async routeEmbedding(request) {
         if (!request || typeof request !== 'object') {
@@ -256,7 +261,20 @@ export class ModelRouter {
         }
 
         const taskRegistry = this.registry.getTaskRegistry();
-        const { resolvedRequest, taskInfo } = this._resolveRequest(request, taskRegistry, taskRegistry.resolveGenericRequest, 'embedding');
+
+        // Pin the task-configured embed model unconditionally. Fail loud if
+        // no default embedding task is configured — a silent fallback would
+        // violate the dimension invariant.
+        const embedTask = taskRegistry.getDefaultTasks().find(({ config }) => {
+            const model = this.registry.get(config.model);
+            return model && model.type === 'embedding';
+        });
+        if (!embedTask) {
+            throw new Error('[ModelRouter] No default embedding task configured — cannot route embeddings');
+        }
+        const pinnedRequest = { ...request, model: embedTask.config.model };
+
+        const { resolvedRequest, taskInfo } = this._resolveRequest(pinnedRequest, taskRegistry, taskRegistry.resolveGenericRequest, 'embedding');
 
         return this._executeWithFallback(
             taskInfo,
