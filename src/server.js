@@ -5,7 +5,6 @@ import { dirname, join } from 'path';
 import { createHealthHandler } from './routes/health.js';
 import { createChatHandler } from './routes/chat.js';
 import { createResponsesHandler } from './routes/responses.js';
-import { createEmbeddingsHandler } from './routes/embeddings.js';
 import { createModelsHandler } from './routes/models.js';
 import { createTaskListHandler, createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
 import { createImagesHandler } from './routes/images.js';
@@ -172,10 +171,6 @@ export function createServer(config) {
   // Responses API endpoint
   app.post('/v1/responses', createResponsesHandler(router, ticketRegistry));
 
-  // Embeddings endpoint
-  app.post('/v1/embeddings', createEmbeddingsHandler(router));
-
-  // Models endpoint
   app.get('/v1/models', createModelsHandler(router));
 
   // Tasks endpoints (kept for async operations)

@@ -245,49 +245,6 @@ export class ModelRouter {
     }
 
     /**
-     * Route an embedding request.
-     * Passthrough — no batching, no chunking. The llama-cpp-gateway owns
-     * all embedding batching/chunking logic since it has real ctxSize, VRAM,
-     * and concurrency state.
-     *
-     * Model guarantee: embeddings ALWAYS route to the model configured for
-     * the default 'embedding'-type task. Client-supplied model is ignored —
-     * a wrong-dimension embed model (e.g. 3072 vs 2560) would silently
-     * corrupt the consuming VDB. The gateway owns this decision.
-     */
-    async routeEmbedding(request) {
-        if (!request || typeof request !== 'object') {
-            throw new Error('[ModelRouter] Request must be an object');
-        }
-
-        const taskRegistry = this.registry.getTaskRegistry();
-
-        // Pin the task-configured embed model unconditionally. Fail loud if
-        // no default embedding task is configured — a silent fallback would
-        // violate the dimension invariant.
-        const embedTask = taskRegistry.getDefaultTasks().find(({ config }) => {
-            const model = this.registry.get(config.model);
-            return model && model.type === 'embedding';
-        });
-        if (!embedTask) {
-            throw new Error('[ModelRouter] No default embedding task configured — cannot route embeddings');
-        }
-        const pinnedRequest = { ...request, model: embedTask.config.model };
-
-        const { resolvedRequest, taskInfo } = this._resolveRequest(pinnedRequest, taskRegistry, taskRegistry.resolveGenericRequest, 'embedding');
-
-        return this._executeWithFallback(
-            taskInfo,
-            'embedding',
-            resolvedRequest,
-            (modelConfig, req) => {
-                const adapter = this._getAdapter(modelConfig.adapter);
-                return adapter.createEmbedding(modelConfig, req);
-            }
-        );
-    }
-
-    /**
      * Route an image generation request.
      */
     async routeImageGeneration(request) {
