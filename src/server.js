@@ -10,6 +10,7 @@ import { createTaskListHandler, createTasksHandler, createTasksStreamHandler } f
 import { createImagesHandler } from './routes/images.js';
 import { createAudioSpeechHandler } from './routes/audio.js';
 import { createVideosHandler } from './routes/videos.js';
+import { createEmbeddingsHandler } from './routes/embeddings.js';
 import { createSystemEventsHandler } from './routes/events.js';
 import { createConfigGetHandler, createConfigStoreHandler } from './routes/config.js';
 import { createLogsHandler, createLogLevelHandler } from './routes/logs.js';
@@ -191,6 +192,9 @@ export function createServer(config) {
   // Runtime log-level control (localhost-only)
   app.all('/logs/level', createLogLevelHandler());
 
+
+  // Embeddings — thin proxy, gateway owns the model
+  app.post('/v1/embeddings', createEmbeddingsHandler());
 
   // Media generation endpoints
   app.post('/v1/images/generations', createImagesHandler(router));
