@@ -162,27 +162,6 @@ export function createResponsesAdapter() {
         },
 
         /**
-         * Generate image - not supported by Responses API.
-         */
-        async generateImage(modelConfig, request) {
-            throw new Error('[ResponsesAdapter] Image generation not supported by Responses API. Use the openai adapter instead.');
-        },
-
-        /**
-         * Synthesize speech - not supported by Responses API.
-         */
-        async synthesizeSpeech(modelConfig, request) {
-            throw new Error('[ResponsesAdapter] Speech synthesis not supported by Responses API. Use the openai adapter instead.');
-        },
-
-        /**
-         * Generate video - not supported by Responses API.
-         */
-        async generateVideo(modelConfig, request) {
-            throw new Error('[ResponsesAdapter] Video generation not supported by Responses API. Use the openai adapter instead.');
-        },
-
-        /**
          * List available models.
          * Uses the standard OpenAI models endpoint.
          */
@@ -326,7 +305,15 @@ function transformStreamingEvent(event) {
         // Response completed: finish_reason chunk carries NO usage — Copilot
         // BYOK expects usage in a separate choices:[] chunk (see usageChunk below).
         case 'response.completed':
-        case 'response.done':
+        case 'response.done': {
+            // The Responses API has no 'tool_calls' status — the output array
+            // tells us whether the model requested tools. Map function_call
+            // output items to finish_reason:'tool_calls' (OpenAI Chat Completions
+            // convention). Hardcoding 'stop' broke tool use for the chat app:
+            // its client treats a 'stop' done as "model bailed on tool_calls"
+            // and removes the pending tool bubble with empty content.
+            const hasFunctionCalls = Array.isArray(event.response?.output)
+                && event.response.output.some(item => item?.type === 'function_call');
             return {
                 id: event.response?.id,
                 object: 'chat.completion.chunk',
@@ -335,12 +322,14 @@ function transformStreamingEvent(event) {
                 choices: [{
                     index: 0,
                     delta: {},
-                    finish_reason: event.response?.status === 'completed' ? 'stop' : null
+                    finish_reason: hasFunctionCalls ? 'tool_calls'
+                        : (event.response?.status === 'completed' ? 'stop' : null)
                 }],
                 provider: 'openai',
                 // Stashed for the stream loop to emit as a follow-up chunk.
                 __usage: translateUsage(event.response?.usage)
             };
+        }
 
         // Reasoning events (o-series models) - map to extended thinking format
         case 'response.reasoning_text.delta':
@@ -480,34 +469,93 @@ function transformStreamingEvent(event) {
  * Convert standard chat messages to Responses API input format.
  * Responses API uses similar format but as `input` instead of `messages`.
  */
+function convertContentPart(part) {
+    if (part.type === 'image_url') {
+        return {
+            type: 'input_image',
+            image_url: part.image_url?.url || part.image_url
+        };
+    }
+    if (part.type === 'text') {
+        return { type: 'input_text', text: part.text };
+    }
+    return part;
+}
+
 function convertMessagesToInput(messages) {
     if (!messages || !Array.isArray(messages)) return [];
-    
-    return messages.map(m => {
-        // Handle array content (vision messages)
-        if (Array.isArray(m.content)) {
-            return {
-                role: m.role,
-                content: m.content.map(part => {
-                    if (part.type === 'image_url') {
-                        return {
-                            type: 'input_image',
-                            image_url: part.image_url?.url || part.image_url
-                        };
-                    }
-                    if (part.type === 'text') {
-                        return { type: 'input_text', text: part.text };
-                    }
-                    return part;
-                })
-            };
+
+    return messages.flatMap(m => {
+        // Tool result (CC format) → Responses API function_call_output
+        if (m.role === 'tool') {
+            return [{
+                type: 'function_call_output',
+                call_id: m.tool_call_id,
+                output: typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+            }];
         }
-        // Simple string content
-        return {
+
+        // Assistant message with tool calls (CC format) → function_call items,
+        // plus the assistant's own message content.
+        if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+            const items = m.tool_calls.map(tc => ({
+                type: 'function_call',
+                call_id: tc.id,
+                name: tc.function?.name,
+                arguments: tc.function?.arguments || ''
+            }));
+            if (m.content) {
+                items.push({
+                    role: 'assistant',
+                    // The Responses API only accepts plain STRING content on
+                    // assistant input messages — array parts (input_text) are
+                    // rejected with "Invalid value: 'input_text'". Supported
+                    // values are 'output_text'/'refusal' (server-produced),
+                    // which a client can't fabricate. Flatten to the string.
+                    content: typeof m.content === 'string'
+                        ? m.content
+                        : (Array.isArray(m.content)
+                            ? m.content.map(p => p?.text ?? '').filter(Boolean).join('\n')
+                            : String(m.content || ''))
+                });
+            }
+            return items;
+        }
+
+        return [{
             role: m.role,
-            content: m.content
-        };
+            content: Array.isArray(m.content) ? m.content.map(convertContentPart) : m.content
+        }];
     });
+}
+
+/**
+ * Convert Chat Completions format tools to Responses API format.
+ * CC:   {type:'function', function:{name, description, parameters, strict}}
+ * Resp: {type:'function', name, description, parameters, strict}
+ * Native Responses-format tools pass through unchanged.
+ */
+function normalizeToolsToResponses(tools) {
+    return tools.map(tool => {
+        if (tool && tool.type === 'function' && tool.function && typeof tool.function === 'object') {
+            const { name, description, parameters, strict } = tool.function;
+            return { type: 'function', name, description, parameters, strict };
+        }
+        return tool;
+    });
+}
+
+/**
+ * Convert Chat Completions format tool_choice to Responses API format.
+ * CC:   {type:'function', function:{name}}
+ * Resp: {type:'function', name}
+ */
+function normalizeToolChoiceToResponses(toolChoice) {
+    if (toolChoice && typeof toolChoice === 'object' && toolChoice.type === 'function'
+        && toolChoice.function && typeof toolChoice.function.name === 'string') {
+        return { type: 'function', name: toolChoice.function.name };
+    }
+    return toolChoice;
 }
 
 /**
@@ -536,6 +584,44 @@ function buildPayload(request, modelConfig, adapterModel, isStreaming = false) {
         payload.previous_response_id = request.previous_response_id;
     }
 
+    // GPT-5.6+ implicit prompt caching: the implicit breakpoint lands at the
+    // LATEST user/tool message, so a growing conversation re-writes the ENTIRE
+    // changing prompt to cache at 1.25× input rate every turn and never
+    // cache-reads anything (verified live: cache_write_tokens ≈ input_tokens
+    // on every large request). Fix: explicit mode + one breakpoint after the
+    // stable system prefix. The stable prefix (system prompt + tools) gets
+    // cached at the discounted read rate; the changing history stops being
+    // written at 1.25×. Gated on session_id (the chat app sends it) so
+    // unrelated requests are untouched. NOTE: cached tokens still count
+    // toward TPM — this is a COST fix, not a rate-limit fix.
+    const sessionKey = request.session_id || request.sessionId;
+    if (sessionKey && Array.isArray(payload.input)) {
+        payload.prompt_cache_options = { mode: 'explicit' };
+        payload.prompt_cache_key = `chat:${sessionKey}`;
+        const systemItem = payload.input.find(item => item && item.role === 'system');
+        if (systemItem) {
+            const systemText = Array.isArray(systemItem.content)
+                ? systemItem.content.map(p => p?.text ?? '').join('')
+                : systemItem.content;
+            // Caching requires the rendered prefix before the breakpoint to be
+            // ≥1024 tokens; below that the breakpoint is useless (docs).
+            if (typeof systemText === 'string' && systemText.length >= 4096) {
+                if (Array.isArray(systemItem.content)) {
+                    const lastBlock = systemItem.content[systemItem.content.length - 1];
+                    if (lastBlock && typeof lastBlock === 'object') {
+                        lastBlock.prompt_cache_breakpoint = { mode: 'explicit' };
+                    }
+                } else {
+                    systemItem.content = [{
+                        type: 'input_text',
+                        text: systemItem.content,
+                        prompt_cache_breakpoint: { mode: 'explicit' }
+                    }];
+                }
+            }
+        }
+    }
+
     // Streaming
     if (isStreaming) {
         payload.stream = true;
@@ -559,12 +645,14 @@ function buildPayload(request, modelConfig, adapterModel, isStreaming = false) {
         payload.max_output_tokens = request.max_output_tokens;
     }
 
-    // Tools - can be custom functions or built-in tools
+    // Tools - convert Chat Completions format ({type:'function', function:{name,...}})
+    // to Responses API format ({type:'function', name, ...}) when needed.
+    // Native Responses-format tools pass through unchanged.
     if (request.tools && request.tools.length > 0) {
-        payload.tools = request.tools;
+        payload.tools = normalizeToolsToResponses(request.tools);
     }
     if (request.tool_choice !== undefined) {
-        payload.tool_choice = request.tool_choice;
+        payload.tool_choice = normalizeToolChoiceToResponses(request.tool_choice);
     }
 
     // Built-in tools (web_search, file_search, etc.)
@@ -603,10 +691,9 @@ function buildPayload(request, modelConfig, adapterModel, isStreaming = false) {
         payload.include = request.include;
     }
 
-    // Parallel tool calls
-    if (typeof request.parallel_tool_calls === 'boolean') {
-        payload.parallel_tool_calls = request.parallel_tool_calls;
-    }
+    // NOTE: parallel_tool_calls is Chat Completions-only. The Responses API has no
+    // such parameter (parallel tool calls are always enabled) and rejects unknown
+    // fields, so it is intentionally dropped here.
 
     // Store output for stateful conversations
     if (typeof request.store === 'boolean') {

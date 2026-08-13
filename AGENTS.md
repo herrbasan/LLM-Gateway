@@ -28,7 +28,6 @@
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
 - **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST with adapter-specific format conversion (COMPLETE)
 - **OpenAI Responses API**: `POST /v1/responses` proxies to the `responses` adapter with streaming and non-streaming support
-- **Video generation**: `POST /v1/videos/generations` routes to Gemini (Veo) and OpenAI adapters
 - **Admin endpoints**: `/config` (GET) and `/config/store` (POST) for config management with hot-reload (localhost-only)
 - **Queryable logs**: `GET /logs` with filters for level, type, sessionId, limit
 
@@ -55,7 +54,7 @@ The LLM Gateway is a lightweight, high-performance Node.js API that sits between
 ### Model-Centric Design (v2.0)
 
 Each model is independently configured with:
-- **Type**: chat, embedding, image, audio, video
+- **Type**: chat, embedding
 - **Adapter**: Protocol handler (gemini, openai, anthropic, responses)
 - **Capabilities**: Explicit declaration (contextWindow, vision, thinking, excludeParams, etc.)
 - **Endpoint/Auth**: Per-model configuration
@@ -87,10 +86,10 @@ Disabled models:
 
 | Adapter | Description | Supported Types | Notes |
 |---------|-------------|-----------------|-------|
-| `openai` | Standard OpenAI Chat Completions API | chat, embedding, image, audio, video | Omits `max_tokens` when client omits it; upstream decides default |
+| `openai` | Standard OpenAI Chat Completions API | chat, embedding | Omits `max_tokens` when client omits it; upstream decides default |
 | `responses` | OpenAI Responses API (newer format) | chat | — |
 | `anthropic` | Anthropic Claude API | chat | Requires `max_tokens`; falls back to `capabilities.maxOutputTokens` if client omits it |
-| `gemini` | Google Gemini API | chat, embedding, image, audio, video | — |
+| `gemini` | Google Gemini API | chat, embedding | Chat uses the Interactions API (stateless); embeddings stay on generateContent/batchEmbedContents |
 
 > Only these four adapters are registered (`src/core/adapters.js`) and validated (`config-schema.js`). A config naming any other adapter (e.g. the removed `kimi`/`alibaba`/`llamacpp`) fails validation at startup.
 
@@ -101,9 +100,6 @@ Disabled models:
 | POST | `/v1/chat/completions` | Chat completions (streaming SSE, async via `X-Async`) |
 | POST | `/v1/responses` | OpenAI Responses API proxy |
 | POST | `/v1/embeddings` | Embedding generation |
-| POST | `/v1/images/generations` | Image generation |
-| POST | `/v1/audio/speech` | Text-to-speech synthesis |
-| POST | `/v1/videos/generations` | Video generation |
 | GET | `/v1/models` | List available models (supports `?type=` filter) |
 | GET | `/v1/tasks` | List available tasks |
 | GET | `/v1/tasks/:id` | Poll async ticket status |
@@ -154,7 +150,7 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 
 **Task validation:** Task models must reference existing models. Unknown task names return `400`.
 
-**Default tasks:** When a request has no `model` and no `task`, the router finds the task with `"default": true` and uses its model. Each request type (chat, embedding, image, audio) should have exactly one default task.
+**Default tasks:** When a request has no `model` and no `task`, the router finds the task with `"default": true` and uses its model. Each request type (chat, embedding) should have exactly one default task.
 
 **Fallback models (embeddings ONLY):** Tasks of type `embedding` may declare a `"fallback"` model. This is the ONLY case fallback is permitted, because a local and cloud embedding model with identical weights and dimensions produce interchangeable vectors — the swap is invisible to correctness. When the primary embedding model fails, the gateway:
 1. Records the failure with a timestamp
@@ -163,7 +159,7 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 4. On a primary success, clears the failure state
 5. If the primary fails again, re-enters fallback mode
 
-**Chat (and image/audio/video) have NO fallback — by design.** Silently swapping the model mid-conversation would mean the user is suddenly talking to a different (and possibly inferior) model without realizing it. That is unacceptable. A dead chat model must fail loudly with a clear error, so the user sees it and switches deliberately. Do not add chat fallback.
+**Chat has NO fallback — by design.** Silently swapping the model mid-conversation would mean the user is suddenly talking to a different (and possibly inferior) model without realizing it. That is unacceptable. A dead chat model must fail loudly with a clear error, so the user sees it and switches deliberately. Do not add chat fallback.
 
 ```json
 "embed": {
@@ -178,9 +174,6 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 - `GET /v1/tasks` — list available tasks
 - `POST /v1/chat/completions` — accepts `task` param
 - `POST /v1/embeddings` — accepts `task` param
-- `POST /v1/images/generations` — accepts `task` param
-- `POST /v1/audio/speech` — accepts `task` param
-- `POST /v1/videos/generations` — accepts `task` param
 
 ## Development Notes
 
@@ -191,6 +184,17 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 - Kimi chat requests sanitize prior assistant thinking traces before estimation and upstream dispatch
 - Token estimation is local tiktoken only (telemetry). No upstream tokenizer endpoints are called.
 - Qwen models support `enable_thinking` toggle via `extraBody.chat_template_kwargs` — set to `false` to disable verbose reasoning
+
+### Gemini Adapter — Interactions API (2026-08-13)
+
+The Gemini chat paths (`chatComplete`, `streamComplete`) were migrated from the legacy `generateContent` API to the **Interactions API** (`POST /v1beta/interactions`).
+
+- **Stateless mode**: the gateway sends `store: false` and passes the full conversation history in `input` (a step timeline). No server-side interaction IDs, and Google retains nothing.
+- **Input step mapping** (OpenAI messages → `input` steps): user → `user_input`, assistant text → `model_output`, assistant `tool_calls` → `thought` + `function_call`, tool → `function_result`.
+- **Function calls carry a native `id`**, and Gemini rejects an echoed `function_call` without its preceding `thought` step. The thought `signature` is cached to disk keyed by the call id (`logs/gemini-signatures/`) and replayed on the next turn — the same cache as the old `thought_signature` solution, now keyed by the native id instead of a synthesized one.
+- **No `tool_choice`/`tool_config`** in the Interactions API. `tool_choice: "none"` is honoured by omitting tools; other choices are unsupported (model decides).
+- **`enable_thinking`** maps to `generation_config.thinking_level`; the valid enum is `minimal|low|medium|high` (no `none`/`dynamic`).
+- Embeddings and `listModels` are **unchanged** (still `generateContent`/`batchEmbedContents` — the Interactions API does not cover them).
 
 ### Max Output Tokens
 
@@ -255,7 +259,7 @@ The gateway supports disabling/enabling model reasoning per-request over REST. A
 | Adapter | `enable_thinking` becomes | Gate |
 |---------|--------------------------|------|
 | `openai` | `chat_template_kwargs.enable_thinking` | Only if `capabilities.thinking === "chat_template_kwargs"` |
-| `gemini` | `generationConfig.thinkingConfig` | Always |
+| `gemini` | `generation_config.thinking_level` (`high`\|`minimal`) | Always |
 | `anthropic` | `thinking` block | Always |
 | `responses` | `reasoning.effort` | Always |
 

@@ -325,9 +325,6 @@ List available models from config. Supports filtering by type.
 ```bash
 GET /v1/models
 GET /v1/models?type=chat
-GET /v1/models?type=image
-GET /v1/models?type=audio
-GET /v1/models?type=video
 GET /v1/models?type=embedding
 ```
 
@@ -348,116 +345,6 @@ GET /v1/models?type=embedding
       }
     }
   ]
-}
-```
-
----
-
-### POST /v1/images/generations
-
-OpenAI-compatible image generation endpoint.
-
-> **Note:** Currently synchronous (`200 OK`). Asynchronous mode with tickets is planned but not yet implemented.
-
-**Headers:**
-
-| Header | Description | Required |
-|--------|-------------|----------|
-| `Content-Type` | `application/json` | Yes |
-| `X-Async` | `true` for async ticket-based processing (planned) | No |
-
-**Request Body:**
-
-```json
-{
-  "model": "dall-e-3",
-  "prompt": "A cinematic cyberpunk street at night",
-  "size": "1024x1024",
-  "quality": "high",
-  "n": 1,
-  "response_format": "b64_json"
-}
-```
-
-**Response 200:**
-
-```json
-{
-  "created": 1739999999,
-  "data": [
-    {
-      "b64_json": "iVBORw0KGgoAAAANSUhEUgAA...",
-      "revised_prompt": "A cinematic cyberpunk street..."
-    }
-  ]
-}
-```
-
----
-
-### POST /v1/audio/speech
-
-OpenAI-compatible text-to-speech endpoint.
-
-- Behavior is synchronous by default.
-- Returns binary audio directly (`audio/mpeg`, `audio/wav`, etc.).
-
-**Headers:**
-
-| Header | Description | Required |
-|--------|-------------|----------|
-| `Content-Type` | `application/json` | Yes |
-
-**Request Body:**
-
-```json
-{
-  "model": "tts-model",
-  "input": "Welcome to the LLM Gateway",
-  "voice": "alloy",
-  "response_format": "mp3",
-  "speed": 1.0
-}
-```
-
-**Response 200:**
-
-- Binary audio body
-- `Content-Type: audio/<format>`
-
----
-
-### POST /v1/videos/generations
-
-OpenAI-compatible video generation endpoint.
-
-> **Note:** Currently synchronous (`200 OK`). Asynchronous mode with tickets is planned but not yet implemented.
-
-**Headers:**
-
-| Header | Description | Required |
-|--------|-------------|----------|
-| `Content-Type` | `application/json` | Yes |
-| `X-Async` | `true` for async ticket-based processing (planned) | No |
-
-**Request Body:**
-
-```json
-{
-  "model": "video-model",
-  "prompt": "A serene landscape with mountains and flowing rivers",
-  "duration": 5,
-  "resolution": "720p",
-  "quality": "high"
-}
-```
-
-**Response 200:**
-
-```json
-{
-  "created": 1739999999,
-  "data": [{ "url": "https://..." }]
 }
 ```
 
@@ -692,37 +579,13 @@ Client parameters always win. If neither task nor client specifies a value, the 
 
 ### Using Tasks with Other Endpoints
 
-Tasks work with embeddings, image generation, audio, and video endpoints too:
+Tasks work with embeddings too:
 
 ```json
 POST /v1/embeddings
 {
   "task": "embed",
   "input": ["text to embed"]
-}
-```
-
-```json
-POST /v1/images/generations
-{
-  "task": "image",
-  "prompt": "A cyberpunk city at night"
-}
-```
-
-```json
-POST /v1/audio/speech
-{
-  "task": "tts",
-  "input": "Welcome to the gateway"
-}
-```
-
-```json
-POST /v1/videos/generations
-{
-  "task": "video",
-  "prompt": "A sunset over mountains"
 }
 ```
 
@@ -733,8 +596,6 @@ POST /v1/videos/generations
 Used for:
 
 - Chat requests when `X-Async: true` header is set
-- Future: Image generation jobs (when async is implemented)
-- Future: Video generation jobs (when async is implemented)
 
 Without `X-Async`, the gateway returns the chat result directly with no ticket.
 
@@ -995,13 +856,7 @@ POST /v1/chat/completions
 
 ### Media Generation
 
-| Use Case | Implementation |
-|----------|---------------|
-| Text-to-image | `POST /v1/images/generations` — currently sync (`200`) |
-| Text-to-speech | `POST /v1/audio/speech` — returns synchronous binary audio |
-| Text-to-video | `POST /v1/videos/generations` — currently sync (`200`) |
-| Async image/video | Planned — will use `202 + ticket` pattern |
-| Provider mismatch | Router enforces capability flags (type must match) |
+Media generation (text-to-image, text-to-speech, text-to-video) has been removed from the gateway. Speech is handled by the dedicated nVoice/nSpeech services.
 
 ### Tool Use / Function Calling
 
@@ -1208,9 +1063,6 @@ for await (const event of ticket.stream()) {
 
 - `chat` - Chat completion models
 - `embedding` - Text embedding models
-- `image` - Image generation models
-- `audio` - Audio/speech generation models
-- `video` - Video generation models
 
 ### Capability Fields
 
@@ -1224,18 +1076,6 @@ for await (const event of ticket.stream()) {
 **Embedding Models:**
 - `contextWindow` (number) - Maximum input tokens
 - `dimensions` (number) - Output embedding dimensions
-
-**Image Models:**
-- `maxResolution` (string) - Maximum image resolution
-- `supportedFormats` (array) - Supported output formats
-- `maxPromptLength` (number) - Maximum prompt length
-
-**Audio Models:**
-- `maxDuration` (number) - Maximum audio duration in seconds
-
-**Video Models:**
-- `maxDuration` (number) - Maximum video duration in seconds
-- `maxResolution` (string) - Maximum video resolution (e.g., "1080p")
 
 ---
 

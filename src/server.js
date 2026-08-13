@@ -7,9 +7,6 @@ import { createChatHandler } from './routes/chat.js';
 import { createResponsesHandler } from './routes/responses.js';
 import { createModelsHandler } from './routes/models.js';
 import { createTaskListHandler, createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
-import { createImagesHandler } from './routes/images.js';
-import { createAudioSpeechHandler } from './routes/audio.js';
-import { createVideosHandler } from './routes/videos.js';
 import { createEmbeddingsHandler } from './routes/embeddings.js';
 import { createSystemEventsHandler } from './routes/events.js';
 import { createConfigGetHandler, createConfigStoreHandler } from './routes/config.js';
@@ -195,11 +192,6 @@ export function createServer(config) {
 
   // Embeddings — thin proxy, gateway owns the model
   app.post('/v1/embeddings', createEmbeddingsHandler());
-
-  // Media generation endpoints
-  app.post('/v1/images/generations', createImagesHandler(router));
-  app.post('/v1/audio/speech', createAudioSpeechHandler(router));
-  app.post('/v1/videos/generations', createVideosHandler(router));
 
   // Non-existent routes
   app.use((req, res) => {

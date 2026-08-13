@@ -92,39 +92,4 @@ describe('Server v2 - Real World', () => {
             expect(res.body.error.message).to.include('type');
         });
     });
-
-    describe('POST /v1/embeddings - Error Cases', () => {
-        it('returns 404 for unknown model', async () => {
-            const res = await supertest(app)
-                .post('/v1/embeddings')
-                .send({
-                    model: 'nonexistent-model-xyz',
-                    input: 'test'
-                });
-            
-            expect(res.status).to.equal(404);
-        });
-    });
-
-    describe('POST /v1/images/generations - Error Cases', () => {
-        it('returns 400 for missing prompt', async () => {
-            const res = await supertest(app)
-                .post('/v1/images/generations')
-                .send({});
-            
-            expect(res.status).to.equal(400);
-            expect(res.body.error.message).to.include('prompt');
-        });
-    });
-
-    describe('POST /v1/audio/speech - Error Cases', () => {
-        it('returns 400 for missing input', async () => {
-            const res = await supertest(app)
-                .post('/v1/audio/speech')
-                .send({ voice: 'alloy' });
-            
-            expect(res.status).to.equal(400);
-            expect(res.body.error.message).to.include('input');
-        });
-    });
 });

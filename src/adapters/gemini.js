@@ -102,7 +102,8 @@ export function createGeminiAdapter() {
         name: 'gemini',
 
         /**
-         * Chat completion.
+         * Chat completion (non-streaming) via the Interactions API.
+         * Stateless: store=false + full conversation history in `input`.
          * @param {Object} modelConfig - Model configuration from registry
          * @param {Object} request - Standardized request
          */
@@ -114,9 +115,10 @@ export function createGeminiAdapter() {
                 throw new Error('[GeminiAdapter] apiKey is required in modelConfig');
             }
 
-            const payload = await buildChatPayload(request, capabilities);
+            const payload = await buildInteractionPayload(request, capabilities);
+            payload.model = model;
 
-            const res = await httpRequest(`${endpoint}/models/${model}:generateContent?key=${apiKey}`, {
+            const res = await httpRequest(`${endpoint}/interactions?key=${apiKey}`, {
                 method: 'POST',
                 signal: request.signal,
                 body: JSON.stringify(payload)
@@ -130,49 +132,49 @@ export function createGeminiAdapter() {
                 throw err;
             }
 
-            const candidate = data.candidates?.[0];
-            const parts = candidate?.content?.parts || [];
+            const steps = data.steps || [];
             let outText = '';
-            let tool_calls = [];
-            let lastFnObj = null;
+            const tool_calls = [];
+            let pendingSignature = null;
 
-            for (const p of parts) {
-                if (p.text) outText += p.text;
-                if (p.functionCall) {
-                    lastFnObj = {
-                        name: p.functionCall.name,
-                        arguments: JSON.stringify(p.functionCall.args || {})
-                    };
-                    const callId = `call_${Math.random().toString(36).substring(2, 11)}`;
-                    
-                    if (p.functionCall.thought_signature) {
-                        await saveSignature(callId, p.functionCall.thought_signature);
+            for (const step of steps) {
+                if (step.type === 'thought') {
+                    if (step.signature) pendingSignature = step.signature;
+                    continue;
+                }
+                if (step.type === 'model_output') {
+                    for (const item of step.content || []) {
+                        if (item.type === 'text') outText += item.text;
                     }
-                    
+                    continue;
+                }
+                if (step.type === 'function_call') {
+                    // Cache the preceding thought signature keyed by the call id,
+                    // so history echo can reconstruct the required thought step.
+                    if (pendingSignature) {
+                        await saveSignature(step.id, pendingSignature);
+                        pendingSignature = null;
+                    }
                     tool_calls.push({
-                        id: callId,
+                        id: step.id,
                         type: 'function',
-                        function: lastFnObj
+                        function: {
+                            name: step.name,
+                            arguments: JSON.stringify(step.arguments ?? {})
+                        }
                     });
+                    continue;
                 }
-                
-                if (p.thought_signature != null && lastFnObj) {
-                    const lastToolCall = tool_calls[tool_calls.length - 1];
-                    if (lastToolCall) {
-                        await saveSignature(lastToolCall.id, p.thought_signature);
-                    }
-                }
+                // google_search_call / google_search_result / other server-side
+                // tool steps are not surfaced to OpenAI-format clients.
             }
 
             const message = { role: 'assistant', content: outText || null };
             if (tool_calls.length > 0) message.tool_calls = tool_calls;
-            
-            let finishReason;
-            if (tool_calls.length > 0) {
-                finishReason = 'tool_calls';
-            } else {
-                finishReason = candidate?.finishReason === 'STOP' ? 'stop' : (candidate?.finishReason?.toLowerCase() || 'stop');
-            }
+
+            const finishReason = (data.status === 'requires_action' || tool_calls.length > 0)
+                ? 'tool_calls'
+                : 'stop';
 
             return {
                 id: `gemini-${Date.now()}`,
@@ -183,12 +185,12 @@ export function createGeminiAdapter() {
                 choices: [{
                     index: 0,
                     message,
-                    finish_reason: finishReason || 'stop'
+                    finish_reason: finishReason
                 }],
                 usage: {
-                    prompt_tokens: data.usageMetadata?.promptTokenCount || 0,
-                    completion_tokens: data.usageMetadata?.candidatesTokenCount || 0,
-                    total_tokens: data.usageMetadata?.totalTokenCount || 0
+                    prompt_tokens: data.usage?.total_input_tokens || 0,
+                    completion_tokens: data.usage?.total_output_tokens || 0,
+                    total_tokens: data.usage?.total_tokens || 0
                 }
             };
         },
@@ -206,9 +208,11 @@ export function createGeminiAdapter() {
                 throw new Error('[GeminiAdapter] apiKey is required in modelConfig');
             }
 
-            const payload = await buildChatPayload(request, capabilities);
+            const payload = await buildInteractionPayload(request, capabilities);
+            payload.model = model;
+            payload.stream = true;
 
-            const res = await httpRequest(`${endpoint}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`, {
+            const res = await httpRequest(`${endpoint}/interactions?key=${apiKey}`, {
                 method: 'POST',
                 signal: request.signal,
                 body: JSON.stringify(payload)
@@ -218,12 +222,30 @@ export function createGeminiAdapter() {
             const decoder = new TextDecoder();
             const processId = `gemini-${Date.now()}`;
             let buffer = '';
-            let hasEmittedTools = false;
-            let pendingThoughtSignature = null; // cross-SSE-chunk pairing
-            let lastEmittedCallId = null; // stream-level active call reference
 
+            // SSE state machine across the typed event stream:
+            // interaction.created → (step.start → step.delta* → step.stop)+ → interaction.completed → done
+            let stepType = null;              // active step: thought | model_output | function_call
+            let pendingSignature = null;      // thought signature awaiting its function_call id
+            let toolCallIndex = 0;            // OpenAI tool_calls index counter
+            let currentToolId = null;
+            let currentToolName = null;
+            let argsBuffer = '';              // accumulated arguments_delta fragments
+            let hasEmittedTools = false;
+            let usage = null;
+
+            const chunkFor = (delta, finishReason = null) => ({
+                id: processId,
+                object: 'chat.completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model,
+                provider: 'gemini',
+                choices: [{ index: 0, delta, finish_reason: finishReason }]
+            });
+
+            let finished = false;
             try {
-                while (true) {
+                while (!finished) {
                     const { done, value } = await readWithDeadline(reader);
                     if (done) break;
 
@@ -233,188 +255,106 @@ export function createGeminiAdapter() {
 
                     for (const line of lines) {
                         const trimmed = line.trim();
-                        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+                        if (!trimmed || !trimmed.startsWith('data:')) continue;
 
-                        const dataStr = trimmed.slice(6);
-                        if (dataStr === '[DONE]') return;
+                        const dataStr = trimmed.slice(5).trim();
+                        if (dataStr === '[DONE]') {
+                            finished = true;
+                            break;
+                        }
 
-                        let payloadData;
+                        let event;
                         try {
-                            payloadData = JSON.parse(dataStr);
-                        } catch (e) {
-                            if (dataStr.length > 0) {
-                                console.error(`[GeminiAdapter] Failed to parse SSE data line: ${dataStr.slice(0, 200)}`);
+                            event = JSON.parse(dataStr);
+                        } catch {
+                            continue;
+                        }
+
+                        const type = event.event_type;
+
+                        if (type === 'interaction.completed') {
+                            const u = event.interaction?.usage;
+                            if (u) {
+                                usage = {
+                                    prompt_tokens: u.total_input_tokens || 0,
+                                    completion_tokens: u.total_output_tokens || 0,
+                                    total_tokens: u.total_tokens || 0
+                                };
                             }
                             continue;
                         }
 
-                        if (!payloadData.candidates || !payloadData.candidates[0]) continue;
-
-                        const candidate = payloadData.candidates[0];
-                        const parts = candidate.content?.parts || [];
-                        let outText = '';
-                        const toolParts = [];
-
-                        // Gemini 3.5 emits thought_signature as a separate Part adjacent to functionCall.
-                        // It can arrive in the same SSE chunk or a subsequent one, so we pair across chunks.
-                        let lastFuncCallIdx = -1;
-                        let hasThoughtOnly = false;
-                        for (const p of parts) {
-                            if (p.text) { outText += p.text; hasThoughtOnly = false; }
-                            if (p.functionCall) {
-                                // Attach any pending thought_signature from a previous chunk
-                                if (pendingThoughtSignature != null) {
-                                    p.functionCall.thought_signature = pendingThoughtSignature;
-                                    pendingThoughtSignature = null;
+                        if (type === 'step.start') {
+                            stepType = event.step?.type || null;
+                            if (stepType === 'function_call') {
+                                currentToolId = event.step.id;
+                                currentToolName = event.step.name;
+                                argsBuffer = '';
+                                if (pendingSignature && currentToolId) {
+                                    await saveSignature(currentToolId, pendingSignature);
+                                    pendingSignature = null;
                                 }
-                                toolParts.push(p.functionCall);
-                                lastFuncCallIdx = toolParts.length - 1;
-                                hasThoughtOnly = false;
-                            }
-                            if (p.thought_signature != null) {
-                                if (lastFuncCallIdx >= 0) {
-                                    toolParts[lastFuncCallIdx].thought_signature = p.thought_signature;
-                                } else if (lastEmittedCallId) {
-                                    // If we already yielded the tool call in a prior chunk, map it directly to that callId
-                                    await saveSignature(lastEmittedCallId, p.thought_signature);
-                                } else {
-                                    // No functionCall in this chunk, and no emitted call yet — save for the next one
-                                    pendingThoughtSignature = p.thought_signature;
-                                }
-                                hasThoughtOnly = true;
-                            }
-                            if (p.thought != null) {
-                                hasThoughtOnly = true;
-                            }
-                        }
-
-                        // Suppress chunks that only contain thought parts (Gemini 3.5 reasoning).
-                        // Yielding empty deltas confuses Copilot. Skip them — let real content trigger
-                        // the SSE handler's hasContent flag when it arrives.
-                        if (hasThoughtOnly && !outText && toolParts.length === 0) continue;
-
-                        const usage = payloadData.usageMetadata ? {
-                            prompt_tokens: payloadData.usageMetadata.promptTokenCount || 0,
-                            completion_tokens: payloadData.usageMetadata.candidatesTokenCount || 0,
-                            total_tokens: payloadData.usageMetadata.totalTokenCount || 0
-                        } : undefined;
-
-                        // Emit text Delta (or empty chunk if no text but no tools either)
-                        if (outText || toolParts.length === 0) {
-                            let finishReason = candidate.finishReason === 'STOP' ? 'stop' : candidate.finishReason?.toLowerCase();
-                            if (hasEmittedTools && finishReason === 'stop') {
-                                finishReason = 'tool_calls';
-                            }
-                            
-                            // If we already emitted tools in a prior chunk, and this is just an empty 'stop' closure, 
-                            // suppress emitting another delta entirely unless it has usage telemetry.
-                            if (!outText && toolParts.length === 0 && hasEmittedTools) {
-                                continue;
-                            }
-
-                            const chunk = {
-                                id: processId,
-                                object: 'chat.completion.chunk',
-                                created: Math.floor(Date.now() / 1000),
-                                model: model,
-                                provider: 'gemini',
-                                choices: [{
-                                    index: 0,
-                                    delta: { content: outText || null },
-                                    finish_reason: (toolParts.length === 0) ? (finishReason || null) : null
-                                }]
-                            };
-                            yield chunk;
-
-                            // Emit usage-only chunk in standard OpenAI format (choices: [])
-                            if (usage) {
-                                yield {
-                                    id: processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model: model,
-                                    provider: 'gemini',
-                                    choices: [],
-                                    usage
-                                };
-                            }
-                        }
-
-                        // Emit tool Parts strictly as OpenAI expects: id+name first, then arguments
-                        if (toolParts.length > 0) {
-                            hasEmittedTools = true;
-                            let finishReason = candidate.finishReason === 'STOP' ? 'tool_calls' : candidate.finishReason?.toLowerCase();
-                            if (!finishReason) finishReason = 'tool_calls';
-
-                            for (let i = 0; i < toolParts.length; i++) {
-                                const f = toolParts[i];
-                                const callId = `call_${Math.random().toString(36).substring(2, 11)}`;
-                                lastEmittedCallId = callId;
-                                
-                                if (f.thought_signature) {
-                                    await saveSignature(callId, f.thought_signature);
-                                } else if (pendingThoughtSignature) {
-                                    await saveSignature(callId, pendingThoughtSignature);
-                                    pendingThoughtSignature = null;
-                                }
-
-                                // Chunk 1: Initialize tool call with id, type, name (no arguments)
-                                const initFn = { name: f.name, arguments: '' };
-                                yield {
-                                    id: processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model: model,
-                                    provider: 'gemini',
-                                    choices: [{
-                                        index: 0,
-                                        delta: {
-                                            tool_calls: [{
-                                                index: i,
-                                                id: callId,
-                                                type: 'function',
-                                                function: initFn
-                                            }]
-                                        },
-                                        finish_reason: null
+                                // Chunk 1: initialize tool call with id + name, no arguments
+                                yield chunkFor({
+                                    tool_calls: [{
+                                        index: toolCallIndex,
+                                        id: currentToolId,
+                                        type: 'function',
+                                        function: { name: currentToolName, arguments: '' }
                                     }]
-                                };
-
-                                // Chunk 2: Send arguments, attach finish_reason to the last one
-                                const chunkArgs = {
-                                    id: processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model: model,
-                                    provider: 'gemini',
-                                    choices: [{
-                                        index: 0,
-                                        delta: {
-                                            tool_calls: [{
-                                                index: i,
-                                                function: { arguments: JSON.stringify(f.args || {}) }
-                                            }]
-                                        },
-                                        finish_reason: (i === toolParts.length - 1) ? finishReason : null
-                                    }]
-                                };
-                                yield chunkArgs;
+                                });
+                                hasEmittedTools = true;
                             }
-
-                            // Emit usage-only chunk in standard OpenAI format (choices: [])
-                            if (usage) {
-                                yield {
-                                    id: processId,
-                                    object: 'chat.completion.chunk',
-                                    created: Math.floor(Date.now() / 1000),
-                                    model: model,
-                                    provider: 'gemini',
-                                    choices: [],
-                                    usage
-                                };
-                            }
+                            continue;
                         }
+
+                        if (type === 'step.delta') {
+                            const delta = event.delta || {};
+                            if (delta.type === 'text') {
+                                if (delta.text) yield chunkFor({ content: delta.text });
+                            } else if (delta.type === 'arguments_delta') {
+                                argsBuffer += (delta.arguments ?? '');
+                            } else if (delta.signature != null) {
+                                pendingSignature = delta.signature;
+                            }
+                            // thought_summary, image, audio deltas — not surfaced to chat clients
+                            continue;
+                        }
+
+                        if (type === 'step.stop') {
+                            if (stepType === 'function_call') {
+                                // Chunk 2: arguments for the tool call
+                                yield chunkFor({
+                                    tool_calls: [{
+                                        index: toolCallIndex,
+                                        function: { arguments: argsBuffer || '{}' }
+                                    }]
+                                });
+                                toolCallIndex++;
+                                currentToolId = null;
+                                currentToolName = null;
+                                argsBuffer = '';
+                            }
+                            stepType = null;
+                            continue;
+                        }
+
+                        // interaction.created / interaction.status_update / done — ignored
                     }
+                }
+
+                // Terminal finish_reason chunk, then usage chunk.
+                yield chunkFor({}, hasEmittedTools ? 'tool_calls' : 'stop');
+                if (usage) {
+                    yield {
+                        id: processId,
+                        object: 'chat.completion.chunk',
+                        created: Math.floor(Date.now() / 1000),
+                        model,
+                        provider: 'gemini',
+                        choices: [],
+                        usage
+                    };
                 }
             } finally {
                 reader.releaseLock();
@@ -465,158 +405,6 @@ export function createGeminiAdapter() {
         },
 
         /**
-         * Generate image using Imagen models.
-         */
-        async generateImage(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel } = modelConfig;
-            const model = adapterModel;
-
-            if (!apiKey) {
-                throw new Error('[GeminiAdapter] apiKey is required for image generation');
-            }
-
-            const payload = {
-                instances: [{ prompt: request.prompt }],
-                parameters: {
-                    sampleCount: request.n || 1,
-                    aspectRatio: request.size ? mapSizeToAspectRatio(request.size) : '1:1'
-                }
-            };
-
-            const res = await httpRequest(`${endpoint}/models/${model}:predict?key=${apiKey}`, {
-                method: 'POST',
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json();
-            
-            if (data.error) {
-                throw new Error(`Gemini Imagen Error: ${data.error.message}`);
-            }
-
-            // Extract base64 encoded images from response
-            // Imagen returns predictions array with bytesBase64Encoded field
-            const predictions = data.predictions || [];
-            const images = predictions.map((pred, index) => {
-                const b64 = pred.bytesBase64Encoded || pred.base64Encoded || pred.base64;
-                if (!b64) {
-                    logger.warn('No base64 data in prediction', { keys: Object.keys(pred) }, 'GeminiAdapter');
-                }
-                return {
-                    b64_json: b64,
-                    index: index
-                };
-            }).filter(img => img.b64_json);
-
-            if (images.length === 0) {
-                throw new Error('[GeminiAdapter] No image data returned from Imagen');
-            }
-
-            return {
-                created: Math.floor(Date.now() / 1000),
-                data: images
-            };
-        },
-
-        /**
-         * Synthesize speech (Gemini 2.0+ supports this).
-         */
-        async synthesizeSpeech(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel, capabilities } = modelConfig;
-            
-            if (!capabilities?.tts) {
-                throw new Error('[GeminiAdapter] TTS not enabled for this model');
-            }
-
-            const model = adapterModel;
-
-            const payload = {
-                contents: [{
-                    role: 'user',
-                    parts: [{ text: request.input }]
-                }],
-                generationConfig: {
-                    responseModalities: ['AUDIO']
-                }
-            };
-
-            const res = await httpRequest(`${endpoint}/models/${model}:generateContent?key=${apiKey}`, {
-                method: 'POST',
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json();
-
-            if (data.error) {
-                throw new Error(`Gemini TTS Error: ${data.error.message}`);
-            }
-
-            // Extract audio data from response
-            const audioPart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.mimeType?.startsWith('audio/'));
-            
-            if (!audioPart) {
-                throw new Error('[GeminiAdapter] No audio data in response');
-            }
-
-            return {
-                audio: audioPart.inlineData.data,
-                mimeType: audioPart.inlineData.mimeType
-            };
-        },
-
-        /**
-         * Generate video using Veo models.
-         */
-        async generateVideo(modelConfig, request) {
-            const { endpoint, apiKey, adapterModel } = modelConfig;
-            const model = adapterModel;
-
-            if (!apiKey) {
-                throw new Error('[GeminiAdapter] apiKey is required for video generation');
-            }
-
-            const payload = {
-                instances: [{
-                    prompt: request.prompt
-                }],
-                parameters: {
-                    aspectRatio: request.size ? mapSizeToAspectRatio(request.size) : '16:9',
-                    durationSeconds: request.duration || 8
-                }
-            };
-
-            // Add image if provided (for image-to-video)
-            if (request.image) {
-                payload.instances[0].image = {
-                    bytesBase64Encoded: request.image.b64_json || request.image
-                };
-            }
-
-            const res = await httpRequest(`${endpoint}/models/${model}:predict?key=${apiKey}`, {
-                method: 'POST',
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json();
-
-            if (data.error) {
-                throw new Error(`Gemini Veo Error: ${data.error.message}`);
-            }
-
-            // Veo returns an operation that needs polling
-            const operation = data.name;
-            if (!operation) {
-                throw new Error('[GeminiAdapter] No operation returned from Veo');
-            }
-
-            return {
-                operation: operation,
-                status: 'pending',
-                created: Math.floor(Date.now() / 1000)
-            };
-        },
-
-        /**
          * List available models.
          * @param {Object} modelConfig - Model configuration (for API key/endpoint)
          */
@@ -663,27 +451,6 @@ export function createGeminiAdapter() {
     };
 }
 
-/**
- * Map OpenAI-style size strings to Imagen aspect ratios.
- * @param {string} size - Size string like "1024x1024", "1024x1536", etc.
- * @returns {string} Imagen aspect ratio like "1:1", "2:3", etc.
- */
-function mapSizeToAspectRatio(size) {
-    const [width, height] = size.split('x').map(Number);
-    if (!width || !height) return '1:1';
-    
-    const ratio = width / height;
-    if (Math.abs(ratio - 1) < 0.1) return '1:1';
-    if (Math.abs(ratio - 0.75) < 0.1) return '3:4';
-    if (Math.abs(ratio - 1.33) < 0.1) return '4:3';
-    if (Math.abs(ratio - 0.67) < 0.1) return '2:3';
-    if (Math.abs(ratio - 1.5) < 0.1) return '3:2';
-    if (Math.abs(ratio - 0.56) < 0.1) return '9:16';
-    if (Math.abs(ratio - 1.78) < 0.1) return '16:9';
-    
-    return '1:1'; // Default
-}
-
 // Helper functions
 
 /**
@@ -726,14 +493,15 @@ function sanitizeSchemaForGemini(schema) {
     return cleaned;
 }
 
-function buildGeminiTools(openAiTools) {
+function buildInteractionTools(openAiTools) {
     if (!openAiTools || !openAiTools.length) return undefined;
-    
-    const functionDeclarations = openAiTools
+
+    const functions = openAiTools
         .filter(t => t.type === 'function' && t.function)
         .map(t => {
             const f = t.function;
             const decl = {
+                type: 'function',
                 name: f.name,
                 description: f.description || ''
             };
@@ -743,167 +511,157 @@ function buildGeminiTools(openAiTools) {
             return decl;
         });
 
-    return functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined;
+    return functions.length > 0 ? functions : undefined;
 }
 
-function buildGeminiToolConfig(toolChoice) {
-    if (!toolChoice) return undefined;
-    if (typeof toolChoice === 'string') {
-        if (toolChoice === 'none') return { functionCallingConfig: { mode: 'NONE' } };
-        if (toolChoice === 'auto') return { functionCallingConfig: { mode: 'AUTO' } };
-        if (toolChoice === 'required') return { functionCallingConfig: { mode: 'ANY' } };
-    } else if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
-        return {
-            functionCallingConfig: {
-                mode: 'ANY',
-                allowedFunctionNames: [toolChoice.function.name]
-            }
-        };
-    }
-    return undefined;
-}
-
-async function buildChatPayload(request, capabilities) {
+async function buildInteractionPayload(request, capabilities) {
     const messages = request.messages || [];
     const systemMsg = messages.find(m => m.role === 'system');
     const otherMessages = messages.filter(m => m.role !== 'system');
 
-    const contents = [];
+    const input = [];
     for (const m of otherMessages) {
-        contents.push({
-            role: m.role === 'assistant' ? 'model' : 'user',
-            parts: await buildMessageParts(m)
-        });
+        input.push(...await buildInputSteps(m));
     }
 
     const payload = {
-        contents,
-        generationConfig: {}
+        input,
+        store: false
     };
 
     if (systemMsg) {
-        payload.system_instruction = {
-            parts: [{ text: String(systemMsg.content) }]
-        };
+        payload.system_instruction = String(systemMsg.content);
     }
 
-    if (request.tools) {
-        const mappedTools = buildGeminiTools(request.tools);
+    // The Interactions API has no tool_choice/tool_config field. A request for
+    // 'none' is honoured by omitting tools entirely; other choices map to the
+    // default (model decides) behaviour.
+    if (request.tools && request.tool_choice !== 'none') {
+        const mappedTools = buildInteractionTools(request.tools);
         if (mappedTools) {
             payload.tools = mappedTools;
         }
     }
 
-    if (request.tool_choice) {
-        const mappedToolConfig = buildGeminiToolConfig(request.tool_choice);
-        if (mappedToolConfig) {
-            payload.toolConfig = mappedToolConfig;
-        }
-    }
+    const generationConfig = {};
 
-    if (request.maxTokens) {
-        payload.generationConfig.maxOutputTokens = request.maxTokens;
+    if (request.maxTokens != null) {
+        generationConfig.max_output_tokens = request.maxTokens;
     }
 
     if (typeof request.temperature === 'number') {
-        payload.generationConfig.temperature = request.temperature;
+        generationConfig.temperature = request.temperature;
     }
 
-    if (request.schema && capabilities?.structuredOutput) {
-        payload.generationConfig.responseMimeType = 'application/json';
-        payload.generationConfig.responseSchema = request.schema;
+    if (typeof request.top_p === 'number') {
+        generationConfig.top_p = request.top_p;
+    }
+
+    if (typeof request.top_k === 'number') {
+        generationConfig.top_k = request.top_k;
+    }
+
+    if (Array.isArray(request.stop) && request.stop.length > 0) {
+        generationConfig.stop_sequences = request.stop;
+    }
+
+    if (request.seed != null) {
+        generationConfig.seed = request.seed;
     }
 
     if (request.enable_thinking != null) {
-        payload.generationConfig.thinkingConfig = {
-            includeThoughts: true,
-            thinkingBudget: request.enable_thinking ? 16000 : 0
-        };
+        // thinking_level enum: minimal | low | medium | high (no 'none')
+        generationConfig.thinking_level = request.enable_thinking ? 'high' : 'minimal';
+    }
+
+    if (Object.keys(generationConfig).length > 0) {
+        payload.generation_config = generationConfig;
+    }
+
+    if (request.schema && capabilities?.structuredOutput) {
+        payload.response_format = [{
+            type: 'text',
+            mime_type: 'application/json',
+            schema: request.schema
+        }];
     }
 
     return payload;
 }
 
-async function buildMessageParts(message) {
-    const parts = [];
-
+async function buildInputSteps(message) {
+    // Tool messages carry the function result. The Interactions API requires the
+    // originating thought + function_call steps to precede it (handled by the
+    // assistant tool_calls branch below).
     if (message.role === 'tool') {
-        let responseObj;
-        try {
-            responseObj = JSON.parse(message.content);
-            if (typeof responseObj !== 'object' || responseObj === null) {
-                responseObj = { value: responseObj };
-            }
-        } catch {
-            responseObj = { result: String(message.content || '') };
-        }
-        parts.push({
-            functionResponse: {
-                name: message.name || 'unknown_tool',
-                response: responseObj
-            }
-        });
-        return parts; // tool messages strictly carry functionResponse
+        return [{
+            type: 'function_result',
+            call_id: message.tool_call_id,
+            name: message.name || 'unknown_tool',
+            result: [{ type: 'text', text: String(message.content || '') }]
+        }];
     }
 
-    if (message.role === 'assistant' && message.tool_calls) {
-        // Emit functionCall and thought_signature parts in echoed history,
-        // resolving the original thought_signature via the tool call id from disk.
+    // Assistant tool_calls echo back as thought + function_call steps. Gemini
+    // rejects a function_call without its preceding thought, so the signature is
+    // resolved from the filesystem cache keyed by the (native) call id.
+    if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+        const steps = [];
         for (const tc of message.tool_calls) {
-            if (tc.type === 'function' && tc.function) {
-                let args = null;
-                if (tc.function.arguments) {
-                    try { args = JSON.parse(tc.function.arguments); } catch {
-                        logger.warn('Gemini history replay: malformed tool-call arguments, degrading to text', { tool: tc.function.name, preview: String(tc.function.arguments).slice(0, 120) }, 'GeminiAdapter');
-                    }
-                }
+            if (tc.type !== 'function' || !tc.function) continue;
 
-                const sig = await getSignature(tc.id);
-                if (sig && args) {
-                    parts.push({
-                        functionCall: {
-                            name: tc.function.name,
-                            args
-                        }
-                    });
-                    parts.push({
-                        thought_signature: sig
-                    });
-                } else {
-                    // Fallback: If no signature is cached for this tool call (or its
-                    // arguments were unparseable), we MUST NOT emit an active
-                    // functionCall part without it, as Gemini 3.5 will reject it
-                    // with a 400. Use text representation, which Gemini accepts.
-                    parts.push({ text: `[Called: ${tc.function.name}(${tc.function.arguments ?? '{}'})]` });
+            let args = null;
+            if (tc.function.arguments) {
+                try { args = JSON.parse(tc.function.arguments); } catch {
+                    args = null;
                 }
             }
+
+            const sig = await getSignature(tc.id);
+            if (sig && args) {
+                steps.push({ type: 'thought', signature: sig });
+                steps.push({
+                    type: 'function_call',
+                    id: tc.id,
+                    name: tc.function.name,
+                    arguments: args
+                });
+            }
+            // No cached signature (pruned or pre-cache history): the call cannot
+            // be echoed. Drop it — the following tool message still carries the
+            // result, which the model can use without the call frame.
         }
+        return steps;
     }
 
+    // Regular user / assistant text (possibly multimodal)
+    const content = [];
     if (Array.isArray(message.content)) {
-        message.content.forEach(part => {
+        for (const part of message.content) {
             if (part.type === 'text') {
-                parts.push({ text: part.text });
+                content.push({ type: 'text', text: part.text });
             } else if (part.type === 'image_url') {
                 const url = part.image_url?.url || '';
                 const match = url.match(/^data:([^;]+);base64,(.+)$/);
                 if (match) {
-                    parts.push({
-                        inlineData: {
-                            mimeType: match[1],
-                            data: match[2]
-                        }
+                    content.push({
+                        type: 'image',
+                        mime_type: match[1],
+                        data: match[2]
                     });
                 } else {
-                    parts.push({ text: '[Image: remote URL not supported]' });
+                    content.push({ type: 'text', text: '[Image: remote URL not supported]' });
                 }
             } else {
-                parts.push({ text: String(part) });
+                content.push({ type: 'text', text: String(part) });
             }
-        });
+        }
     } else if (message.content) {
-        parts.push({ text: String(message.content) });
+        content.push({ type: 'text', text: String(message.content) });
     }
 
-    return parts.length > 0 ? parts : [{ text: '' }];
+    if (content.length === 0) return [];
+
+    const stepType = message.role === 'assistant' ? 'model_output' : 'user_input';
+    return [{ type: stepType, content }];
 }

@@ -6,7 +6,6 @@
 import { ModelRegistry } from './model-registry.js';
 import { createAdapters } from './adapters.js';
 import { TokenEstimator } from '../context/estimator.js';
-import { FallbackTracker } from './fallback-tracker.js';
 import { getLogger } from '../utils/logger.js';
 import { MediaProcessorClient } from '../utils/media-client.js';
 import { imageFetcher } from '../utils/image-fetcher.js';
@@ -72,9 +71,6 @@ export class ModelRouter {
 
         // Media processor for image optimization
         this.mediaProcessor = new MediaProcessorClient(config);
-
-        // Fallback tracker for task model failures
-        this.fallbackTracker = new FallbackTracker();
 
         logger.info('Initialized', {
             models: this.registry.getModelIds().length,
@@ -245,90 +241,6 @@ export class ModelRouter {
     }
 
     /**
-     * Route an image generation request.
-     */
-    async routeImageGeneration(request) {
-        if (!request || typeof request !== 'object') {
-            throw new Error('[ModelRouter] Request must be an object');
-        }
-
-        if (!request.prompt) {
-            const err = new Error('[ModelRouter] Missing required field: prompt');
-            err.status = 400;
-            throw err;
-        }
-
-        const taskRegistry = this.registry.getTaskRegistry();
-        const { resolvedRequest, taskInfo } = this._resolveRequest(request, taskRegistry, taskRegistry.resolveGenericRequest, 'image');
-
-        return this._executeWithFallback(
-            taskInfo,
-            'image',
-            resolvedRequest,
-            (modelConfig, req) => {
-                const adapter = this._getAdapter(modelConfig.adapter);
-                return adapter.generateImage(modelConfig, req);
-            }
-        );
-    }
-
-    /**
-     * Route an audio speech request.
-     */
-    async routeAudioSpeech(request) {
-        if (!request || typeof request !== 'object') {
-            throw new Error('[ModelRouter] Request must be an object');
-        }
-
-        if (!request.input) {
-            const err = new Error('[ModelRouter] Missing required field: input');
-            err.status = 400;
-            throw err;
-        }
-
-        const taskRegistry = this.registry.getTaskRegistry();
-        const { resolvedRequest, taskInfo } = this._resolveRequest(request, taskRegistry, taskRegistry.resolveGenericRequest, 'audio');
-
-        return this._executeWithFallback(
-            taskInfo,
-            'audio',
-            resolvedRequest,
-            (modelConfig, req) => {
-                const adapter = this._getAdapter(modelConfig.adapter);
-                return adapter.synthesizeSpeech(modelConfig, req);
-            }
-        );
-    }
-
-    /**
-     * Route a video generation request.
-     */
-    async routeVideoGeneration(request) {
-        if (!request || typeof request !== 'object') {
-            throw new Error('[ModelRouter] Request must be an object');
-        }
-
-        if (!request.prompt) {
-            const err = new Error('[ModelRouter] Missing required field: prompt');
-            err.status = 400;
-            throw err;
-        }
-
-        const taskRegistry = this.registry.getTaskRegistry();
-        const { resolvedRequest, taskInfo } = this._resolveRequest(request, taskRegistry, taskRegistry.resolveGenericRequest, 'video');
-
-        return this._executeWithFallback(
-            taskInfo,
-            'video',
-            resolvedRequest,
-            (modelConfig, req) => {
-                const adapter = this._getAdapter(modelConfig.adapter);
-                return adapter.generateVideo(modelConfig, req);
-            }
-        );
-    }
-
-    /**
      * List all available models.
      * @param {string} [type] - Optional filter by model type
      */
@@ -450,58 +362,6 @@ export class ModelRouter {
 
         // No matching default task — pass through, resolveModel will throw
         return { resolvedRequest: request, taskInfo: null };
-    }
-
-    /**
-     * Execute a request with fallback support.
-     *
-     * If the task has a fallback model and the primary is in cooldown,
-     * routes directly to the fallback. Otherwise tries the primary;
-     * on failure, records the failure and retries with the fallback.
-     *
-     * @param {Object} taskInfo - Task info from resolveChatRequest/resolveGenericRequest
-     * @param {string} expectedType - Model type (chat, embedding, image, audio)
-     * @param {Object} resolvedRequest - The resolved request with model set
-     * @param {Function} fn - (modelConfig, resolvedRequest) => Promise<result>
-     * @returns {Promise<Object>} Result from the adapter
-     */
-    async _executeWithFallback(taskInfo, expectedType, resolvedRequest, fn) {
-        const primaryModel = resolvedRequest.model;
-        const useFallback = taskInfo?.fallback && this.fallbackTracker.shouldUseFallback(taskInfo.id);
-        const effectiveModel = useFallback ? taskInfo.fallback : primaryModel;
-
-        const { id: modelId, config: modelConfig } = this.registry.resolveModel(effectiveModel, expectedType);
-
-        // Stamp the resolved model id so per-model circuit breakers key on it.
-        resolvedRequest.__modelId = modelId;
-
-        logger.debug(`Routing ${expectedType}`, {
-            model: modelId,
-            adapter: modelConfig.adapter,
-            task: taskInfo?.id || null,
-            fallback: effectiveModel !== primaryModel
-        }, 'ModelRouter');
-
-        try {
-            const result = await fn(modelConfig, resolvedRequest);
-            if (taskInfo) this.fallbackTracker.recordSuccess(taskInfo.id);
-            return result;
-        } catch (err) {
-            // If we were using the primary and it has a fallback, switch to fallback
-            if (taskInfo?.fallback && effectiveModel === taskInfo.model) {
-                const cooldownMs = (taskInfo.fallbackCooldownMinutes ?? 1) * 60_000;
-                this.fallbackTracker.recordFailure(taskInfo.id, taskInfo.model, cooldownMs, err);
-                const { id: fbModelId, config: fbModelConfig } = this.registry.resolveModel(taskInfo.fallback, expectedType);
-                logger.warn(`${expectedType} primary failed, using fallback`, {
-                    task: taskInfo.id,
-                    primaryModel: taskInfo.model,
-                    fallbackModel: fbModelId,
-                    error: err.message
-                }, 'ModelRouter');
-                return fn(fbModelConfig, resolvedRequest);
-            }
-            throw err;
-        }
     }
 
     /**

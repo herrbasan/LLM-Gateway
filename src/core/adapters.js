@@ -26,8 +26,6 @@ const BREAKER_DEFAULTS = {
     chat: { threshold: 3, resetTimeoutMs: 30000 },
     stream: { threshold: 3, resetTimeoutMs: 30000 },
     embed: { threshold: 10, resetTimeoutMs: 60000 },
-    image: { threshold: 5, resetTimeoutMs: 30000 },
-    audio: { threshold: 5, resetTimeoutMs: 30000 },
     list: { threshold: 5, resetTimeoutMs: 30000 }
 };
 
@@ -86,8 +84,6 @@ function wrapWithCircuitBreaker(adapterType, adapter) {
     const methodWorkload = {
         chatComplete: 'chat',
         createEmbedding: 'embed',
-        generateImage: 'image',
-        synthesizeSpeech: 'audio',
         listModels: 'list'
     };
 

@@ -69,29 +69,6 @@
         "dimensions": 768
       }
     },
-    "gemini-image": {
-      "type": "image",
-      "adapter": "gemini",
-      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
-      "apiKey": "your-gemini-api-key",
-      "adapterModel": "imagen-4.0-generate-001",
-      "capabilities": {
-        "maxResolution": "2048x2048",
-        "supportedFormats": ["png", "jpeg", "webp"]
-      }
-    },
-    "gemini-tts": {
-      "type": "audio",
-      "adapter": "gemini",
-      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
-      "apiKey": "your-gemini-api-key",
-      "adapterModel": "gemini-2.5-pro-preview-tts",
-      "capabilities": {
-        "tts": true,
-        "maxDuration": 600,
-        "supportedFormats": ["mp3", "wav", "pcm"]
-      }
-    },
     
     "_comment_openai": "--- OpenAI ---",
     "openai-chat": {
@@ -105,27 +82,6 @@
         "vision": true,
         "structuredOutput": true,
         "streaming": true
-      }
-    },
-    "openai-image": {
-      "type": "image",
-      "adapter": "openai",
-      "endpoint": "https://api.openai.com/v1",
-      "apiKey": "your-openai-api-key",
-      "adapterModel": "dall-e-3",
-      "capabilities": {
-        "maxResolution": "1024x1024",
-        "supportedFormats": ["png", "jpeg"]
-      }
-    },
-    "openai-tts": {
-      "type": "audio",
-      "adapter": "openai",
-      "endpoint": "https://api.openai.com/v1",
-      "apiKey": "your-openai-api-key",
-      "adapterModel": "tts-1",
-      "capabilities": {
-        "streaming": false
       }
     },
     "openai-responses": {
@@ -305,16 +261,6 @@
       "description": "Image understanding and visual analysis",
       "maxTokens": 4096,
       "temperature": 0.4
-    },
-    "image": {
-      "model": "openai-image",
-      "description": "Image generation from text prompts",
-      "default": true
-    },
-    "tts": {
-      "model": "openai-tts",
-      "description": "Text-to-speech synthesis",
-      "default": true
     }
   }
 }

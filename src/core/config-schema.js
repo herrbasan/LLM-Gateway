@@ -3,7 +3,7 @@
  * Explicit validation - fails fast on invalid config.
  */
 
-const MODEL_TYPES = ['chat', 'embedding', 'image', 'audio', 'video'];
+const MODEL_TYPES = ['chat', 'embedding'];
 
 const REQUIRED_MODEL_FIELDS = ['type', 'adapter', 'capabilities'];
 
@@ -88,15 +88,6 @@ function validateCapabilities(modelId, type, capabilities) {
         case 'embedding':
             validateEmbeddingCapabilities(modelId, capabilities);
             break;
-        case 'image':
-            validateImageCapabilities(modelId, capabilities);
-            break;
-        case 'audio':
-            validateAudioCapabilities(modelId, capabilities);
-            break;
-        case 'video':
-            validateVideoCapabilities(modelId, capabilities);
-            break;
     }
 }
 
@@ -133,34 +124,6 @@ function validateEmbeddingCapabilities(modelId, caps) {
     }
     if ('batchSize' in caps && typeof caps.batchSize !== 'number') {
         throw new Error(`[Config] Model "${modelId}": capabilities.batchSize must be a number`);
-    }
-}
-
-function validateImageCapabilities(modelId, caps) {
-    if ('maxResolution' in caps && typeof caps.maxResolution !== 'string') {
-        throw new Error(`[Config] Model "${modelId}": capabilities.maxResolution must be a string`);
-    }
-    if ('supportedFormats' in caps && !Array.isArray(caps.supportedFormats)) {
-        throw new Error(`[Config] Model "${modelId}": capabilities.supportedFormats must be an array`);
-    }
-    if ('maxPromptLength' in caps && typeof caps.maxPromptLength !== 'number') {
-        throw new Error(`[Config] Model "${modelId}": capabilities.maxPromptLength must be a number`);
-    }
-}
-
-function validateAudioCapabilities(modelId, caps) {
-    // Audio models can have various capabilities - minimal validation
-    if ('maxDuration' in caps && typeof caps.maxDuration !== 'number') {
-        throw new Error(`[Config] Model "${modelId}": capabilities.maxDuration must be a number`);
-    }
-}
-
-function validateVideoCapabilities(modelId, caps) {
-    if ('maxDuration' in caps && typeof caps.maxDuration !== 'number') {
-        throw new Error(`[Config] Model "${modelId}": capabilities.maxDuration must be a number`);
-    }
-    if ('maxResolution' in caps && typeof caps.maxResolution !== 'string') {
-        throw new Error(`[Config] Model "${modelId}": capabilities.maxResolution must be a string`);
     }
 }
 

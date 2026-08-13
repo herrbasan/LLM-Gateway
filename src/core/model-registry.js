@@ -127,7 +127,7 @@ export class ModelRegistry {
 
     /**
      * Get OpenAI-compatible model list.
-     * @param {string} [type] - Optional filter by model type (chat, embedding, image, audio, video)
+     * @param {string} [type] - Optional filter by model type (chat, embedding)
      * @param {boolean} [includeDisabled=false] - If true, include disabled models
      */
     listModels(type, includeDisabled = false) {
@@ -144,6 +144,7 @@ export class ModelRegistry {
             const maxOutput = config.capabilities?.maxOutputTokens;
             data.push({
                 id,
+                prettyName: config.prettyName,
                 object: 'model',
                 owned_by: config.adapter,
                 type: config.type,
@@ -156,6 +157,11 @@ export class ModelRegistry {
                 contextWindow,
                 maxOutputTokens: maxOutput,
                 limit: contextWindow ? { context: contextWindow, output: maxOutput } : undefined,
+                // Cost/speed metadata for model selection (forge tools, automated routing)
+                tier: config.tier,
+                cost: config.cost,
+                speed: config.speed,
+                notes: config.notes,
                 capabilities: {
                         ...config.capabilities,
                         ...(config.imageInputLimit && { imageInputLimit: config.imageInputLimit })
@@ -173,10 +179,7 @@ export class ModelRegistry {
     listModelsByType(includeDisabled = false) {
         const result = {
             chat: [],
-            embedding: [],
-            image: [],
-            audio: [],
-            video: []
+            embedding: []
         };
 
         for (const [id, config] of this.models.entries()) {
@@ -188,6 +191,7 @@ export class ModelRegistry {
             const maxOutput = config.capabilities?.maxOutputTokens;
             const modelInfo = {
                 id,
+                prettyName: config.prettyName,
                 object: 'model',
                 owned_by: config.adapter,
                 context_length: contextWindow,

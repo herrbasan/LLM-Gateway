@@ -37,33 +37,6 @@ export function createBaseAdapter() {
         },
 
         /**
-         * Generate image.
-         * @param {Object} modelConfig - Model configuration from registry
-         * @param {Object} request - Request with prompt, size, etc.
-         */
-        async generateImage(modelConfig, request) {
-            throw new Error('[BaseAdapter] generateImage not implemented');
-        },
-
-        /**
-         * Synthesize speech.
-         * @param {Object} modelConfig - Model configuration from registry
-         * @param {Object} request - Request with input, voice, etc.
-         */
-        async synthesizeSpeech(modelConfig, request) {
-            throw new Error('[BaseAdapter] synthesizeSpeech not implemented');
-        },
-
-        /**
-         * Generate video.
-         * @param {Object} modelConfig - Model configuration from registry
-         * @param {Object} request - Request with prompt, duration, etc.
-         */
-        async generateVideo(modelConfig, request) {
-            throw new Error('[BaseAdapter] generateVideo not implemented');
-        },
-
-        /**
          * List available models.
          * @param {Object} modelConfig - Model configuration (for API key/endpoint if needed)
          */

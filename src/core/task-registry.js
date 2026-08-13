@@ -117,43 +117,6 @@ export class TaskRegistry {
         return { resolvedRequest: merged, taskInfo };
     }
 
-    /**
-     * Resolve a task for non-chat endpoints (embedding, image, audio).
-     * Only merges the model field and any applicable params.
-     */
-    resolveGenericRequest(request) {
-        const taskId = request.task;
-        if (!taskId) {
-            return { resolvedRequest: request, taskInfo: null };
-        }
-
-        const task = this.tasks.get(taskId);
-        if (!task) {
-            const err = new Error(`[TaskRegistry] Unknown task: "${taskId}"`);
-            err.status = 400;
-            throw err;
-        }
-
-        const taskDefaults = this._extractGenericDefaults(task);
-        const cleanedRequest = this._stripTaskParams(request);
-        for (const key of Object.keys(cleanedRequest)) {
-            if (cleanedRequest[key] === undefined) {
-                delete cleanedRequest[key];
-            }
-        }
-        const merged = { ...taskDefaults, ...cleanedRequest };
-
-        const taskInfo = {
-            id: taskId,
-            model: task.model,
-            fallback: task.fallback || null,
-            fallbackCooldownMinutes: task.fallbackCooldownMinutes || null,
-            description: task.description || null
-        };
-
-        return { resolvedRequest: merged, taskInfo };
-    }
-
     _extractChatDefaults(task) {
         const defaults = {};
         for (const key of TASK_CHAT_PARAMS) {
@@ -167,15 +130,6 @@ export class TaskRegistry {
                     defaults[key] = task[key];
                 }
             }
-        }
-        return defaults;
-    }
-
-    _extractGenericDefaults(task) {
-        const defaults = {};
-        for (const [key, value] of Object.entries(task)) {
-            if (key === 'description') continue;
-            defaults[key] = value;
         }
         return defaults;
     }

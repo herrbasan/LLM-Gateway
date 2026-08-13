@@ -34,17 +34,6 @@ const VALID_CONFIG = {
                 dimensions: 768
             }
         },
-        'dall-e-3': {
-            type: 'image',
-            adapter: 'openai',
-            endpoint: 'https://api.openai.com/v1',
-            apiKey: '${OPENAI_API_KEY}',
-            adapterModel: 'dall-e-3',
-            capabilities: {
-                maxResolution: '1024x1024',
-                supportedFormats: ['png', 'jpeg']
-            }
-        },
         'local-llama': {
             type: 'chat',
             adapter: 'openai',
@@ -72,11 +61,6 @@ const VALID_CONFIG = {
         embed: {
             model: 'gemini-embedding',
             description: 'Default embedding task',
-            default: true
-        },
-        image: {
-            model: 'dall-e-3',
-            description: 'Default image task',
             default: true
         }
     }
@@ -199,7 +183,7 @@ describe('ModelRegistry', () => {
     });
 
     it('should initialize with models', () => {
-        expect(registry.getModelIds()).to.have.length(4);
+        expect(registry.getModelIds()).to.have.length(3);
     });
 
     it('should get model by ID', () => {
@@ -245,7 +229,7 @@ describe('ModelRegistry', () => {
     it('should return OpenAI-compatible model list', () => {
         const list = registry.listModels();
         expect(list.object).to.equal('list');
-        expect(list.data).to.have.length(4);
+        expect(list.data).to.have.length(3);
         const model = list.data[0];
         expect(model).to.have.property('id');
         expect(model).to.have.property('capabilities');
@@ -296,19 +280,10 @@ describe('ModelRouter', () => {
         }
     });
 
-    it('should throw on missing prompt for image generation', async () => {
-        try {
-            await router.routeImageGeneration({});
-            expect.fail('Should have thrown');
-        } catch (err) {
-            expect(err.message).to.include('Missing required field: prompt');
-        }
-    });
-
     it('should list models', async () => {
         const list = await router.listModels();
         expect(list.object).to.equal('list');
-        expect(list.data).to.have.length(4);
+        expect(list.data).to.have.length(3);
     });
 
     it('should estimate tokens via local tiktoken (no upstream calls)', async () => {

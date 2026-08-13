@@ -667,18 +667,6 @@ export function createAnthropicAdapter() {
             throw new Error('[AnthropicAdapter] Embeddings not supported');
         },
 
-        async generateImage(modelConfig, request) {
-            throw new Error('[AnthropicAdapter] Image generation not supported');
-        },
-
-        async synthesizeSpeech(modelConfig, request) {
-            throw new Error('[AnthropicAdapter] TTS not supported');
-        },
-
-        async generateVideo(modelConfig, request) {
-            throw new Error('[AnthropicAdapter] Video generation not supported');
-        },
-
         async listModels(modelConfig) {
             const { endpoint, apiKey, capabilities } = modelConfig;
             const contextWindow = capabilities?.contextWindow;
