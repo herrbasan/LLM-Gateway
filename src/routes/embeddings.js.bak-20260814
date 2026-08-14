@@ -16,7 +16,7 @@ const logger = getLogger();
 
 const EMBED_WRAPPER_URL = 'http://192.168.0.145:4080/v1/embeddings';
 const EMBED_MODEL = 'Qwen/Qwen3-Embedding-4B-GGUF';
-const EMBED_TIMEOUT_MS = 360000; // > client 5-min guard (300s) so the client always aborts first
+const EMBED_TIMEOUT_MS = 120000;
 
 export function createEmbeddingsHandler() {
     return async (req, res, next) => {
