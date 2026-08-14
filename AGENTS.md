@@ -208,26 +208,27 @@ This means Anthropic-adapter models (Kimi, DeepSeek, MiniMax) **must** declare `
 
 ### GLM Models — OpenAI Adapter (z.ai Context Caching)
 
-**2026-06-27**: All GLM chat models (`glm5-chat`, `glm5-turbo-chat`, `glm5v-turbo-chat`) switched from `anthropic` to `openai` adapter to leverage z.ai's automatic context caching (~50% cost reduction on repeated context).
+All GLM chat models (`glm5-chat`, `glm53-chat`, `glm5-turbo-chat`, `glm5v-turbo-chat`) use the `openai` adapter to leverage z.ai's automatic context caching (~50% cost reduction on repeated context).
 
 z.ai's context caching is:
-- **Automatic** — no client-side `cache_control` config needed; the platform detects repeated content
-- **Endpoint-specific** — only available on the OpenAI-compatible `/api/paas/v4` endpoint, NOT the Anthropic protocol endpoint
+- **Automatic** — no client-side markers needed; the platform detects repeated content
+- **Endpoint-specific** — documented and observable only on the OpenAI-compatible endpoints (`/api/paas/v4` pay-go, `/api/coding/paas/v4` Coding Plan). The Anthropic endpoint (`/api/anthropic`) has no documented caching and no `cached_tokens` field.
 - **Transparent billing** — cached token count appears in `usage.prompt_tokens_details.cached_tokens`
 
-**Old Anthropic endpoint** (for reference if we need to switch back):
+**Current OpenAI endpoint (Coding Plan)**:
+```
+endpoint: "https://api.z.ai/api/coding/paas/v4"
+adapterModel variants: "glm-5.2" / "glm-5.3" / "glm-5-turbo" / "glm-5v-turbo"
+```
+
+**Anthropic endpoint (only to switch back)**:
 ```
 endpoint: "https://api.z.ai/api/anthropic"
-adapterModel variants: "glm-5.2" / "glm-5-turbo" / "glm-5v-turbo"
 ```
 
-**Current OpenAI endpoint**:
-```
-endpoint: "https://api.z.ai/api/paas/v4"
-adapterModel variants: "glm-5" / "glm-5-turbo" / "glm-5v-turbo"
-```
-
-> **Trade-off**: The Anthropic adapter had rich thinking control and native tool-call format conversion. The openai adapter uses standard OpenAI tool format. If thinking control or Anthropic-native tools become critical, switch back by restoring the old endpoint and adapter + changing adapterModel back to `glm-5.2`.
+> **Trade-off**: The Anthropic adapter had rich thinking control and native tool-call format conversion. The openai adapter uses standard OpenAI tool format. If thinking control or Anthropic-native tools become critical, switch back by restoring the anthropic endpoint + adapter.
+>
+> **Thinking on the openai adapter**: z.ai GLM thinking is on by default. The gateway's `openai` adapter does not natively translate `enable_thinking` into z.ai's `thinking` field — to disable thinking, set `extraBody: { "thinking": { "type": "disabled" } }`.
 
 ### Thinking Control (Per-Request)
 The gateway supports disabling/enabling model reasoning per-request over REST. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.

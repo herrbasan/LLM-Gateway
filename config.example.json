@@ -119,16 +119,21 @@
     "anthropic-chat": {
       "type": "chat",
       "adapter": "anthropic",
-      "endpoint": "https://api.anthropic.com/v1",
+      "endpoint": "https://api.anthropic.com",
       "apiKey": "your-anthropic-api-key",
-      "adapterModel": "claude-3-5-sonnet-20241022",
+      "adapterModel": "claude-sonnet-4-6",
       "capabilities": {
-        "contextWindow": 200000,
-        "maxOutputTokens": 8192,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
         "vision": true,
         "streaming": true,
-        "structuredOutput": true
-      }
+        "structuredOutput": true,
+        "tools": true,
+        "anthropicVersion": "2023-06-01",
+        "promptCaching": true
+      },
+      "_comment_endpoint": "endpoint must omit /v1 — the adapter appends /v1/messages. anthropicVersion triggers x-api-key + anthropic-version headers (native Anthropic).",
+      "_comment_promptCaching": "promptCaching auto-injects top-level cache_control (automatic caching); use \"1h\" instead of true for the 1-hour TTL. Only native Anthropic supports cache_control — do NOT set it on third-party anthropic-protocol providers (Kimi, DeepSeek, MiniMax, z.AI)."
     },
     
     "_comment_kimi": "--- Moonshot Kimi (Anthropic Messages API, requires maxOutputTokens) ---",
