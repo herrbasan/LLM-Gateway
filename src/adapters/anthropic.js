@@ -208,6 +208,19 @@ export function createAnthropicAdapter() {
         return headers;
     }
 
+    // Prompt caching: explicit client breakpoints always win. When the model
+    // declares capabilities.promptCaching and the client sent nothing, inject
+    // top-level automatic caching — Anthropic then caches the growing prefix
+    // (tools → system → messages) with zero breakpoint management.
+    function resolveCacheControl(request, capabilities) {
+        if (request.cache_control) return request.cache_control;
+        const pc = capabilities?.promptCaching;
+        if (!pc) return undefined;
+        const cc = { type: 'ephemeral' };
+        if (pc === '1h') cc.ttl = '1h';
+        return cc;
+    }
+
     function normalizeResponse(data, model) {
         let content = '';
         let reasoning_content = null;
@@ -350,10 +363,10 @@ export function createAnthropicAdapter() {
                 }
             }
 
-            // Prompt caching (capability-gated: only forward to providers that declare support)
-            if (request.cache_control && capabilities?.promptCaching) {
-                body.cache_control = request.cache_control;
-            }
+            // Prompt caching: explicit client value wins, else auto-inject
+            // top-level automatic caching for models that declare support.
+            const cacheControl = resolveCacheControl(request, capabilities);
+            if (cacheControl) body.cache_control = cacheControl;
 
             // Tools conversion
             if (request.tools) {
@@ -440,10 +453,10 @@ export function createAnthropicAdapter() {
                 }
             }
 
-            // Prompt caching (capability-gated: only forward to providers that declare support)
-            if (request.cache_control && capabilities?.promptCaching) {
-                body.cache_control = request.cache_control;
-            }
+            // Prompt caching: explicit client value wins, else auto-inject
+            // top-level automatic caching for models that declare support.
+            const cacheControl = resolveCacheControl(request, capabilities);
+            if (cacheControl) body.cache_control = cacheControl;
 
             // Tools conversion
             if (request.tools) {
@@ -481,6 +494,8 @@ export function createAnthropicAdapter() {
             const processId = `msg_${Date.now()}`;
             let inputTokens = 0;
             let outputTokens = 0;
+            let cacheReadTokens = 0;
+            let cacheCreationTokens = 0;
             let thinkingSignature = null;
             let thinkingText = '';
 
@@ -521,7 +536,10 @@ export function createAnthropicAdapter() {
                             throw new Error(`Upstream API Stream Error: ${event.error?.message || JSON.stringify(event.error)}`);
                         }
                         if (event.type === 'message_start' && event.message?.usage) {
-                            inputTokens = event.message.usage.input_tokens || 0;
+                            const u = event.message.usage;
+                            inputTokens = u.input_tokens || 0;
+                            cacheReadTokens = u.cache_read_input_tokens || 0;
+                            cacheCreationTokens = u.cache_creation_input_tokens || 0;
                         }
                         if (event.type === 'content_block_stop') {
                             if (event.content_block?.type === 'thinking') {
@@ -652,7 +670,9 @@ export function createAnthropicAdapter() {
                                 usage: {
                                     prompt_tokens: inputTokens,
                                     completion_tokens: outputTokens,
-                                    total_tokens: inputTokens + outputTokens
+                                    total_tokens: inputTokens + outputTokens,
+                                    cache_read_input_tokens: cacheReadTokens,
+                                    cache_creation_input_tokens: cacheCreationTokens
                                 }
                             };
                         }

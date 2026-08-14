@@ -81,7 +81,7 @@ function buildUsage(chatResponse) {
     const usage = chatResponse.usage || {};
     return {
         input_tokens: usage.prompt_tokens || 0,
-        input_tokens_details: { cached_tokens: 0 },
+        input_tokens_details: { cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens ?? 0 },
         output_tokens: usage.completion_tokens || 0,
         output_tokens_details: { reasoning_tokens: 0 },
         total_tokens: usage.total_tokens || 0
@@ -307,7 +307,7 @@ function buildCompletedOutput(msgId, text, toolCallState) {
 function buildCompletedUsage(lastUsage) {
     return {
         input_tokens: lastUsage?.prompt_tokens || 0,
-        input_tokens_details: { cached_tokens: 0 },
+        input_tokens_details: { cached_tokens: lastUsage?.prompt_tokens_details?.cached_tokens ?? lastUsage?.cache_read_input_tokens ?? 0 },
         output_tokens: lastUsage?.completion_tokens || 0,
         output_tokens_details: { reasoning_tokens: 0 },
         total_tokens: lastUsage?.total_tokens || 0
