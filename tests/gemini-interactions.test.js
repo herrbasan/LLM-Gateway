@@ -110,7 +110,11 @@ describe('Gemini Interactions Adapter - Live', function () {
                         }
                     }]
                 },
-                { role: 'tool', tool_call_id: toolCall.id, name: 'get_weather', content: '52F and rain' }
+                // OpenAI-format tool messages carry only tool_call_id + content — no
+                // `name`. The adapter must resolve the function_result name from the
+                // assistant tool_calls (keyed by call id). A mismatched/missing name
+                // is a 400 "Request contains an invalid argument."
+                { role: 'tool', tool_call_id: toolCall.id, content: '52F and rain' }
             ],
             tools: [weatherTool]
         });

@@ -519,9 +519,22 @@ async function buildInteractionPayload(request, capabilities) {
     const systemMsg = messages.find(m => m.role === 'system');
     const otherMessages = messages.filter(m => m.role !== 'system');
 
+    // Resolve each tool result's name from the assistant tool_calls it belongs
+    // to. OpenAI-format tool messages carry only tool_call_id (no name), but the
+    // Interactions API's function_result step REQUIRES a name matching the
+    // preceding function_call — a missing or mismatched name is a 400.
+    const callIdToName = new Map();
+    for (const m of otherMessages) {
+        if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+            for (const tc of m.tool_calls) {
+                if (tc.id && tc.function?.name) callIdToName.set(tc.id, tc.function.name);
+            }
+        }
+    }
+
     const input = [];
     for (const m of otherMessages) {
-        input.push(...await buildInputSteps(m));
+        input.push(...await buildInputSteps(m, callIdToName));
     }
 
     const payload = {
@@ -570,8 +583,9 @@ async function buildInteractionPayload(request, capabilities) {
     }
 
     if (request.enable_thinking != null) {
-        // thinking_level enum: minimal | low | medium | high (no 'none')
-        generationConfig.thinking_level = request.enable_thinking ? 'high' : 'minimal';
+        // thinking_level enum: low | medium | high (gemini 3.x dropped 'minimal').
+        // 'low' is the floor — thinking cannot be fully disabled on this model.
+        generationConfig.thinking_level = request.enable_thinking ? 'high' : 'low';
     }
 
     if (Object.keys(generationConfig).length > 0) {
@@ -589,15 +603,23 @@ async function buildInteractionPayload(request, capabilities) {
     return payload;
 }
 
-async function buildInputSteps(message) {
+async function buildInputSteps(message, callIdToName) {
     // Tool messages carry the function result. The Interactions API requires the
     // originating thought + function_call steps to precede it (handled by the
     // assistant tool_calls branch below).
     if (message.role === 'tool') {
+        // The function_result name MUST match the function_call name. OpenAI-format
+        // tool messages omit `name`, so resolve it from the assistant tool_calls
+        // (keyed by call id). A function_result without a valid name is a 400, so
+        // drop it when the name cannot be resolved.
+        const name = callIdToName.get(message.tool_call_id) || message.name;
+        if (!name) {
+            return [];
+        }
         return [{
             type: 'function_result',
             call_id: message.tool_call_id,
-            name: message.name || 'unknown_tool',
+            name,
             result: [{ type: 'text', text: String(message.content || '') }]
         }];
     }
