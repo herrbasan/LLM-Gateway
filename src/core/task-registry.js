@@ -14,7 +14,7 @@ const TASK_CHAT_PARAMS = new Set([
     'presencePenalty', 'frequencyPenalty', 'seed', 'stop',
     'max_tokens', 'top_p', 'top_k',
     'presence_penalty', 'frequency_penalty', 'response_format',
-    'extra_body', 'enable_thinking', 'chat_template_kwargs'
+    'extra_body', 'enable_thinking', 'chat_template_kwargs', 'reasoning_effort'
 ]);
 
 const PARAM_NORMALIZATION = {

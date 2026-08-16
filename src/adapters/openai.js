@@ -326,8 +326,20 @@ function applyLogprobParams(payload, request) {
 }
 
 function applyThinkingControl(payload, request, capabilities) {
-    // Only inject chat_template_kwargs for models that declare support.
-    // This is a llama.cpp/Qwen-specific parameter — Grok, OpenRouter, etc. reject it.
+    // Granular effort (OpenAI-standard field) — pass through for models that
+    // declare accepted levels. The router already validated the value against
+    // capabilities.thinkingLevels; here we translate to the native field.
+    if (request.reasoning_effort != null) {
+        if (capabilities?.thinkingEffortField === 'reasoning_effort') {
+            // Upstream natively accepts the OpenAI effort enum (GLM-5, Grok,
+            // Kimi k3, DeepSeek, OpenAI). Coercions live in the provider, not here.
+            payload.reasoning_effort = request.reasoning_effort;
+        }
+    }
+
+    // Boolean thinking toggle for llama.cpp/Qwen template kwargs.
+    // Generated previously via applyThinkingControl; now the router may already
+    // have derived the boolean from an effort value.
     if (request.enable_thinking != null && capabilities?.thinking === 'chat_template_kwargs') {
         payload.chat_template_kwargs = {
             ...payload.chat_template_kwargs,
@@ -335,9 +347,9 @@ function applyThinkingControl(payload, request, capabilities) {
         };
     }
 
-    // xAI/Grok uses reasoning_effort (none/low/medium/high) instead of enable_thinking.
-    // Map boolean enable_thinking to reasoning_effort for models that declare support.
-    if (request.enable_thinking != null && capabilities?.reasoningEffort) {
+    // Legacy boolean → effort mapping for effort-capable upstreams when the
+    // client sent only the boolean (no explicit effort).
+    if (request.enable_thinking != null && request.reasoning_effort == null && capabilities?.reasoningEffort) {
         payload.reasoning_effort = request.enable_thinking ? 'high' : 'none';
     }
     

@@ -187,6 +187,38 @@ export function createAnthropicAdapter() {
         return { type: 'enabled', budget_tokens: budget };
     }
 
+    // Effort → native Anthropic control. Models that declare thinkingEffort
+    // use the behavioral output_config.effort field (low/medium/high/max);
+    // 'none' disables. Models without the declaration keep the budget path.
+    function applyThinking(body, request, maxTokens, capabilities, messages) {
+        const effort = request.reasoning_effort;
+        if (effort != null && capabilities?.thinkingEffort) {
+            if (effort === 'none' || effort === 'off') {
+                if (capabilities?.thinkingMode !== 'adaptive') {
+                    body.thinking = { type: 'disabled' };
+                }
+            } else {
+                // Clamp to the Anthropic effort enum; value already validated
+                // against declared thinkingLevels at the router.
+                const effortMap = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'max', max: 'max' };
+                body.output_config = { effort: effortMap[effort] || effort };
+            }
+            return;
+        }
+
+        if (request.enable_thinking != null) {
+            if (request.enable_thinking) {
+                body.thinking = buildThinkingConfig(maxTokens, capabilities);
+            } else if (capabilities?.thinkingMode !== 'adaptive') {
+                // Adaptive-only models (e.g. Fable 5) reject thinking.type.disabled;
+                // omitting the field entirely gives their default adaptive behavior.
+                body.thinking = { type: 'disabled' };
+            }
+        } else if (hasThinkingInHistory(messages)) {
+            body.thinking = buildThinkingConfig(maxTokens, capabilities);
+        }
+    }
+
     function hasThinkingInHistory(messages) {
         return messages.some(m =>
             m.role === 'assistant' &&
@@ -334,7 +366,6 @@ export function createAnthropicAdapter() {
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = formatMessages(messages);
-            const thinkingInHistory = hasThinkingInHistory(messages);
 
             const body = {
                 model,
@@ -342,17 +373,7 @@ export function createAnthropicAdapter() {
                 max_tokens: request.maxTokens
             };
 
-            if (request.enable_thinking != null) {
-                if (request.enable_thinking) {
-                    body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
-                } else if (capabilities?.thinkingMode !== 'adaptive') {
-                    // Adaptive-only models (e.g. Fable 5) reject thinking.type.disabled;
-                    // omitting the field entirely gives their default adaptive behavior.
-                    body.thinking = { type: 'disabled' };
-                }
-            } else if (thinkingInHistory) {
-                body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
-            }
+            applyThinking(body, request, request.maxTokens, capabilities, messages);
 
             if (systemPrompt) body.system = systemPrompt;
             if (typeof request.temperature === 'number') {
@@ -423,7 +444,6 @@ export function createAnthropicAdapter() {
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = formatMessages(messages);
-            const thinkingInHistory = hasThinkingInHistory(messages);
 
             const body = {
                 model,
@@ -432,17 +452,7 @@ export function createAnthropicAdapter() {
                 stream: true
             };
 
-            if (request.enable_thinking != null) {
-                if (request.enable_thinking) {
-                    body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
-                } else if (capabilities?.thinkingMode !== 'adaptive') {
-                    // Adaptive-only models (e.g. Fable 5) reject thinking.type.disabled;
-                    // omitting the field entirely gives their default adaptive behavior.
-                    body.thinking = { type: 'disabled' };
-                }
-            } else if (thinkingInHistory) {
-                body.thinking = buildThinkingConfig(request.maxTokens, capabilities);
-            }
+            applyThinking(body, request, request.maxTokens, capabilities, messages);
 
             if (systemPrompt) body.system = systemPrompt;
             if (typeof request.temperature === 'number') {

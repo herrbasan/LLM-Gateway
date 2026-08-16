@@ -667,7 +667,13 @@ function buildPayload(request, modelConfig, adapterModel, isStreaming = false) {
     if (request.reasoning) {
         payload.reasoning = request.reasoning;
     }
-    if (request.enable_thinking != null) {
+    if (request.reasoning_effort != null) {
+        // Router validated against declared thinkingLevels — pass the enum through.
+        payload.reasoning = {
+            ...(payload.reasoning || {}),
+            effort: request.reasoning_effort
+        };
+    } else if (request.enable_thinking != null) {
         payload.reasoning = {
             effort: request.enable_thinking ? 'medium' : 'low'
         };

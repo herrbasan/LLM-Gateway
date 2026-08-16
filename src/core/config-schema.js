@@ -113,6 +113,20 @@ function validateChatCapabilities(modelId, caps) {
             throw new Error(`[Config] Model "${modelId}": capabilities.structuredOutput must be boolean, 'json_schema', or 'json_object'`);
         }
     }
+
+    // thinkingLevels: canonical effort levels the model accepts. Validated against
+    // the canonical gateway enum — a typo here would silently break effort routing.
+    if ('thinkingLevels' in caps) {
+        const validLevels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+        if (!Array.isArray(caps.thinkingLevels) || caps.thinkingLevels.length === 0) {
+            throw new Error(`[Config] Model "${modelId}": capabilities.thinkingLevels must be a non-empty array (e.g. ["low","high","max"])`);
+        }
+        for (const level of caps.thinkingLevels) {
+            if (!validLevels.includes(level)) {
+                throw new Error(`[Config] Model "${modelId}": capabilities.thinkingLevels contains invalid level "${level}" — valid: ${validLevels.join(', ')}`);
+            }
+        }
+    }
 }
 
 function validateEmbeddingCapabilities(modelId, caps) {
@@ -176,7 +190,7 @@ function validateTaskConfig(taskId, config) {
         'presencePenalty', 'frequencyPenalty', 'seed', 'stop',
         'max_tokens', 'top_p', 'top_k',
         'presence_penalty', 'frequency_penalty', 'response_format',
-        'extra_body', 'enable_thinking', 'chat_template_kwargs',
+        'extra_body', 'enable_thinking', 'chat_template_kwargs', 'reasoning_effort',
         'default', 'fallback', 'fallbackCooldownMinutes'
     ];
 

@@ -111,8 +111,11 @@
         "contextWindow": 1000000,
         "vision": true,
         "structuredOutput": true,
-        "streaming": true
-      }
+        "streaming": true,
+        "thinkingLevels": ["low", "medium", "high"],
+        "thinkingEffortField": "reasoning_effort"
+      },
+      "_comment_thinking": "thinkingLevels declares the reasoning_effort values this model accepts; the router 400s on anything else. thinkingEffortField tells the openai adapter to pass the value through as top-level reasoning_effort."
     },
     
     "_comment_anthropic": "--- Anthropic Claude (requires maxOutputTokens) ---",

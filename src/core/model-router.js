@@ -13,6 +13,42 @@ import { chatCompletionsToResponse, convertStreamToResponseEvents } from '../uti
 
 const logger = getLogger();
 
+// Canonical effort scale, low → high. 'none' is off-scale (thinking disabled).
+const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * Map a requested effort value to the nearest level the model declares.
+ * 'none' only matches when declared (it means OFF, not "lowest thinking").
+ * Ties round UP the scale — declare less, get the next declared level above;
+ * never silently undervalue a model the operator marked capable of more.
+ */
+function nearestEffortLevel(requested, levels) {
+    if (levels.includes(requested)) return requested;
+
+    if (requested === 'none') {
+        // Undeclared 'none' → thinking stays on at the lowest declared level.
+        // (Rounding 'none' UP to the cheapest thinking, not down to off —
+        // off may be impossible on this model: Gemini 3 Pro, GLM 5.3.)
+        return lowestOf(levels);
+    }
+
+    const order = EFFORT_ORDER.indexOf(requested);
+    if (order === -1) return lowestOf(levels); // unknown value → cheapest safe
+
+    // Walk up the scale from the requested position until a declared level
+    // appears. nearest-above; equidistant rounds up (declared just below is
+    // reachable via ceiling-clamp only when nothing above is declared).
+    for (let i = order; i < EFFORT_ORDER.length; i++) {
+        if (levels.includes(EFFORT_ORDER[i])) return EFFORT_ORDER[i];
+    }
+    // Nothing at-or-above declared → ceiling-clamp to the highest declared.
+    return levels.reduce((a, b) => (EFFORT_ORDER.indexOf(a) > EFFORT_ORDER.indexOf(b) ? a : b));
+}
+
+function lowestOf(levels) {
+    return levels.reduce((a, b) => (EFFORT_ORDER.indexOf(a) < EFFORT_ORDER.indexOf(b) ? a : b));
+}
+
 function convertInputToMessages(input) {
     if (!Array.isArray(input)) return [{ role: 'user', content: String(input) }];
 
@@ -115,7 +151,7 @@ export class ModelRouter {
         const adapter = this._getAdapter(modelConfig.adapter);
 
         // Transform request to adapter format
-        const opts = this._buildChatOptions(effectiveRequest, modelConfig);
+        const opts = this._buildChatOptions(effectiveRequest, modelConfig, modelId);
 
         // Process images only if requested (fetch remote URLs and resize/transcode)
         const processedMessages = await this._processImagesInMessages(
@@ -210,7 +246,7 @@ export class ModelRouter {
 
     async _routeResponseNative(request, modelConfig, rawRequest) {
         const adapter = this._getAdapter('responses');
-        const opts = this._buildChatOptions(request, modelConfig);
+        const opts = this._buildChatOptions(request, modelConfig, modelId);
 
         const processedMessages = await this._processImagesInMessages(opts.messages, modelConfig, request.image_processing);
         const messages = this._prepareImagesForModel(processedMessages, modelConfig);
@@ -269,8 +305,8 @@ export class ModelRouter {
     /**
      * Build chat options from request.
      */
-    _buildChatOptions(request, modelConfig) {
-        const thinking = this._resolveThinking(request, modelConfig);
+    _buildChatOptions(request, modelConfig, modelId) {
+        const thinking = this._resolveThinking(request, modelConfig, modelId);
 
         return {
             messages: request.messages || [],
@@ -301,13 +337,14 @@ export class ModelRouter {
             extra_body: request.extra_body,
             // Normalized thinking control
             enable_thinking: thinking.enable_thinking,
+            reasoning_effort: thinking.reasoning_effort,
             chat_template_kwargs: thinking.chat_template_kwargs,
             // Anthropic prompt caching (automatic + explicit breakpoints)
             cache_control: request.cache_control
         };
     }
 
-    _resolveThinking(request, modelConfig) {
+    _resolveThinking(request, modelConfig, modelId) {
         const configExtra = modelConfig.extraBody || {};
         const configKwargs = configExtra.chat_template_kwargs || {};
         const configThinking = configKwargs.enable_thinking;
@@ -322,15 +359,55 @@ export class ModelRouter {
             ?? configThinking
             ?? modelConfig.enable_thinking;
 
-        if (enable_thinking == null) {
+        // reasoning_effort: OpenAI-standard effort field. Priority:
+        // request > extra_body > model config extraBody > model config top-level.
+        let reasoning_effort = request.reasoning_effort
+            ?? (request.extra_body || {}).reasoning_effort
+            ?? configExtra.reasoning_effort
+            ?? modelConfig.reasoning_effort;
+
+        // Normalize to the model's declared levels. The client sends the
+        // canonical enum; every provider accepts a different slice of it.
+        // Closest-level mapping (never silently drop, never 400 on a
+        // neighboring value):
+        //   ask    low med high xhigh max   (order on the effort scale)
+        //   get    nearest declared level; ties round UP (cost-cautious
+        //          models lose nothing; not towards more thinking)
+        // 'none' means thinking-off — only honored when declared.
+        // No declared levels + no config default → effort request dropped
+        // with a warning (model has no effort control at all).
+        if (reasoning_effort != null) {
+            const levels = modelConfig.capabilities?.thinkingLevels;
+            if (Array.isArray(levels) && levels.length > 0) {
+                const mapped = nearestEffortLevel(reasoning_effort, levels);
+                if (mapped !== reasoning_effort) {
+                    logger.info(`[ModelRouter] "${modelId}" effort "${reasoning_effort}" not declared — mapping to "${mapped}" (declared: ${levels.join(', ')})`, { model: modelId }, 'ModelRouter');
+                    reasoning_effort = mapped;
+                }
+            } else {
+                logger.warn(`[ModelRouter] "${modelId}" has no capabilities.thinkingLevels — dropping reasoning_effort="${reasoning_effort}"`, { model: modelId }, 'ModelRouter');
+                reasoning_effort = undefined;
+            }
+        }
+
+        if (enable_thinking == null && reasoning_effort == null) {
             return {
                 enable_thinking: undefined,
+                reasoning_effort: undefined,
                 chat_template_kwargs: Object.keys(requestKwargs).length > 0 ? requestKwargs : undefined
             };
         }
 
+        // Effort wins over boolean when both are present — it is strictly more
+        // specific. 'none'/'off' effort means thinking off; otherwise thinking on.
+        const effort = reasoning_effort ?? undefined;
+        const effective = effort != null
+            ? (effort === 'none' || effort === 'off' ? false : true)
+            : enable_thinking;
+
         return {
-            enable_thinking,
+            enable_thinking: effective,
+            reasoning_effort: effort,
             chat_template_kwargs: undefined
         };
     }
