@@ -57,6 +57,20 @@ function createAbortError() {
     return error;
 }
 
+// Parse an HTTP Retry-After header: either delay-seconds or an HTTP-date.
+// Returns the retry time as a unix epoch in ms, or null.
+function parseRetryAfter(header) {
+    if (!header) return null;
+    const trimmed = header.trim();
+    if (/^\d+$/.test(trimmed)) {
+        const seconds = Number(trimmed);
+        if (Number.isFinite(seconds) && seconds >= 0) return Date.now() + seconds * 1000;
+        return null;
+    }
+    const date = Date.parse(trimmed);
+    return Number.isFinite(date) ? date : null;
+}
+
 export function isAbortError(error) {
     return error?.name === 'AbortError'
         || error?.code === 'ABORT_ERR'
@@ -156,7 +170,20 @@ export async function request(url, options = {}) {
                 } catch (e) {
                     // Ignore text parse errors gracefully
                 }
-                throw Object.assign(new Error(`HTTP Error ${response.status}: ${errorText}`), { status: response.status });
+
+                const httpErr = Object.assign(new Error(`HTTP Error ${response.status}: ${errorText}`), {
+                    status: response.status
+                });
+                if (response.status === 429) {
+                    httpErr.type = 'rate_limit_error';
+                    httpErr.code = 'RATE_LIMIT';
+                    const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
+                    if (retryAfter != null) httpErr.retryAfter = retryAfter;
+                } else if (response.status >= 500) {
+                    httpErr.type = 'upstream_error';
+                    httpErr.code = `UPSTREAM_HTTP_${response.status}`;
+                }
+                throw httpErr;
             }
 
             return response;

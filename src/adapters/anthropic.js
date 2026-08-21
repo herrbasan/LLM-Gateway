@@ -4,11 +4,91 @@
  * Supports: Anthropic Claude, MiniMax, Qwen (Anthropic mode)
  */
 
+import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
 
+const logger = getLogger('AnthropicAdapter');
+
+// Tool-call thinking round-trip cache.
+//
+// DeepSeek (Anthropic-protocol) requires the prior assistant turn's `thinking`
+// content block to be echoed back on tool-call continuations, otherwise the
+// upstream rejects with 400 "The `content[].thinking` in the thinking mode
+// must be passed back to the API." The gateway is stateless and clients do not
+// reliably round-trip thinking parts, so each tool_use's preceding thinking
+// block (text + signature) is cached keyed by the tool_use id and re-injected
+// on the next turn. Mirrors the Gemini adapter's thought-signature cache.
+const THINKING_CACHE_DIR = path.join(process.cwd(), 'logs', 'anthropic-thinking');
+const memoryThinkingBlocks = new Map();
+let thinkingCachePruned = false;
+
+async function ensureThinkingCacheDir() {
+    try {
+        if (!existsSync(THINKING_CACHE_DIR)) {
+            await fs.mkdir(THINKING_CACHE_DIR, { recursive: true });
+        }
+    } catch (e) {
+        logger.error(`Failed to create anthropic thinking cache dir: ${e.message}`, {}, 'AnthropicAdapter');
+    }
+}
+
+async function saveThinkingBlock(toolUseId, block) {
+    if (!toolUseId || !block) return;
+    memoryThinkingBlocks.set(toolUseId, block);
+    await ensureThinkingCacheDir();
+    const filePath = path.join(THINKING_CACHE_DIR, `${toolUseId}.json`);
+    try {
+        await fs.writeFile(filePath, JSON.stringify(block), 'utf8');
+    } catch (e) {
+        logger.error(`Failed to save thinking block for ${toolUseId}: ${e.message}`, {}, 'AnthropicAdapter');
+    }
+}
+
+async function getThinkingBlock(toolUseId) {
+    if (!toolUseId) return null;
+    if (memoryThinkingBlocks.has(toolUseId)) return memoryThinkingBlocks.get(toolUseId);
+    const filePath = path.join(THINKING_CACHE_DIR, `${toolUseId}.json`);
+    try {
+        const raw = await fs.readFile(filePath, 'utf8');
+        const block = JSON.parse(raw);
+        memoryThinkingBlocks.set(toolUseId, block);
+        return block;
+    } catch {
+        return null;
+    }
+}
+
+async function pruneThinkingCache() {
+    if (thinkingCachePruned) return;
+    thinkingCachePruned = true;
+    await ensureThinkingCacheDir();
+    try {
+        const files = await fs.readdir(THINKING_CACHE_DIR);
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        let pruned = 0;
+        for (const file of files) {
+            const filePath = path.join(THINKING_CACHE_DIR, file);
+            try {
+                const stat = await fs.stat(filePath);
+                if (stat.mtimeMs < cutoff) {
+                    await fs.unlink(filePath);
+                    pruned++;
+                }
+            } catch {
+                // Individual file errors (races, missing file) are non-fatal.
+            }
+        }
+        if (pruned > 0) logger.info(`Pruned ${pruned} stale anthropic thinking blocks`, {}, 'AnthropicAdapter');
+    } catch {
+        // Cache pruning is best-effort; a failure must not affect requests.
+    }
+}
+
 export function createAnthropicAdapter() {
-    const logger = getLogger('AnthropicAdapter');
+    pruneThinkingCache().catch(() => {});
     function parseArguments(args) {
         if (typeof args === 'string') {
             try { return JSON.parse(args); } catch {
@@ -70,7 +150,7 @@ export function createAnthropicAdapter() {
         return result;
     }
 
-    function formatMessages(messages) {
+    async function formatMessages(messages) {
         if (!messages) return [];
 
         function mapContentParts(contentArray) {
@@ -100,6 +180,22 @@ export function createAnthropicAdapter() {
             });
         }
 
+        // Re-inject the cached thinking block ahead of tool_use blocks when the
+        // client did not supply one. DeepSeek requires the prior turn's thinking
+        // block to be echoed back on tool-call continuations.
+        async function injectCachedThinking(content, toolCalls) {
+            if (content.some(c => c.type === 'thinking')) return content;
+            for (const tc of toolCalls || []) {
+                const cached = await getThinkingBlock(tc.id);
+                if (cached && (cached.thinking || cached.signature)) {
+                    const block = { type: 'thinking', thinking: cached.thinking || '' };
+                    if (cached.signature) block.signature = cached.signature;
+                    return [block, ...content];
+                }
+            }
+            return content;
+        }
+
         const result = [];
         for (const m of messages) {
             if (m.role === 'tool') {
@@ -121,9 +217,10 @@ export function createAnthropicAdapter() {
             }
 
             if (Array.isArray(m.content)) {
-                const content = mapContentParts(m.content).filter(Boolean);
+                let content = mapContentParts(m.content).filter(Boolean);
 
                 if (m.role === 'assistant' && m.tool_calls) {
+                    content = await injectCachedThinking(content, m.tool_calls);
                     m.tool_calls.forEach(tc => {
                         if (tc.type === 'function' && tc.function) {
                             content.push({
@@ -140,7 +237,7 @@ export function createAnthropicAdapter() {
                 continue;
             }
 
-            const content = [];
+            let content = [];
 
             if (m.role === 'assistant' && m.thinking_blocks) {
                 for (const block of m.thinking_blocks) {
@@ -148,6 +245,10 @@ export function createAnthropicAdapter() {
                 }
             } else if (m.role === 'assistant' && m.reasoning_content) {
                 content.push({ type: 'thinking', thinking: m.reasoning_content, ...(m.thinking_signature ? { signature: m.thinking_signature } : {}) });
+            }
+
+            if (m.role === 'assistant' && m.tool_calls) {
+                content = await injectCachedThinking(content, m.tool_calls);
             }
 
             if (m.content) {
@@ -365,7 +466,7 @@ export function createAnthropicAdapter() {
             const systemPrompt = extractedSystem ?? request.systemPrompt;
 
             const messages = normalizeMessages(rawMessages);
-            const formattedMessages = formatMessages(messages);
+            const formattedMessages = await formatMessages(messages);
 
             const body = {
                 model,
@@ -424,6 +525,18 @@ export function createAnthropicAdapter() {
 
             const data = await res.json();
 
+            if (data.content && Array.isArray(data.content)) {
+                const thinkingBlocks = data.content.filter(b => b.type === 'thinking');
+                const toolUses = data.content.filter(b => b.type === 'tool_use');
+                if (thinkingBlocks.length > 0 && toolUses.length > 0) {
+                    const thinking = thinkingBlocks.map(b => b.thinking || '').join('');
+                    const signature = thinkingBlocks[thinkingBlocks.length - 1].signature || null;
+                    for (const tu of toolUses) {
+                        await saveThinkingBlock(tu.id, { thinking, signature });
+                    }
+                }
+            }
+
             if (data.error) {
                 throw new Error(`Anthropic API Error: ${data.error.message}`);
             }
@@ -443,7 +556,7 @@ export function createAnthropicAdapter() {
             const systemPrompt = extractedSystem ?? request.systemPrompt;
 
             const messages = normalizeMessages(rawMessages);
-            const formattedMessages = formatMessages(messages);
+            const formattedMessages = await formatMessages(messages);
 
             const body = {
                 model,
@@ -508,6 +621,7 @@ export function createAnthropicAdapter() {
             let cacheCreationTokens = 0;
             let thinkingSignature = null;
             let thinkingText = '';
+            const toolUseIds = [];
 
             try {
                 while (true) {
@@ -576,6 +690,7 @@ export function createAnthropicAdapter() {
                             };
                         }
                         if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+                            thinkingText += event.delta.thinking || '';
                             yield {
                                 id: event.message?.id || processId,
                                 object: 'chat.completion.chunk',
@@ -590,6 +705,7 @@ export function createAnthropicAdapter() {
                             };
                         }
                         if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+                            toolUseIds.push(event.content_block.id);
                             yield {
                                 id: event.message?.id || processId,
                                 object: 'chat.completion.chunk',
@@ -650,6 +766,12 @@ export function createAnthropicAdapter() {
                             let finishReason = event.delta?.stop_reason;
                             if (finishReason === 'end_turn') finishReason = 'stop';
                             else if (finishReason === 'tool_use') finishReason = 'tool_calls';
+
+                            if (finishReason === 'tool_calls' && (thinkingText || thinkingSignature)) {
+                                for (const id of toolUseIds) {
+                                    await saveThinkingBlock(id, { thinking: thinkingText, signature: thinkingSignature || null });
+                                }
+                            }
 
                             // Emit finish_reason chunk (no usage — Copilot expects usage in a separate choices:[] chunk)
                             const finishChunk = {
