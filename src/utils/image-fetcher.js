@@ -11,8 +11,22 @@ export class ImageFetcher {
             timeout: config.timeout || 30000, // 30s default
             allowedProtocols: ['https:', 'http:'],
             blockedHosts: config.blockedHosts || [],
+            allowedHosts: config.allowedHosts || [],
             ...config
         };
+    }
+
+    /**
+     * Merge runtime config (from config.json) into this fetcher. Used by the
+     * ModelRouter to inject the SSRF allowlist for the co-located chat backend,
+     * which serves attachment bucket images on a LAN address the default guard
+     * would otherwise reject.
+     */
+    configure(config = {}) {
+        if (config.allowedHosts) this.config.allowedHosts = config.allowedHosts;
+        if (config.blockedHosts) this.config.blockedHosts = config.blockedHosts;
+        if (config.maxSize) this.config.maxSize = config.maxSize;
+        if (config.timeout) this.config.timeout = config.timeout;
     }
 
     /**
@@ -52,9 +66,13 @@ export class ImageFetcher {
             throw new Error(`Protocol not allowed: ${parsed.protocol}`);
         }
 
-        // Check for private IP ranges
+        // Check for private IP ranges — explicit allowedHosts bypass this
+        // (the co-located chat backend serves bucket images on a LAN address).
         const hostname = parsed.hostname;
-        if (this.isPrivateIp(hostname)) {
+        const isTrustedHost = this.config.allowedHosts.some(host =>
+            hostname === host || hostname.endsWith('.' + host)
+        );
+        if (!isTrustedHost && this.isPrivateIp(hostname)) {
             throw new Error('Private IP addresses not allowed');
         }
 

@@ -108,6 +108,13 @@ export class ModelRouter {
         // Media processor for image optimization
         this.mediaProcessor = new MediaProcessorClient(config);
 
+        // Image fetch policy (SSRF allowlist) — the co-located chat backend
+        // serves attachment bucket images on a LAN address the default guard
+        // would otherwise reject.
+        if (config.imageFetcher) {
+            imageFetcher.configure(config.imageFetcher);
+        }
+
         logger.info('Initialized', {
             models: this.registry.getModelIds().length,
             adapters: Array.from(this.adapters.keys()),
@@ -126,6 +133,10 @@ export class ModelRouter {
         this.registry = new ModelRegistry(newConfig);
         this.tokenEstimator = new TokenEstimator(newConfig);
         this.mediaProcessor = new MediaProcessorClient(newConfig);
+
+        if (newConfig.imageFetcher) {
+            imageFetcher.configure(newConfig.imageFetcher);
+        }
         
         logger.info('Configuration reloaded', {
             models: this.registry.getModelIds().length,

@@ -151,7 +151,7 @@ export class MediaProcessorClient {
 
         const { maxDimension, format, quality = 85 } = options;
 
-        const endpoint = `${this.config.endpoint}/v1/optimize/image`;
+        const endpoint = `${this.config.endpoint}/v1/process/image`;
         try {
             const body = {
                 base64: base64Data,

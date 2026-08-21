@@ -218,6 +218,11 @@
     "endpoint": "http://localhost:3500"
   },
 
+  "imageFetcher": {
+    "_comment": "SSRF allowlist for image fetching. The co-located chat backend serves attachment bucket images on a LAN address (e.g. 192.168.0.100:8080) that the default private-IP guard rejects. List the trusted host(s) here.",
+    "allowedHosts": ["192.168.0.100"]
+  },
+
   "accessKey": null,
 
   "mediaStorage": {

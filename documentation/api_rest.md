@@ -463,6 +463,26 @@ GET /logs?limit=50
 
 ---
 
+### GET|POST /logs/level
+
+Runtime log-level control (localhost-only). The gateway runs quiet by default (errors only).
+
+```bash
+GET /logs/level
+# → { "level": "error", "levels": ["debug", "info", "warn", "error"] }
+
+POST /logs/level
+Content-Type: application/json
+{ "level": "debug" }
+# → { "level": "debug", "previous": "error" }
+```
+
+- `GET` returns the current level and the valid levels.
+- `POST` sets the level; returns the new and previous values.
+- Invalid levels → `400`. Non-localhost callers → `403`.
+
+---
+
 ## Task-Based Query System
 
 Tasks provide semantic routing with preset parameters. Instead of specifying a model and tuning parameters for every request, clients reference a named task that encapsulates the model choice, system prompt, temperature, max tokens, and other defaults.
@@ -703,7 +723,7 @@ data: {"ticket":"tkt_abc123","status":"complete"}
 | Default model | Omit `model` and `task` | Uses the task marked `default: true` for the request type |
 | Specific model | `"model": "gemini-flash"` | Looks up model by ID in config |
 | Task-based | `"task": "synthesis"` | Uses task's model + defaults, client overrides apply |
-| Task with fallback | Task has `fallback` model | Primary fails → switches to fallback for 60s cooldown |
+| Task with fallback | Embedding task has `fallback` model | Primary fails → switches to fallback for the cooldown (`fallbackCooldownMinutes`, default 1 min). Embeddings only — chat tasks have no fallback by design. |
 | List models | `GET /v1/models` | Returns flat list from config |
 | List tasks | `GET /v1/tasks` | Returns list of configured tasks |
 
@@ -722,7 +742,7 @@ data: {"ticket":"tkt_abc123","status":"complete"}
 
 ### Thinking Control
 
-Control whether models produce verbose reasoning/thinking output. Works per-request from both REST and WebSocket endpoints. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.
+Control whether models produce verbose reasoning/thinking output. REST-only (the WebSocket transport was removed 2026-07-26). Two normalized fields reach the adapters: `enable_thinking` (boolean on/off) and `reasoning_effort` (graduated enum).
 
 **Resolution priority** (highest wins):
 1. Request-level `enable_thinking`
@@ -751,15 +771,11 @@ POST /v1/chat/completions
 }
 ```
 
-**WebSocket usage:**
-```json
-{ "method": "chat.create", "params": { "model": "my-llama-model", "enable_thinking": false, "messages": [...] } }
-```
-
 **Config default (applies when no request-level param is given):**
 ```json
 "my-llama-model": {
-  "adapter": "llamacpp",
+  "adapter": "openai",
+  "capabilities": { "thinking": "chat_template_kwargs" },
   "extraBody": { "chat_template_kwargs": { "enable_thinking": false } }
 }
 ```
@@ -775,11 +791,20 @@ POST /v1/chat/completions
 
 | Adapter | `enable_thinking` becomes |
 |---------|--------------------------|
-| `openai` | `chat_template_kwargs.enable_thinking` |
-| `llamacpp` | `chat_template_kwargs.enable_thinking` |
-| `alibaba` | `enable_thinking` (top-level) |
-| `anthropic` | Not supported (different mechanism) |
-| `gemini` | Not supported (different mechanism) |
+| `openai` | `chat_template_kwargs.enable_thinking` (only if `capabilities.thinking === "chat_template_kwargs"`) |
+| `gemini` | `generation_config.thinking_level` (`high`/`minimal`) |
+| `anthropic` | `thinking` block |
+| `responses` | `reasoning.effort` |
+
+### Reasoning Effort (`reasoning_effort`)
+
+Graduated reasoning control for models that accept effort levels. Canonical levels: `minimal | low | medium | high | xhigh | max`.
+
+- Models declare accepted values in `capabilities.thinkingLevels` (e.g. `["low", "high", "max"]`).
+- Request-level `reasoning_effort` (or `extra_body.reasoning_effort`, config `extraBody.reasoning_effort`) is validated against the declared set.
+- An undeclared value is mapped to the **nearest declared level** (walking up the canonical scale, ceiling-clamped; `xhigh` caps one step so it never over-provisions to `max`). The mapping is logged at INFO. `'none'` is honored only when declared, otherwise it drops to the lowest declared level.
+- Models without `thinkingLevels` drop `reasoning_effort` with a WARN log — the field is never sent upstream undeclared.
+- Adapter translation: `openai` → top-level `reasoning_effort` when `capabilities.thinkingEffortField === "reasoning_effort"`; `anthropic` → `output_config.effort`; `gemini` → `generation_config.thinking_level`; `responses` → `reasoning.effort`.
 
 ### Vision (Image Input)
 
@@ -955,11 +980,10 @@ POST /v1/chat/completions
 
 | Adapter | Tool Support | Notes |
 |---------|-------------|-------|
-| `openai` | Direct passthrough | OpenAI, xAI, and compatible providers |
+| `openai` | Direct passthrough | OpenAI, xAI, z.ai, llama.cpp, and other OpenAI-compatible providers |
 | `anthropic` | Format conversion | OpenAI tools ↔ Claude tool_use |
-| `gemini` | Format conversion | OpenAI tools ↔ Gemini functionDeclarations |
-| `alibaba` | Direct passthrough | OpenAI-compatible API |
-| `llamacpp` | Variable | Model/build dependent |
+| `gemini` | Format conversion | OpenAI tools ↔ Gemini functionDeclarations (Interactions API; no `tool_choice`/`tool_config`) |
+| `responses` | Format conversion | OpenAI tools ↔ Responses API tool format |
 
 **Response normalization:** All non-streaming tool-call responses include `refusal: null`, `function_call: null`, `tool_calls: null` (when absent), `annotations: []`, and `system_fingerprint: null` for strict client compatibility (OpenAI SDK, VS Code extensions).
 
@@ -1069,9 +1093,14 @@ for await (const event of ticket.stream()) {
 **Chat Models:**
 - `contextWindow` (number) - Maximum context window in tokens
 - `vision` (boolean) - Supports image inputs
-- `structuredOutput` (boolean | string) - Supports JSON output
+- `structuredOutput` (boolean | string) - Supports JSON output (`true`, `"json_schema"`, or `"json_object"`)
 - `streaming` (boolean) - Supports streaming responses
-- `maxOutputTokens` (number) - Maximum output tokens the model can produce
+- `maxOutputTokens` (number) - Output token budget used when the client omits `max_tokens` (required for Anthropic-adapter models)
+- `thinking` (string) - `"chat_template_kwargs"` gates `enable_thinking` passthrough for OpenAI-adapter models
+- `thinkingLevels` (array) - Declared `reasoning_effort` values (e.g. `["low", "high", "max"]`) — see Reasoning Effort
+- `thinkingEffortField` (string) - `"reasoning_effort"` makes the openai adapter pass effort through as a top-level field
+- `excludeParams` (array) - Parameter names stripped from the upstream payload (for reasoning models that reject sampling params)
+- `tools` (boolean) - Supports function calling
 
 **Embedding Models:**
 - `contextWindow` (number) - Maximum input tokens
@@ -1086,6 +1115,9 @@ for await (const event of ticket.stream()) {
 - **Sessions** - No `X-Session-Id` header, no session endpoints
 - **Provider-centric routing** - Models are referenced by ID, not `provider:model`
 - **Capability inference** - All capabilities explicitly declared
+- **WebSocket transport** (removed 2026-07-26) - REST/SSE only; no `chat.cancel`, no binary WS uploads, no `gateway-media://` scheme
+- **Per-provider adapters** (`llamacpp`, `kimi`, `alibaba`, `dashscope`, `ollama`, `lmstudio`) - Replaced by four protocol adapters; providers are now endpoint config (llama.cpp via `openai` adapter)
+- **Media generation** (image/audio/video types, `/v1/videos/generations`) - Removed; speech handled by dedicated nVoice/nSpeech services
 
 ### Config Changes
 

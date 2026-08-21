@@ -1,19 +1,19 @@
 # LLM Gateway v2.0
 
-A stateless, model-centric gateway for LLM APIs. OpenAI-compatible interface with support for multiple providers, including local inference via llama.cpp.
+A stateless, model-centric gateway for LLM APIs. OpenAI-compatible REST interface with support for multiple providers, including local inference via llama.cpp (through its OpenAI-compatible server).
 
-## Recent Behavior of Note
+## Behavior of Note
 
 - Chat requests without `max_tokens` fall back to the model's declared `capabilities.maxOutputTokens`; OpenAI-spec responses are not extended with gateway metadata
-- WebSocket `chat.cancel` aborts the upstream provider request
-- HTTP client disconnects abort in-flight upstream chat generation for supported adapters
+- HTTP client disconnects abort in-flight upstream chat generation for fetch-based chat adapters
 - Task-based query system for semantic routing with preset parameters (`task` param in request body)
 - Stateless by design — context management is the client's responsibility
 - OpenAI Responses API support via `POST /v1/responses`
-- Video generation via `POST /v1/videos/generations`
-- Binary media uploads over WebSocket with `gateway-media://` URL scheme
 - Admin endpoints for config management with hot-reload (`GET /config`, `POST /config/store`)
-- Queryable structured logs via `GET /logs`
+- Queryable structured logs via `GET /logs`, runtime log-level control via `/logs/level`
+- Per-request reasoning control: `enable_thinking` and `reasoning_effort` with per-model `thinkingLevels` declaration
+
+> The WebSocket transport was removed on 2026-07-26. The gateway is REST/SSE only.
 
 ## Quick Start
 
@@ -34,15 +34,14 @@ The gateway runs on `http://localhost:3400` by default.
 
 LLM Gateway provides a unified interface to multiple LLM providers:
 
-- **OpenAI-compatible API** - Drop-in replacement for OpenAI client libraries
-- **OpenAI Responses API** - Proxy support for the newer Responses API format
-- **Tool Use / Function Calling** - OpenAI-spec compliant `tools`, `tool_choice`, `parallel_tool_calls` across all adapters
-- **Multi-provider** - Gemini, OpenAI, Anthropic, Ollama, LM Studio, llama.cpp, Kimi, Alibaba Cloud
-- **Stateless** - No server-side session management
-- **Model-centric config** - Each model configured independently
-- **Generation cancellation** - WebSocket cancellation and HTTP disconnect abort propagation
-- **Media processing** - Image fetching with SSRF protection, optional resize/transcode
-- **Binary WebSocket** - Media uploads and audio streaming over WebSocket
+- **OpenAI-compatible API** — Drop-in replacement for OpenAI client libraries
+- **OpenAI Responses API** — Proxy support for the newer Responses API format
+- **Tool Use / Function Calling** — OpenAI-spec compliant `tools`, `tool_choice`, `parallel_tool_calls` across adapters
+- **Multi-provider** — Any provider speaking Gemini, OpenAI-compatible, Anthropic, or OpenAI Responses protocols (Gemini, OpenAI, xAI, Anthropic, Kimi, DeepSeek, GLM/z.ai, llama.cpp, LM Studio, Ollama, ...)
+- **Stateless** — No server-side session management
+- **Model-centric config** — Each model configured independently with explicit capabilities
+- **Generation cancellation** — HTTP disconnect aborts the upstream request
+- **Media processing** — Image fetching with SSRF protection, optional resize/transcode
 
 ## Configuration
 
@@ -66,22 +65,14 @@ Define models in `config.json`:
     },
     "local-llama": {
       "type": "chat",
-      "adapter": "llamacpp",
-      "endpoint": "http://localhost:4080",
-      "adapterModel": "my-local-model",
+      "adapter": "openai",
+      "endpoint": "http://localhost:4080/v1",
+      "adapterModel": "publisher/model-name",
       "capabilities": {
-        "contextWindow": 8192,
+        "contextWindow": 128000,
         "vision": true,
-        "streaming": true
-      },
-      "localInference": {
-        "enabled": true,
-        "modelPath": "/path/to/model.gguf",
-        "mmproj": "/path/to/mmproj.gguf",
-        "contextSize": 8192,
-        "gpuLayers": 99,
-        "flashAttention": true,
-        "mlock": true
+        "streaming": true,
+        "thinking": "chat_template_kwargs"
       }
     }
   },
@@ -102,11 +93,12 @@ Define models in `config.json`:
 | Feature | Description |
 |---------|-------------|
 | `disabled` | Set `true` to temporarily disable a model without removing it from config |
-| `hardTokenCap` | Safety limit - forcibly stops generation after N tokens |
 | `extraBody` | Config-level provider-specific parameters applied to all requests |
 | `extra_body` | Request-level provider-specific parameters (per-request override) |
 | `imageInputLimit` | Per-model image dimension and size limits |
-| `localInference` | llama.cpp server configuration (model path, GPU layers, etc.) |
+| `capabilities.maxOutputTokens` | Output token budget used when the client omits `max_tokens` (required for Anthropic-adapter models) |
+| `capabilities.thinking` | `"chat_template_kwargs"` gates `enable_thinking` passthrough for OpenAI-adapter models |
+| `capabilities.thinkingLevels` | Declared `reasoning_effort` values the model accepts (see Thinking Control) |
 
 ### Model Types
 
@@ -114,23 +106,6 @@ Define models in `config.json`:
 |------|-------------|
 | `chat` | Chat completion models |
 | `embedding` | Text embedding models |
-| `image` | Image generation models |
-| `audio` | Audio/speech synthesis models |
-| `video` | Video generation models |
-
-### WebSocket Cancellation
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "chat.cancel",
-  "params": {
-    "request_id": "req-123"
-  }
-}
-```
-
-The server completes the cancelled stream with `chat.done` and `cancelled: true`.
 
 ## Usage
 
@@ -204,11 +179,10 @@ Tasks define model selection, system prompts, temperature, max tokens, and other
 ### Model-Centric Design
 
 Each model is independently configured with:
-- **Type**: chat, embedding, image, audio, video
-- **Adapter**: Protocol handler (gemini, openai, llamacpp, etc.)
-- **Capabilities**: Explicit declaration (contextWindow, vision, etc.)
+- **Type**: chat, embedding
+- **Adapter**: Protocol handler (`gemini`, `openai`, `anthropic`, `responses`)
+- **Capabilities**: Explicit declaration (contextWindow, vision, thinking, excludeParams, ...)
 - **Endpoint/Auth**: Per-model configuration
-- **Local Inference**: For running GGUF models locally (llama.cpp)
 
 ### Stateless Operation
 
@@ -219,45 +193,33 @@ Each model is independently configured with:
 
 ### Supported Adapters
 
-| Adapter | Chat | Embeddings | Images | Audio | Video | Vision | Local |
-|---------|------|------------|--------|-------|-------|--------|-------|
-| Gemini | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| OpenAI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Anthropic | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Ollama | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| LM Studio | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| **llama.cpp** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Kimi | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Alibaba | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| DashScope | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
-| OpenAI Responses | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Adapter | Description | Chat | Embeddings |
+|---------|-------------|------|------------|
+| `openai` | Standard OpenAI Chat Completions API | ✅ | ✅ |
+| `responses` | OpenAI Responses API (newer format) | ✅ | ❌ |
+| `anthropic` | Anthropic Messages API (also Kimi, DeepSeek, MiniMax, GLM Anthropic endpoints) | ✅ | ❌ |
+| `gemini` | Google Gemini (chat via Interactions API, embeddings via generateContent) | ✅ | ✅ |
 
-### Local Inference with llama.cpp
+Only these four adapters are registered and validated. A config naming any other adapter fails validation at startup.
 
-The gateway routes to external llama.cpp servers via the `llamacpp` adapter. The gateway does not manage `llama-server.exe` processes itself — configure an external llama.cpp server and point the adapter to its endpoint.
+Local inference (llama.cpp, LM Studio, Ollama) is reached through the `openai` adapter — those servers expose OpenAI-compatible APIs. See [config.example.json](config.example.json) for a llama.cpp example.
 
-**Config Example:**
-```json
-"llama-chat": {
-  "adapter": "llamacpp",
-  "endpoint": "http://localhost:4080",
-  "capabilities": { "contextWindow": 64000, "vision": true },
-  "localInference": {
-    "enabled": true,
-    "modelPath": "D:/models/chat-model.gguf",
-    "mmproj": "D:/models/mmproj-f16.gguf",
-    "contextSize": 64000,
-    "gpuLayers": 99,
-    "flashAttention": true,
-    "mlock": true
-  }
-}
-```
+### Thinking Control
+
+Per-request reasoning control resolves to two normalized fields:
+
+- **`enable_thinking`** (boolean) — on/off. Adapter translation:
+  - `openai` → `chat_template_kwargs.enable_thinking` (only if `capabilities.thinking === "chat_template_kwargs"`)
+  - `gemini` → `generation_config.thinking_level` (`high`/`minimal`)
+  - `anthropic` → `thinking` block
+  - `responses` → `reasoning.effort`
+- **`reasoning_effort`** (enum) — graduated effort (`minimal|low|medium|high|xhigh|max`). The router validates against the model's declared `capabilities.thinkingLevels`; undeclared values are mapped to the nearest declared level (logged). Models without `thinkingLevels` drop the field with a warning.
+
+See the [REST API reference](documentation/api_rest.md#thinking-control) for the full resolution priority and per-adapter details.
 
 ## API Documentation
 
-- [REST API Reference](documentation/api_rest.md) - Standard OpenAI-compatible HTTP endpoints
-- [WebSocket API Reference](documentation/api_websocket.md) - Real-time active connection protocol
+- [REST API Reference](documentation/api_rest.md) — Standard OpenAI-compatible HTTP endpoints (also served at `/help` on a running gateway)
 
 ## Development
 
@@ -280,7 +242,8 @@ npm run dev
 | Session-based (`X-Session-Id`) | Stateless |
 | Capability inference from model IDs | Explicit capabilities |
 | `providers` in config | `models` in config |
-| No local inference | llama.cpp adapter support |
+| WebSocket transport | REST/SSE only |
+| Per-provider adapters (kimi, alibaba, llamacpp, ...) | Four protocol adapters; providers are endpoint config |
 | Server-side context compaction | Client-owned context management |
 | No admin endpoints | Config hot-reload and queryable logs |
 
