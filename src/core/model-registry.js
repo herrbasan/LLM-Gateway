@@ -141,7 +141,8 @@ export class ModelRegistry {
                 continue;
             }
             const contextWindow = config.capabilities?.contextWindow;
-            const maxOutput = config.capabilities?.maxOutputTokens;
+            // Legacy configs declare the output cap as top-level maxTokens.
+            const maxOutput = config.capabilities?.maxOutputTokens ?? config.maxTokens;
             data.push({
                 id,
                 prettyName: config.prettyName,
@@ -188,7 +189,8 @@ export class ModelRegistry {
                 continue;
             }
             const contextWindow = config.capabilities?.contextWindow;
-            const maxOutput = config.capabilities?.maxOutputTokens;
+            // Legacy configs declare the output cap as top-level maxTokens.
+            const maxOutput = config.capabilities?.maxOutputTokens ?? config.maxTokens;
             const modelInfo = {
                 id,
                 prettyName: config.prettyName,
