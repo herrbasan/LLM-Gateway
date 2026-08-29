@@ -150,7 +150,7 @@ export function createAnthropicAdapter() {
         return result;
     }
 
-    async function formatMessages(messages) {
+    async function formatMessages(messages, capabilities) {
         if (!messages) return [];
 
         function mapContentParts(contentArray) {
@@ -244,7 +244,25 @@ export function createAnthropicAdapter() {
                     content.push({ type: 'thinking', thinking: block.thinking || '', ...(block.signature ? { signature: block.signature } : {}) });
                 }
             } else if (m.role === 'assistant' && m.reasoning_content) {
-                content.push({ type: 'thinking', thinking: m.reasoning_content, ...(m.thinking_signature ? { signature: m.thinking_signature } : {}) });
+                // Prior-reasoning policy (2026-08-29, see provider docs):
+                // - 'ignored' → strip (provider discards it; pure token waste).
+                // - signed → emit with signature (Anthropic thinking-block contract).
+                // - unsigned on NATIVE Anthropic (anthropicVersion set) → DROP + warn:
+                //   an unsigned thinking block in echoed history 400s during tool
+                //   use (the chat-app's former global strip was this guard, but it
+                //   also stripped providers that REQUIRE reasoning — moved here where
+                //   the provider is known).
+                // - unsigned on third-party anthropic-protocol providers (Kimi etc.,
+                //   no anthropicVersion) → keep: Kimi requires the echo.
+                if (capabilities?.priorReasoning !== 'ignored') {
+                    if (m.thinking_signature) {
+                        content.push({ type: 'thinking', thinking: m.reasoning_content, signature: m.thinking_signature });
+                    } else if (capabilities?.anthropicVersion) {
+                        logger.warn('Dropping unsigned reasoning_content (would 400 on tool-use continuation)', {}, 'AnthropicAdapter');
+                    } else {
+                        content.push({ type: 'thinking', thinking: m.reasoning_content });
+                    }
+                }
             }
 
             if (m.role === 'assistant' && m.tool_calls) {
@@ -466,7 +484,7 @@ export function createAnthropicAdapter() {
             const systemPrompt = extractedSystem ?? request.systemPrompt;
 
             const messages = normalizeMessages(rawMessages);
-            const formattedMessages = await formatMessages(messages);
+            const formattedMessages = await formatMessages(messages, capabilities);
 
             const body = {
                 model,
@@ -556,7 +574,7 @@ export function createAnthropicAdapter() {
             const systemPrompt = extractedSystem ?? request.systemPrompt;
 
             const messages = normalizeMessages(rawMessages);
-            const formattedMessages = await formatMessages(messages);
+            const formattedMessages = await formatMessages(messages, capabilities);
 
             const body = {
                 model,
@@ -860,7 +878,7 @@ export function createAnthropicAdapter() {
 
             const { messages: rawMessages, systemPrompt } = extractSystemPrompt(messages);
             const normalized = normalizeMessages(rawMessages);
-            const formatted = formatMessages(normalized);
+            const formatted = await formatMessages(normalized, capabilities);
 
             const body = { model, messages: formatted };
             if (systemPrompt) body.system = systemPrompt;
