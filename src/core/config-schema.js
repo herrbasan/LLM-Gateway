@@ -137,6 +137,13 @@ function validateChatCapabilities(modelId, caps) {
             throw new Error(`[Config] Model "${modelId}": capabilities.priorReasoning must be one of ${validPolicies.join(', ')} (got "${caps.priorReasoning}")`);
         }
     }
+
+    // clearThinkingSupport: z.AI/GLM accepts thinking.clear_thinking; when
+    // priorReasoning keeps reasoning on the wire, the adapter sends
+    // clear_thinking:false so the server doesn't discard it anyway.
+    if ('clearThinkingSupport' in caps && typeof caps.clearThinkingSupport !== 'boolean') {
+        throw new Error(`[Config] Model "${modelId}": capabilities.clearThinkingSupport must be boolean`);
+    }
 }
 
 function validateEmbeddingCapabilities(modelId, caps) {

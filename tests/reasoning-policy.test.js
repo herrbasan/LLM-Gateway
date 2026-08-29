@@ -73,4 +73,17 @@ describe('applyReasoningHistoryPolicy', () => {
         const payload = { messages: undefined };
         expect(() => applyReasoningHistoryPolicy(payload, { priorReasoning: 'ignored' })).to.not.throw();
     });
+
+    it("policy 'required' + clearThinkingSupport (z.AI GLM): sends thinking.clear_thinking=false", () => {
+        const payload = { messages: history(), tools };
+        applyReasoningHistoryPolicy(payload, { priorReasoning: 'required', clearThinkingSupport: true });
+        expect(payload.thinking).to.deep.equal({ clear_thinking: false });
+        expect(payload.messages[1].reasoning_content).to.equal('deep thoughts');
+    });
+
+    it("policy 'required' WITHOUT clearThinkingSupport: no thinking field added", () => {
+        const payload = { messages: history(), tools };
+        applyReasoningHistoryPolicy(payload, { priorReasoning: 'required' });
+        expect(payload).to.not.have.property('thinking');
+    });
 });

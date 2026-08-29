@@ -371,7 +371,8 @@ function applyThinkingControl(payload, request, capabilities) {
 // reasoning_content property (inject "" when absent) — the strict-history constraint
 // Moonshot/Kimi/DeepSeek enforce. Supersedes capabilities.reasoningContent === true
 // (kept working below as legacy alias for the inject-on-keep behavior).
-function applyReasoningHistoryPolicy(payload, capabilities) {    if (!Array.isArray(payload.messages)) return;
+function applyReasoningHistoryPolicy(payload, capabilities) {
+    if (!Array.isArray(payload.messages)) return;
     const policy = capabilities?.priorReasoning;
     const hasTools = Array.isArray(payload.tools) && payload.tools.length > 0;
     const keep = policy === 'required'
@@ -390,6 +391,15 @@ function applyReasoningHistoryPolicy(payload, capabilities) {    if (!Array.isAr
         return;
     }
     if (keep) {
+        // z.AI/GLM: the server CLEARS prior reasoning by default
+        // (thinking.clear_thinking: true) — keeping reasoning on the wire is
+        // pointless unless we also tell the server to retain it. Only send the
+        // field where it's a known parameter (glm models declare it via
+        // capabilities.clearThinking !== false... simplest: declare
+        // capabilities.clearThinkingSupport: true).
+        if (capabilities?.clearThinkingSupport === true) {
+            payload.thinking = { ...(payload.thinking || {}), clear_thinking: false };
+        }
         payload.messages = payload.messages.map(msg => {
             if (msg.role === 'assistant' && (msg.tool_calls != null || msg.function_call != null) && msg.reasoning_content == null) {
                 return { ...msg, reasoning_content: "" };
