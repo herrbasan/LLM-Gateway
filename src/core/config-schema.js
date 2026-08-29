@@ -127,6 +127,16 @@ function validateChatCapabilities(modelId, caps) {
             }
         }
     }
+
+    // priorReasoning: the provider's contract for prior reasoning_content in
+    // history (verified per-provider 2026-08-29). Declares what the ADAPTER
+    // enforces on the wire — unset means keep history untouched (cache-safe).
+    if ('priorReasoning' in caps) {
+        const validPolicies = ['required', 'required-with-tools', 'ignored'];
+        if (!validPolicies.includes(caps.priorReasoning)) {
+            throw new Error(`[Config] Model "${modelId}": capabilities.priorReasoning must be one of ${validPolicies.join(', ')} (got "${caps.priorReasoning}")`);
+        }
+    }
 }
 
 function validateEmbeddingCapabilities(modelId, caps) {

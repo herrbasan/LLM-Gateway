@@ -352,15 +352,44 @@ function applyThinkingControl(payload, request, capabilities) {
     if (request.enable_thinking != null && request.reasoning_effort == null && capabilities?.reasoningEffort) {
         payload.reasoning_effort = request.enable_thinking ? 'high' : 'none';
     }
-    
-    // Strict reasoning history constraint for upstream APIs that enforce it
-    // (Moonshot/Kimi/DeepSeek). Assistant messages containing tool calls MUST
-    // natively possess a `reasoning_content` property, even if empty.
-    // This is a non-spec field: only inject it for models that explicitly
-    // declare capabilities.reasoningContent === true. Applying it universally
-    // mutated history for every upstream (incl. real OpenAI/Grok/OpenRouter)
-    // and copied the entire messages array on every request for no benefit.
-    if (capabilities?.reasoningContent === true && Array.isArray(payload.messages)) {
+
+    applyReasoningHistoryPolicy(payload, capabilities);
+}
+
+// Per-provider prior-reasoning policy (2026-08-29, provider docs verified — see
+// storage documentation/LLM APIs/provider_*.md). Whether prior reasoning_content
+// rides on the wire is a PROVIDER fact, not a client choice:
+//   'required'            — xAI, Kimi K2.7: must echo every turn (xAI: omitting it is
+//                           the documented #1 cache-miss cause; Kimi: hard requirement).
+//   'required-with-tools' — DeepSeek: 400s when omitted on tool-call chains; ignored
+//                           otherwise → keep iff tools advertised, else strip.
+//   'ignored'             — OpenAI proper: unknown field, silently dropped → strip
+//                           (pure token waste, breaks prefix canonicality for nothing).
+//   unset                 — keep as-is (cache-safe default: never mutate history
+//                           without a declared provider fact).
+// 'keep' means: do not strip; assistant messages with tool_calls must POSSESS a
+// reasoning_content property (inject "" when absent) — the strict-history constraint
+// Moonshot/Kimi/DeepSeek enforce. Supersedes capabilities.reasoningContent === true
+// (kept working below as legacy alias for the inject-on-keep behavior).
+function applyReasoningHistoryPolicy(payload, capabilities) {    if (!Array.isArray(payload.messages)) return;
+    const policy = capabilities?.priorReasoning;
+    const hasTools = Array.isArray(payload.tools) && payload.tools.length > 0;
+    const keep = policy === 'required'
+        || (policy === 'required-with-tools' && hasTools)
+        || (policy === undefined && capabilities?.reasoningContent === true);
+    const strip = policy === 'ignored' || (policy === 'required-with-tools' && !hasTools);
+
+    if (strip) {
+        payload.messages = payload.messages.map(msg => {
+            if (msg && (msg.reasoning_content != null || msg.thinking_signature != null)) {
+                const { reasoning_content, thinking_signature, ...rest } = msg;
+                return rest;
+            }
+            return msg;
+        });
+        return;
+    }
+    if (keep) {
         payload.messages = payload.messages.map(msg => {
             if (msg.role === 'assistant' && (msg.tool_calls != null || msg.function_call != null) && msg.reasoning_content == null) {
                 return { ...msg, reasoning_content: "" };
@@ -369,6 +398,10 @@ function applyThinkingControl(payload, request, capabilities) {
         });
     }
 }
+
+// Exported for unit tests (tests/reasoning-policy.test.js). Not part of the
+// adapter interface — pure payload-shaping helper.
+export { applyReasoningHistoryPolicy };
 
 function buildHeaders(apiKey, extra = {}, custom = {}) {
     const headers = { ...extra, ...custom };

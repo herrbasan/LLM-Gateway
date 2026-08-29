@@ -26,6 +26,7 @@
         "thinking": "chat_template_kwargs"
       },
       "_comment_thinking": "capabilities.thinking='chat_template_kwargs' lets enable_thinking reach llama.cpp/Qwen upstreams via the openai adapter.",
+      "_comment_priorReasoning": "capabilities.priorReasoning declares the provider's prior-reasoning contract: 'required' (xAI/Kimi — must echo reasoning_content every turn; omitting it is xAI's #1 cache-miss cause), 'required-with-tools' (DeepSeek — 400s if omitted on tool chains, stripped otherwise), 'ignored' (OpenAI — silently drops the field; gateway strips it to save tokens). Unset = history kept as-is (cache-safe default). Verified 2026-08-29, see documentation/LLM APIs provider docs.",
       "imageInputLimit": {
         "maxDimension": 2048,
         "maxFileSize": 52428800,
