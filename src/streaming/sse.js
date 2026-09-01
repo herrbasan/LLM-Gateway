@@ -177,7 +177,7 @@ export class StreamHandler {
             // (If headers were already sent — mid-stream truncation — we can only
             // emit an in-band error chunk; that path is handled below.)
             if (!hasContent) {
-                logger.error('Stream produced zero content', null, contextPayload, 'StreamHandler');
+                logger.error('Stream produced zero content', null, { ...opMeta, ...contextPayload }, 'StreamHandler');
                 if (!headersSent) {
                     const err = new Error('Upstream returned no content.');
                     err.code = 'ZERO_CONTENT';
@@ -208,7 +208,9 @@ export class StreamHandler {
         } catch (err) {
             if (isAbortError(err)) {
                 // Client disconnected. If we never sent headers, nothing to do.
-                // If we did, just clean up.
+                // If we did, just clean up. Tolerated boundary variance — but
+                // never silent: leave a trace identifying which stream died.
+                logger.debug(`Stream aborted: ${err.message || 'aborted by client'}`, opMeta, 'StreamHandler');
             } else {
                 logger.error(err.message, null, { ...opMeta, type: err.type, code: err.code }, 'StreamHandler');
                 if (!headersSent) {

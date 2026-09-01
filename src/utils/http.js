@@ -99,11 +99,18 @@ export async function readWithDeadline(reader, ms = STREAM_READ_DEADLINE_MS) {
             reader.read(),
             new Promise((_, reject) => {
                 timer = setTimeout(() => {
-                    // Cancel the underlying body so the upstream connection is torn down.
-                    reader.cancel().catch(() => {});
                     const err = new Error(`Upstream stalled: no stream chunk within ${ms}ms`);
                     err.code = 'UPSTREAM_TIMEOUT';
+                    // Settle the race FIRST. Per the WHATWG streams spec,
+                    // reader.cancel() synchronously resolves every pending
+                    // read() with {done:true} — if cancel runs before reject,
+                    // Promise.race settles with done:true and the timeout
+                    // rejection is silently discarded: the stream ends as if
+                    // it had completed normally (hang converted to clean end,
+                    // zero error, zero log). Reject, then tear down the
+                    // upstream connection the now-unobserved read belonged to.
                     reject(err);
+                    reader.cancel().catch(() => {});
                 }, ms);
             })
         ]);
