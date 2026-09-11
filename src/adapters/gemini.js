@@ -532,9 +532,13 @@ async function buildInteractionPayload(request, capabilities) {
         }
     }
 
+    // Tool calls dropped for a missing cached signature must also have their
+    // function_result steps dropped — an orphaned result (call_id with no
+    // preceding function_call in the timeline) is a 400 on every request.
+    const droppedCallIds = new Set();
     const input = [];
     for (const m of otherMessages) {
-        input.push(...await buildInputSteps(m, callIdToName));
+        input.push(...await buildInputSteps(m, callIdToName, droppedCallIds));
     }
 
     const payload = {
@@ -609,11 +613,14 @@ async function buildInteractionPayload(request, capabilities) {
     return payload;
 }
 
-async function buildInputSteps(message, callIdToName) {
+async function buildInputSteps(message, callIdToName, droppedCallIds) {
     // Tool messages carry the function result. The Interactions API requires the
     // originating thought + function_call steps to precede it (handled by the
     // assistant tool_calls branch below).
     if (message.role === 'tool') {
+        if (droppedCallIds.has(message.tool_call_id)) {
+            return [];
+        }
         // The function_result name MUST match the function_call name. OpenAI-format
         // tool messages omit `name`, so resolve it from the assistant tool_calls
         // (keyed by call id). A function_result without a valid name is a 400, so
@@ -656,8 +663,11 @@ async function buildInputSteps(message, callIdToName) {
                 });
             }
             // No cached signature (pruned or pre-cache history): the call cannot
-            // be echoed. Drop it — the following tool message still carries the
-            // result, which the model can use without the call frame.
+            // be echoed. Drop it AND its function_result (tracked in
+            // droppedCallIds) — an orphaned result is a 400.
+            else {
+                droppedCallIds.add(tc.id);
+            }
         }
         return steps;
     }
