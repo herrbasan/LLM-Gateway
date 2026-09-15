@@ -466,6 +466,59 @@ function transformStreamingEvent(event) {
 }
 
 /**
+ * Convert a non-streaming Responses API object to Chat Completions format.
+ * Used when a responses-adapter model is served over POST /v1/chat/completions —
+ * the native /v1/responses route keeps the raw format.
+ */
+export function responseToChatCompletion(resp) {
+    if (!resp || resp.object !== 'response') return resp;
+
+    const texts = [];
+    const refusals = [];
+    const toolCalls = [];
+    const reasoningTexts = [];
+
+    for (const item of resp.output ?? []) {
+        if (item?.type === 'message') {
+            for (const part of item.content ?? []) {
+                if (part?.type === 'output_text' && typeof part.text === 'string') texts.push(part.text);
+                else if (part?.type === 'refusal' && typeof part.refusal === 'string') refusals.push(part.refusal);
+            }
+        } else if (item?.type === 'function_call') {
+            toolCalls.push({
+                id: item.call_id ?? item.id,
+                type: 'function',
+                function: { name: item.name, arguments: item.arguments ?? '' }
+            });
+        } else if (item?.type === 'reasoning') {
+            for (const s of item.summary ?? []) {
+                if (typeof s?.text === 'string') reasoningTexts.push(s.text);
+            }
+        }
+    }
+
+    const message = { role: 'assistant', content: texts.length ? texts.join('') : null };
+    if (toolCalls.length > 0) message.tool_calls = toolCalls;
+    if (refusals.length > 0) message.refusal = refusals.join('');
+    if (reasoningTexts.length > 0) message.reasoning_content = reasoningTexts.join('');
+
+    let finishReason = 'stop';
+    if (toolCalls.length > 0) finishReason = 'tool_calls';
+    else if (refusals.length > 0) finishReason = 'content_filter';
+    else if (resp.status === 'incomplete' && resp.incomplete_details?.reason === 'max_output_tokens') finishReason = 'length';
+
+    return {
+        id: resp.id,
+        object: 'chat.completion',
+        created: resp.created_at ?? Math.floor(Date.now() / 1000),
+        model: resp.model,
+        choices: [{ index: 0, message, finish_reason: finishReason }],
+        usage: translateUsage(resp.usage),
+        provider: 'openai'
+    };
+}
+
+/**
  * Convert standard chat messages to Responses API input format.
  * Responses API uses similar format but as `input` instead of `messages`.
  */

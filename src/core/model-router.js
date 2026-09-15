@@ -10,6 +10,7 @@ import { getLogger } from '../utils/logger.js';
 import { MediaProcessorClient } from '../utils/media-client.js';
 import { imageFetcher } from '../utils/image-fetcher.js';
 import { chatCompletionsToResponse, convertStreamToResponseEvents } from '../utils/response-format.js';
+import { responseToChatCompletion } from '../adapters/responses.js';
 
 const logger = getLogger();
 
@@ -210,6 +211,11 @@ export class ModelRouter {
             };
         } else {
             result = await adapter.chatComplete(modelConfig, finalOpts);
+            // responses-adapter chatComplete returns the raw Responses API object;
+            // /v1/chat/completions clients expect Chat Completions format.
+            if (modelConfig.adapter === 'responses') {
+                result = responseToChatCompletion(result);
+            }
             result.context = context;
         }
 
