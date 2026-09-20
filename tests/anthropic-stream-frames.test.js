@@ -147,6 +147,111 @@ describe('Anthropic adapter — streaming frames', function () {
         expect(result.content).to.equal('Hello');
         expect(result.finished).to.be.true;
     });
+
+    it('reads a final frame that ends without a newline', async () => {
+        // The upstream's last data line arrives unterminated. Discarding it would
+        // drop the finish chunk and make a complete stream look empty.
+        const frames = [
+            'data: {"type":"message_start","message":{"id":"msg_probe","usage":{"input_tokens":100}}}',
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}',
+            'data: {"type":"content_block_stop","index":0}',
+            // no trailing newline on the last one
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}'
+        ].join('\n\n');
+
+        const body = new Response(
+            new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(frames));
+                    controller.close();
+                }
+            }),
+            { status: 200, headers: { 'content-type': 'text/event-stream' } }
+        );
+
+        const realFetch = globalThis.fetch;
+        globalThis.fetch = async () => body;
+        try {
+            const chunks = [];
+            for await (const chunk of adapters.get('anthropic').streamComplete(MODEL, {
+                messages: [{ role: 'user', content: 'hi' }],
+                maxTokens: 64
+            })) {
+                chunks.push(chunk);
+            }
+            const content = chunks.map(c => c.choices?.[0]?.delta?.content ?? '').join('');
+            expect(content).to.equal('hi');
+            expect(chunks.some(c => c.choices?.[0]?.finish_reason === 'stop'), 'finish chunk survives').to.be.true;
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+    });
+
+    it('carries the thinking signature through to the tool-call turn', async () => {
+        const result = await collect([
+            { type: 'message_start', message: { id: 'msg_probe', usage: { input_tokens: 100 } } },
+            { type: 'content_block_start', index: 0, content_block: { type: 'thinking', signature: '' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'weighing' } },
+            // Anthropic delivers the signature here, not on the block.
+            { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig-probe' } },
+            { type: 'content_block_stop', index: 0 },
+            { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_probe_1', name: 'probe' } },
+            { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{}' } },
+            { type: 'content_block_stop', index: 1 },
+            { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+            { type: 'message_stop' }
+        ]);
+
+        // The signature is replayed on the next turn via this field.
+        const finish = result.chunks.find(c => c.choices?.[0]?.finish_reason);
+        expect(finish, 'finish chunk').to.exist;
+        expect(finish._thinking_signature).to.equal('sig-probe');
+    });
+
+    it('does not warn on signature_delta, which every thinking block sends', async () => {
+        await collect([
+            { type: 'message_start', message: { id: 'msg_probe', usage: { input_tokens: 100 } } },
+            { type: 'content_block_start', index: 0, content_block: { type: 'thinking', signature: '' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig-noise-probe' } },
+            { type: 'content_block_stop', index: 0 },
+            { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } },
+            { type: 'message_stop' }
+        ]);
+
+        await new Promise(resolve => setTimeout(resolve, 1300));
+
+        // A warning per thinking block turns the log into noise on healthy traffic,
+        // which is how a log stops being read. This is expected framing, not a drop.
+        const mainLog = path.join(process.cwd(), 'tests', '_Test_Assets', 'logs', 'main-0.log');
+        const noisy = (await fs.readFile(mainLog, 'utf8'))
+            .split('\n')
+            .filter(line => line.includes('unmapped delta dropped') && line.includes('signature_delta'));
+
+        expect(noisy, 'signature_delta is expected framing').to.be.empty;
+    });
+
+    it('records the shape of a stream that ended without completing', async () => {
+        const marker = `probe_truncated_${Date.now()}`;
+
+        // No message_delta: the upstream cut out mid-stream. `collect` still gets a
+        // clean end-of-generator, which is what makes this silent without a trace.
+        await collect([
+            { type: 'message_start', message: { id: 'msg_probe', usage: { input_tokens: 100 } } },
+            { type: marker }
+        ]);
+
+        // nLogger flushes its main log on a 1s timer.
+        await new Promise(resolve => setTimeout(resolve, 1300));
+
+        const mainLog = path.join(process.cwd(), 'tests', '_Test_Assets', 'logs', 'main-0.log');
+        const logged = (await fs.readFile(mainLog, 'utf8')).split('\n');
+        const line = logged.find(l => l.includes('produced nothing usable') && l.includes(marker));
+
+        expect(line, 'a stream that yielded nothing recorded its own shape').to.exist;
+        expect(line).to.include('"completed":false');
+    });
 });
 
 /**

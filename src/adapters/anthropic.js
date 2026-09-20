@@ -24,7 +24,11 @@ const MAPPED_EVENT_TYPES = new Set([
     'ping', 'error'
 ]);
 const MAPPED_CONTENT_BLOCKS = new Set(['text', 'thinking', 'tool_use']);
-const MAPPED_DELTA_TYPES = new Set(['text_delta', 'thinking_delta', 'input_json_delta']);
+// `signature_delta` is expected, not an anomaly: Anthropic delivers the thinking
+// block's signature as its own delta rather than on the block. Warning on it costs
+// a line per thinking block on perfectly healthy turns, which is how a log stops
+// being readable.
+const MAPPED_DELTA_TYPES = new Set(['text_delta', 'thinking_delta', 'input_json_delta', 'signature_delta']);
 
 // Tool-call thinking round-trip cache.
 //
@@ -976,14 +980,39 @@ export function createAnthropicAdapter() {
             let thinkingText = '';
             const toolUseIds = [];
 
+            // What the upstream actually sent. A stream that yields nothing has to
+            // be able to name its own shape — without this the consumer can only
+            // report "produced no content" and the upstream sequence is unrecoverable
+            // (the gap that made issue #8 unanswerable from logs alone).
+            const inv = { events: {}, blockTypes: {}, deltaTypes: {}, textChars: 0, bareJsonLines: 0 };
+            const count = (bucket, key) => { bucket[key] = (bucket[key] ?? 0) + 1; };
+
             try {
                 while (true) {
                     const { done, value } = await readWithDeadline(reader);
-                    if (done) break;
 
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
+                    if (done) {
+                        // Flush the decoder and take the unterminated last line with it.
+                        // Strict SSE discards a pending frame at EOF, but a provider whose
+                        // final data line has no newline would then lose its
+                        // `message_delta` — and with it the finish chunk, which is
+                        // indistinguishable from a stream that carried nothing at all.
+                        // A partial line that does not parse is skipped by the same
+                        // tolerance as any other frame.
+                        buffer += decoder.decode();
+                        if (buffer === '') break;
+                    } else {
+                        buffer += decoder.decode(value, { stream: true });
+                    }
+
+                    let lines;
+                    if (done) {
+                        lines = [buffer];
+                        buffer = '';
+                    } else {
+                        lines = buffer.split('\n');
+                        buffer = lines.pop();
+                    }
 
                     for (const line of lines) {
                         // Standard Anthropic: "data: {...}" (space after colon)
@@ -994,6 +1023,11 @@ export function createAnthropicAdapter() {
                         } else if (line.startsWith('data:')) {
                             data = line.slice(5);
                         } else {
+                            // Blank lines separate frames and `event:` lines are normal
+                            // Anthropic framing. A bare JSON line is neither — it means
+                            // the upstream answered with a JSON body where SSE was
+                            // expected, and every line of it would vanish silently.
+                            if (line.trim().startsWith('{')) inv.bareJsonLines++;
                             continue;
                         }
                         if (data === '[DONE]') continue;
@@ -1007,6 +1041,10 @@ export function createAnthropicAdapter() {
                             logger.warn('Anthropic stream: skipping unparseable SSE frame', { preview: data.slice(0, 160) }, 'AnthropicAdapter');
                             continue;
                         }
+
+                        count(inv.events, event.type);
+                        if (event.content_block?.type) count(inv.blockTypes, event.content_block.type);
+                        if (event.delta?.type) count(inv.deltaTypes, event.delta.type);
 
                         if (event.type === 'error') {
                             logger.error('Anthropic stream emitted error event', null, { error: event.error }, 'AnthropicAdapter');
@@ -1073,6 +1111,7 @@ export function createAnthropicAdapter() {
                         }
                         if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
                             thinkingText += event.delta.thinking || '';
+                            inv.textChars += (event.delta.thinking || '').length;
                             yield {
                                 id: event.message?.id || processId,
                                 object: 'chat.completion.chunk',
@@ -1127,7 +1166,14 @@ export function createAnthropicAdapter() {
                                 }]
                             };
                         }
+                        if (event.type === 'content_block_delta' && event.delta?.type === 'signature_delta') {
+                            // The signature is what the tool-call thinking cache has to
+                            // replay on the next turn. It arrives here, not on the block,
+                            // so without this the cache stores a null signature.
+                            if (event.delta.signature) thinkingSignature = event.delta.signature;
+                        }
                         if (event.type === 'content_block_delta' && event.delta?.text) {
+                            inv.textChars += event.delta.text.length;
                             yield {
                                 id: event.message?.id || processId,
                                 object: 'chat.completion.chunk',
@@ -1152,6 +1198,7 @@ export function createAnthropicAdapter() {
                                 index: event.index,
                                 length: event.content_block.text.length
                             }, 'AnthropicAdapter');
+                            inv.textChars += event.content_block.text.length;
                             yield {
                                 id: event.message?.id || processId,
                                 object: 'chat.completion.chunk',
@@ -1215,6 +1262,26 @@ export function createAnthropicAdapter() {
                             };
                         }
                     }
+
+                    // The final pass carried the unterminated tail; the reader is spent.
+                    if (done) break;
+                }
+
+                // A well-formed Anthropic stream always ends with `message_delta`. If
+                // it is missing, the upstream cut out mid-stream; if nothing carried
+                // usable content, the stream was empty. Either way, say what arrived —
+                // this is the trace the consumer cannot produce for itself.
+                const completed = (inv.events.message_delta ?? 0) > 0;
+                const usable = inv.textChars > 0
+                    || (inv.deltaTypes.thinking_delta ?? 0) > 0
+                    || (inv.blockTypes.tool_use ?? 0) > 0
+                    || (inv.deltaTypes.input_json_delta ?? 0) > 0;
+                if (!completed || !usable) {
+                    logger.warn('Anthropic stream produced nothing usable', {
+                        completed,
+                        usable,
+                        ...inv
+                    }, 'AnthropicAdapter');
                 }
             } finally {
                 reader.releaseLock();
