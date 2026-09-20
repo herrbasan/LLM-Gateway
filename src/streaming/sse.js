@@ -1,6 +1,7 @@
 import { isAbortError } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
 import { normalizeStreamChunk } from '../utils/response-normalizer.js';
+import { logFailure } from '../utils/failure-log.js';
 
 const logger = getLogger();
 
@@ -50,6 +51,12 @@ export class StreamHandler {
     async process(chunkGenerator, contextPayload = null, meta = null) {
         let seenUpstreamUsage = false;
         let hasContent = false;
+        // Frames that arrived before any content. Writing one flushes the SSE
+        // headers and forfeits the HTTP-error path, so they wait here until
+        // content proves the stream is real. A stream that never produces content
+        // therefore reaches the zero-content guard below with headers unsent, and
+        // the client gets a real error instead of a 200 that claims success.
+        const withheld = [];
         // meta: { model, adapter } — identifies the operation in error logs so a
         // hung upstream names its model instead of arriving as an anonymous
         // timeout. Falls back to {} so log lines never carry undefined fields.
@@ -70,6 +77,23 @@ export class StreamHandler {
                 headersSent = true;
             }
             return this.res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        };
+
+        const writeWithBackpressure = async (chunk) => {
+            if (sendChunk(chunk)) return;
+            await new Promise(resolve => {
+                const cleanup = () => {
+                    this.res.off('drain', resolveHandler);
+                    this.res.off('close', resolveHandler);
+                    this.res.off('error', resolveHandler);
+                    resolve();
+                };
+                const resolveHandler = () => cleanup();
+
+                this.res.once('drain', resolveHandler);
+                this.res.once('close', resolveHandler);
+                this.res.once('error', resolveHandler);
+            });
         };
 
         try {
@@ -130,22 +154,20 @@ export class StreamHandler {
                     };
                 }
 
-                const canContinue = sendChunk(chunk);
-                if (!canContinue) {
-                    await new Promise(resolve => {
-                        const cleanup = () => {
-                            this.res.off('drain', resolveHandler);
-                            this.res.off('close', resolveHandler);
-                            this.res.off('error', resolveHandler);
-                            resolve();
-                        };
-                        const resolveHandler = () => cleanup();
-
-                        this.res.once('drain', resolveHandler);
-                        this.res.once('close', resolveHandler);
-                        this.res.once('error', resolveHandler);
-                    });
+                // Nothing worth sending yet — hold the frame. The first content
+                // chunk releases the buffer and flushes headers in order.
+                if (!hasContent) {
+                    withheld.push(chunk);
+                    continue;
                 }
+                if (withheld.length > 0) {
+                    for (const held of withheld) {
+                        await writeWithBackpressure(held);
+                    }
+                    withheld.length = 0;
+                }
+
+                await writeWithBackpressure(chunk);
             }
 
             // Always inject the gateway's context estimate as a final usage chunk
@@ -171,28 +193,27 @@ export class StreamHandler {
             }
 
             // CRITICAL: Copilot's BYOK parser accumulates delta.content across chunks.
-            // If zero content was delivered AND we never flushed SSE headers, the
-            // upstream produced nothing. Re-throw so the caller responds with a
-            // proper HTTP error status + JSON body — which Copilot surfaces clearly.
-            // (If headers were already sent — mid-stream truncation — we can only
-            // emit an in-band error chunk; that path is handled below.)
+            // If zero content was delivered, the upstream produced nothing. Throw so
+            // the caller responds with a proper HTTP error status + JSON body — which
+            // Copilot surfaces clearly. This is the only branch reachable here: the
+            // withheld buffer guarantees headers are still unsent when nothing was
+            // produced, so there is no in-band fallback to fall back to.
             if (!hasContent) {
-                logger.error('Stream produced zero content', null, { ...opMeta, ...contextPayload }, 'StreamHandler');
-                if (!headersSent) {
-                    const err = new Error('Upstream returned no content.');
-                    err.code = 'ZERO_CONTENT';
-                    err.type = 'zero_content_error';
-                    throw err;
-                }
-                // Headers already sent (some non-content chunk went out): emit the
-                // in-band error as a last resort.
-                sendChunk({
-                    error: {
-                        message: 'Upstream returned no content.',
-                        type: 'zero_content_error',
-                        code: 'ZERO_CONTENT'
-                    }
+                logFailure({
+                    logger,
+                    component: 'StreamHandler',
+                    message: 'Stream produced zero content',
+                    meta: { ...opMeta, ...contextPayload }
                 });
+                // Nothing was written, so the response is still mutable and the
+                // caller can answer with a real HTTP error. Withholding the
+                // pre-content frames (see `withheld`) is what keeps this the only
+                // reachable branch: a stream that produced nothing used to flush
+                // headers with its finish chunk and can no longer do so.
+                const err = new Error('Upstream returned no content.');
+                err.code = 'ZERO_CONTENT';
+                err.type = 'zero_content_error';
+                throw err;
             }
 
             // Do not emit gateway-specific named SSE events (e.g. context.status)
@@ -212,7 +233,12 @@ export class StreamHandler {
                 // never silent: leave a trace identifying which stream died.
                 logger.debug(`Stream aborted: ${err.message || 'aborted by client'}`, opMeta, 'StreamHandler');
             } else {
-                logger.error(err.message, null, { ...opMeta, type: err.type, code: err.code }, 'StreamHandler');
+                logFailure({
+                    logger,
+                    component: 'StreamHandler',
+                    message: err.message,
+                    meta: { ...opMeta, type: err.type, code: err.code }
+                });
                 if (!headersSent) {
                     // Never started the SSE stream — re-throw so the caller can
                     // respond with a proper HTTP error status + JSON body. This

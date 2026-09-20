@@ -398,7 +398,7 @@ export class ModelRouter {
             if (Array.isArray(levels) && levels.length > 0) {
                 const mapped = nearestEffortLevel(reasoning_effort, levels);
                 if (mapped !== reasoning_effort) {
-                    logger.info(`[ModelRouter] "${modelId}" effort "${reasoning_effort}" not declared — mapping to "${mapped}" (declared: ${levels.join(', ')})`, { model: modelId }, 'ModelRouter');
+                    logger.debug(`[ModelRouter] "${modelId}" effort "${reasoning_effort}" not declared — mapping to "${mapped}" (declared: ${levels.join(', ')})`, { model: modelId }, 'ModelRouter');
                     reasoning_effort = mapped;
                 }
             } else {
@@ -621,7 +621,7 @@ export class ModelRouter {
         }
 
         if (processedCount > 0) {
-            logger.info('Images processed', { count: processedCount }, 'ModelRouter');
+            logger.debug('Images processed', { count: processedCount }, 'ModelRouter');
         }
 
         return processedMessages;

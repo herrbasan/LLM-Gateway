@@ -1,27 +1,58 @@
 import { expect } from 'chai';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createLogsHandler } from '../src/routes/logs.js';
 import { getLogger, resetLogger } from '../src/utils/logger.js';
 
+// The route reads whatever directory the logger writes to, so the fixture directory
+// is installed as LOG_DIR and the logger is rebuilt to point at it.
+//
+// The entries are written as finished files rather than through the logger: nLogger
+// writes through a stream, and a test that reads back its own output a microsecond
+// later is racing the flush, not testing the route. That race is what made this file
+// fail permanently — and it masked the real defect, that the route resolved its
+// directory from its own module path and ignored LOG_DIR entirely.
+const FIXTURE_DIR = path.join(os.tmpdir(), 'llm-gateway-logs-route-test');
+const SESSION = 'fixture1';
+
+const FIXTURE_LINES = [
+    '[2026-01-01T00:00:00.000Z] [INFO] [System] Test info message {"test":true}',
+    '[2026-01-01T00:00:01.000Z] [WARN] [ModelRouter] Test warn message',
+    '[2026-01-01T00:00:02.000Z] [ERROR] [ChatRoute] Test error message',
+    '[2026-01-01T00:00:03.000Z] [DEBUG] [System] Test debug message',
+    '',
+    '========================================',
+    'Session: ' + SESSION,
+    '========================================'
+];
+
 describe('GET /logs', () => {
-    let logger;
     let handler;
+    let previousLogDir;
 
     beforeEach(() => {
+        previousLogDir = process.env.LOG_DIR;
+        process.env.LOG_DIR = FIXTURE_DIR;
+
         resetLogger();
-        logger = getLogger();
-        // Write all levels — the test verifies the logs route reads INFO/WARN/ERROR
-        // entries, so the logger must not be gated to errors-only.
-        logger.setLevel('debug');
+        fs.rmSync(FIXTURE_DIR, { recursive: true, force: true });
+
+        // Constructed after the reset so it opens its session file inside the fixture
+        // directory — which is what points the route at it.
+        getLogger();
+        fs.writeFileSync(
+            path.join(FIXTURE_DIR, `2026-01-01-00-00-00-gw-${SESSION}.log`),
+            FIXTURE_LINES.join('\n') + '\n'
+        );
+
         handler = createLogsHandler();
-        
-        // Generate some test log entries
-        logger.info('Test info message', { test: true });
-        logger.warn('Test warn message');
-        logger.error('Test error message');
     });
 
     afterEach(() => {
         resetLogger();
+        if (previousLogDir === undefined) delete process.env.LOG_DIR;
+        else process.env.LOG_DIR = previousLogDir;
     });
 
     it('should return logs in correct format', async () => {
@@ -36,26 +67,26 @@ describe('GET /logs', () => {
 
         expect(capturedData).to.have.property('logs');
         expect(capturedData.logs).to.be.an('array');
-        
+
         // Check log entry structure
-        if (capturedData.logs.length > 0) {
-            const entry = capturedData.logs[0];
-            expect(entry).to.have.property('timestamp');
-            expect(entry).to.have.property('level');
-            expect(entry).to.have.property('type');
-            expect(entry).to.have.property('message');
-            expect(entry).to.have.property('sessionId');
-            
-            // Verify timestamp format (ISO 8601)
-            expect(entry.timestamp).to.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-            
-            // Verify level is valid
-            expect(['INFO', 'WARN', 'ERROR', 'DEBUG']).to.include(entry.level);
-            
-            // Verify type is a string (should be the event type like 'System', 'ModelRouter', etc.)
-            expect(entry.type).to.be.a('string');
-            expect(entry.type.length).to.be.greaterThan(0);
-        }
+        const entry = capturedData.logs.find(e => e.message === 'Test info message');
+        expect(entry, 'fixture entry survives parsing').to.exist;
+        expect(entry).to.have.property('timestamp');
+        expect(entry).to.have.property('level');
+        expect(entry).to.have.property('type');
+        expect(entry).to.have.property('message');
+        expect(entry).to.have.property('sessionId');
+
+        // Verify timestamp format (ISO 8601)
+        expect(entry.timestamp).to.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+        // Verify level is valid
+        expect(['INFO', 'WARN', 'ERROR', 'DEBUG']).to.include(entry.level);
+
+        // Verify the trailing JSON payload is split off the message
+        expect(entry.type).to.equal('System');
+        expect(entry.sessionId).to.equal(SESSION);
+        expect(entry.payload).to.deep.equal({ test: true });
     });
 
     it('should respect limit parameter', async () => {
@@ -117,8 +148,7 @@ describe('GET /logs', () => {
     });
 
     it('should filter by sessionId', async () => {
-        const sessionInfo = logger.getSessionInfo();
-        const req = { query: { sessionId: sessionInfo.sessionId } };
+        const req = { query: { sessionId: SESSION } };
         let capturedData;
         const res = {
             json: (data) => { capturedData = data; }
@@ -127,9 +157,9 @@ describe('GET /logs', () => {
 
         await handler(req, res, next);
 
-        // All returned entries should have the specified sessionId
+        expect(capturedData.logs.length).to.be.greaterThan(0);
         capturedData.logs.forEach(entry => {
-            expect(entry.sessionId).to.equal(sessionInfo.sessionId);
+            expect(entry.sessionId).to.equal(SESSION);
         });
     });
 
@@ -165,6 +195,9 @@ describe('GET /logs', () => {
         capturedData.logs.forEach(entry => {
             expect(entry.message).to.not.match(/^=/);
         });
+        // The fixture's header block is present in the file but must not come back.
+        expect(capturedData.logs.some(e => e.message.includes('Session:'))).to.be.false;
+        expect(capturedData.logs.length).to.be.greaterThan(0);
     });
 
     it('should handle empty logs directory gracefully', async () => {
@@ -211,11 +244,11 @@ describe('GET /logs', () => {
 
         await handler(req, res, next);
 
-        // Check that entries have a valid type (default should be 'System' for logs without explicit type)
-        // The logs created in beforeEach with default type should have 'System'
+        // Check that entries have a valid type. A line written without an explicit
+        // type is tagged 'System' by the logger, and must survive parsing.
         const infoEntry = capturedData.logs.find(e => e.message === 'Test info message');
         expect(infoEntry).to.exist;
         expect(infoEntry.type).to.be.a('string');
-        expect(infoEntry.type.length).to.be.greaterThan(0);
+        expect(infoEntry.type).to.equal('System');
     });
 });

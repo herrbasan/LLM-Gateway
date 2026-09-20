@@ -445,6 +445,11 @@ GET /logs?limit=50
 | `sessionId` | Filter by session ID from log filename | All sessions |
 | `limit` | Maximum entries to return | 100 |
 
+Reads the directory the logger writes to, so `LOG_DIR` is honoured — the two cannot
+drift apart. Only session files (`*-gw-<sessionId>.log`) are parsed; the main log is
+ignored. The response is a snapshot, so lines written after the read are simply not
+in it.
+
 **Response:**
 ```json
 {
@@ -465,21 +470,75 @@ GET /logs?limit=50
 
 ### GET|POST /logs/level
 
-Runtime log-level control (localhost-only). The gateway runs quiet by default (errors only).
+Runtime log-level control (localhost-only). The gateway runs quiet by default — warnings and errors only.
 
 ```bash
 GET /logs/level
-# → { "level": "error", "levels": ["debug", "info", "warn", "error"] }
+# → { "level": "warn", "levels": ["debug", "info", "warn", "error"] }
 
 POST /logs/level
 Content-Type: application/json
 { "level": "debug" }
-# → { "level": "debug", "previous": "error" }
+# → { "level": "debug", "previous": "warn" }
 ```
 
 - `GET` returns the current level and the valid levels.
 - `POST` sets the level; returns the new and previous values.
 - Invalid levels → `400`. Non-localhost callers → `403`.
+- `LOG_LEVEL` overrides the startup default (allowed values are the four level names).
+
+---
+
+## Logging
+
+A log file exists to answer one question: **something is broken — for whom, since when.** Everything below serves that, and anything that does not is noise in a file someone reads under pressure.
+
+### Levels
+
+| Level | What belongs there | Frequency |
+|-------|--------------------|-----------|
+| `debug` | Per-request trace: stream start/end, per-request parameter mapping, background sweeps. Reconstructs a single request when you are chasing it. | Every request |
+| `info` | Lifecycle and state changes: startup, config (re)load, cache pruning, admin actions, log-level changes. | Once per run or per event |
+| `warn` | Something was tolerated, degraded, or looks wrong and the request survived: repaired history, dropped data, an auth rejection, a fallback in use. | Only when it happens |
+| `error` | A request or the service failed. | Only when it happens |
+
+Default is `warn`. A normal log file therefore contains its header and nothing else until something is wrong — which makes everything in it worth reading. Raise it with `POST /logs/level` when investigating; `info` shows lifecycle, `debug` adds per-request trace. No restart is needed.
+
+### Failure lines
+
+Every failure carries two things beyond the message: **who it happened to** and **whether it has happened before**.
+
+```json
+{
+  "model": "deepseek-flash-chat",
+  "adapter": "anthropic",
+  "type": "invalid_request_error",
+  "code": "UPSTREAM_HTTP_400",
+  "client": { "ip": "192.168.0.42", "userAgent": "llm-gateway-copilot/0.3.0", "sessionId": "833ce07c" },
+  "failure": { "fingerprint": "StreamHandler|invalid_request_error|UPSTREAM_HTTP_400|deepseek-flash-chat|anthropic", "count": 7, "firstSeenAt": "2026-09-19T06:47:47.633Z", "distinctClients": 1 }
+}
+```
+
+- `count` and `firstSeenAt` turn a wall of identical lines into one incident: seven 400s over thirty minutes reads as *one* stuck client, retrying, since 06:47.
+- `distinctClients` separates "one chat is stuck" from "this model is broken for everyone".
+- Nothing is suppressed. Every occurrence is written, because the individual lines are the evidence; the counters are context on them.
+- Counting groups on component + type + code + model + adapter, never on the message (upstream text varies between retries) and never on the client.
+- Counters are per-process; a restart starts counting again.
+
+Request failures are logged through a single helper (`src/utils/failure-log.js`) from the global error handler, the SSE stream handler, and the async ticket path. Internal faults (a cache write that fails, a subscriber that throws) stay plain `logger.error` lines — they have no client and no incident semantics.
+
+### Client identity
+
+Attribution comes from what clients send:
+
+| Source | Header | Notes |
+|--------|--------|-------|
+| Always | (remote address, `User-Agent`) | Truncated to 120 chars |
+| Optional | `X-Client-Name` | e.g. `llm-gateway-copilot`, `chat-app` |
+| Optional | `X-Client-Version` | e.g. `0.3.0` |
+| Optional | `X-Session-Id` | The client's conversation/session id |
+
+None are required. Without the naming headers two windows of the same client on one machine are indistinguishable — which is why clients should send them, and why `distinctClients` is only as precise as the identity it is given.
 
 ---
 
@@ -1003,6 +1062,104 @@ POST /v1/chat/completions
 | 502 | Provider unavailable |
 | 503 | Circuit breaker open |
 | 504 | Timeout |
+
+### Error Envelope
+
+A failure is returned as a JSON body. If SSE headers were already flushed, the
+same object arrives as an in-band `error` chunk instead:
+
+```json
+{
+  "error": {
+    "message": "HTTP Error 429: Too Many Requests: ...",
+    "type": "rate_limit_error",
+    "code": "RATE_LIMIT",
+    "retryAfter": 1789800000000
+  }
+}
+```
+
+| Field | Source |
+|-------|--------|
+| `message` | Verbatim upstream error text (status + body) |
+| `type` | Upstream `error.type` for 4xx; `rate_limit_error` for 429; `upstream_error` for 5xx; `internal_error` if the gateway itself failed |
+| `code` | `RATE_LIMIT`, `UPSTREAM_HTTP_<status>`, `MODEL_UNAVAILABLE`, `INTERNAL_ERROR` |
+| `retryAfter` | Unix ms from the upstream `Retry-After` header (present on 429s) |
+
+### Stream Failures Before Content
+
+SSE headers are not flushed up front. Chunks that arrive before any content — a
+finish marker, a usage-only chunk — are held back until content proves the stream is
+real. A stream that never produces content therefore never starts the SSE response,
+and the failure arrives as an ordinary HTTP error with a JSON body:
+
+```
+HTTP/1.1 502 Bad Gateway
+{"error":{"message":"Upstream returned no content.","type":"zero_content_error","code":"ZERO_CONTENT"}}
+```
+
+This is deliberate, because the in-band alternative is invisible to OpenAI-spec
+clients: an `error` chunk carries no `choices`, so a consumer reading `choices[0]`
+sees only a stream that ended. Worse, the finish chunk that preceded it reported
+`finish_reason: "stop"` — a normal completion — so the client cannot distinguish an
+empty answer from a failure. An upstream that produces no content has failed, and
+the gateway logs `Stream produced zero content` at `error` level either way.
+
+Once content has been delivered the response is committed: a failure after that
+point is reported in-band, as the error chunk above.
+
+### Malformed Tool-Call History
+
+Anthropic-protocol upstreams reject structurally invalid histories — and because the
+gateway is stateless, a client resends the same history on every turn, so one bad
+turn kills the session until the client's own history changes.
+
+The `anthropic` adapter repairs the outbound history before dispatch. The rules it
+enforces were measured, not assumed (`scripts/probe-history-shapes.mjs` sends each
+shape straight to the configured endpoints; DeepSeek and Kimi, 2026-09-19):
+
+| Shape | DeepSeek | Kimi |
+|-------|----------|------|
+| consecutive same-role messages | accepted | accepted |
+| history starting with an assistant turn | accepted | accepted |
+| empty content array | **rejected** | accepted |
+| empty text block | accepted | **rejected** |
+| duplicate `tool_use` id | **rejected** | **rejected** |
+| `tool_result` with no matching `tool_use` | **rejected** | **rejected** |
+| `tool_use` whose result is missing from the immediately next message | **rejected** | **rejected** |
+
+So the pass drops empty text blocks, makes tool ids unique (a repeat inside one turn
+is dropped; an id reused from an earlier turn is re-issued with that pair's result
+rewritten), pairs calls with the results in the message immediately after them —
+dropping either side when it cannot pair — and drops any message left empty, since
+neither filler is legal on both providers (`[]` breaks DeepSeek, an empty text block
+breaks Kimi). Dropping messages is only safe because neither provider enforces role
+alternation.
+
+One `WARN` on the `AnthropicAdapter` logger names everything that changed. A request
+whose messages are all empty throws `EMPTY_HISTORY` (400) — that one is the caller's
+input, not a history to repair.
+
+Verify end-to-end with `node scripts/verify-history-repair-e2e.mjs [modelId]`.
+
+### Context-Window Overshoot
+
+A prompt that fills the window plus a large output budget is rejected as a whole:
+
+> maximum context length is 1048576 tokens. However, you requested 1048626 tokens
+> (664626 in the messages, 384000 in the completion)
+
+A stateless client resends that identical request on every retry, so a 50-token
+overshoot kills the session as surely as a malformed history.
+
+The `anthropic` adapter retries it once with `max_tokens` set to whatever the window
+has left. No token estimate is involved — the rejection reports both numbers the
+upstream used — and a `WARN` records the original and reduced budgets. A thinking
+budget that would then exceed `max_tokens` is lowered with it. Only this rejection is
+retried, and only once; if the prompt alone fills the window there is nothing to give
+and the original error stands.
+
+Verify end-to-end with `node scripts/verify-budget-retry-e2e.mjs [modelId]`.
 
 ---
 

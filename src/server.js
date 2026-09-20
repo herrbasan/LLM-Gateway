@@ -16,6 +16,8 @@ import { ModelRouter } from './core/model-router.js';
 import { TicketRegistry } from './core/ticket-registry.js';
 import { getLogger } from './utils/logger.js';
 import { sanitizeForLogging } from './utils/safe-logger.js';
+import { describeClient } from './utils/client-identity.js';
+import { logFailure } from './utils/failure-log.js';
 
 const logger = getLogger();
 
@@ -201,17 +203,33 @@ export function createServer(config) {
   // Global error handler
   app.use((err, req, res, next) => {
     const isExpectedError = err.status && err.status >= 400 && err.status < 500;
-    
+    // Name the client on every failure line: without it an incident arrives
+    // anonymous and the first question — which chat is broken? — has no answer.
+    const client = describeClient(req);
+
     if (isExpectedError) {
-      logger.warn(`[${err.status}] ${err.message || 'Client error'}`, {}, 'Server');
+      // A rejected request is the client's problem, not the gateway's — warn, with
+      // the client named so a stuck client is identifiable, and counted so a repeat
+      // reads as one incident rather than a wall of identical lines.
+      logFailure({
+        logger,
+        component: 'Server',
+        level: 'warn',
+        message: `[${err.status}] ${err.message || 'Client error'}`,
+        meta: { status: err.status, type: err.type, code: err.code, client }
+      });
     } else {
       // Use safe logging to prevent binary data from hitting logs
-      const safeMeta = sanitizeForLogging({ 
+      const safeMeta = sanitizeForLogging({
         stack: err.stack,
-        status: err.status,
         code: err.code
       });
-      logger.error(`Unhandled server error: ${err.message}`, null, safeMeta, 'Server');
+      logFailure({
+        logger,
+        component: 'Server',
+        message: `Unhandled server error: ${err.message}`,
+        meta: { ...safeMeta, status: err.status, type: err.type, client }
+      });
     }
     
     if (res.headersSent) {

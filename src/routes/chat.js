@@ -2,6 +2,8 @@ import { StreamHandler } from '../streaming/sse.js';
 import { getLogger } from '../utils/logger.js';
 import { isAbortError } from '../utils/http.js';
 import { normalizeResponse } from '../utils/response-normalizer.js';
+import { describeClient } from '../utils/client-identity.js';
+import { logFailure } from '../utils/failure-log.js';
 
 const logger = getLogger();
 
@@ -42,6 +44,9 @@ export function createChatHandler(router, ticketRegistry) {
             const isAsync = String(req.headers['x-async'] || '').toLowerCase() === 'true';
             const sessionId = req.headers['x-session-id'] || null;
             const isStream = req.body.stream === true;
+            // Who this request belongs to. Carried into every failure line for the
+            // request, so an incident names the client instead of arriving anonymous.
+            const client = describeClient(req);
             const abortController = !isAsync ? bindRequestAbortController(req, res) : null;
             const requestBody = abortController
                 ? { ...req.body, signal: abortController.signal, sessionId }
@@ -60,7 +65,7 @@ export function createChatHandler(router, ticketRegistry) {
 
                 let result;
                 const _streamStart = Date.now();
-                logger.info('Stream start', { model: req.body?.model, msgCount: req.body?.messages?.length, streamId: _streamStart }, 'ChatRoute');
+                logger.debug('Stream start', { model: req.body?.model, msgCount: req.body?.messages?.length, streamId: _streamStart }, 'ChatRoute');
                 try {
                     result = await router.routeChatCompletion(requestBody);
 
@@ -68,9 +73,9 @@ export function createChatHandler(router, ticketRegistry) {
                         await streamHandler.process(
                             result.generator,
                             result.context,
-                            result.meta
+                            { ...result.meta, client }
                         );
-                        logger.info('Stream end', { model: req.body?.model, durationMs: Date.now() - _streamStart, streamId: _streamStart }, 'ChatRoute');
+                        logger.debug('Stream end', { model: req.body?.model, durationMs: Date.now() - _streamStart, streamId: _streamStart }, 'ChatRoute');
                     } else {
                         const err = new Error('[ChatRoute] Invalid streaming response: expected { stream: true, generator }');
                         err.status = 500;
@@ -134,6 +139,21 @@ export function createChatHandler(router, ticketRegistry) {
                             ticketRegistry.updateTicketStatus(ticket.id, 'complete', { result });
                         }
                     } catch (error) {
+                        // An async ticket has no SSE handler to log for it, so the
+                        // failure has to be recorded here or it leaves no trace at all
+                        // — the client only ever sees a ticket that says "failed".
+                        logFailure({
+                            logger,
+                            component: 'ChatRoute',
+                            message: error.message,
+                            meta: {
+                                model: req.body?.model,
+                                type: error.type,
+                                code: error.code,
+                                ticket: ticket.id,
+                                client
+                            }
+                        });
                         ticketRegistry.updateTicketStatus(ticket.id, 'failed', { error });
                     }
                 });

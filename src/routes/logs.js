@@ -1,15 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getLogger } from '../utils/logger.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'];
 
 /**
- * Runtime log-level control. The gateway runs quiet by default (errors only);
+ * Runtime log-level control. The gateway runs quiet by default (warn + error);
  * flip to 'debug' while actively working on it, back to 'error' when done.
  * Localhost-only — this is an admin lever, not a public knob.
  *
@@ -106,11 +102,17 @@ function parseLogLine(line, sessionId) {
 }
 
 /**
- * Read and parse all log files from the logs directory
+ * Read and parse all log files from the directory the logger actually writes to.
+ *
+ * This used to resolve `../../logs` from the module's own location. That agreed
+ * with the logger's default by coincidence, and silently ignored `LOG_DIR` — so
+ * anything that redirected the logs (a test, a deployment) got a route reporting
+ * some other directory's files. The logger is the authority on where logs live.
+ *
  * @returns {Promise<Array>} Array of parsed log entries
  */
 async function readAllLogs() {
-    const logsDir = path.resolve(__dirname, '../../logs');
+    const logsDir = path.dirname(getLogger().getSessionInfo().logFile);
     const entries = [];
 
     try {

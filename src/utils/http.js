@@ -71,6 +71,19 @@ function parseRetryAfter(header) {
     return Number.isFinite(date) ? date : null;
 }
 
+// Upstreams name the reason for a rejected request in `error.type`
+// (e.g. "invalid_request_error" from Anthropic, DeepSeek, OpenAI). That name is
+// more precise than anything the gateway can infer from the status code, so it is
+// carried through to the client verbatim. Returns null for non-JSON bodies.
+function upstreamErrorType(errorBody) {
+    try {
+        const type = JSON.parse(errorBody)?.error?.type;
+        return typeof type === 'string' && type.length > 0 ? type : null;
+    } catch {
+        return null;
+    }
+}
+
 export function isAbortError(error) {
     return error?.name === 'AbortError'
         || error?.code === 'ABORT_ERR'
@@ -170,12 +183,14 @@ export async function request(url, options = {}) {
                     throw Object.assign(new Error(`Retriable HTTP status ${response.status}`), { status: response.status, isRetriable: true });
                 }
                 
+                let errorBody = '';
                 let errorText = response.statusText;
                 try {
-                    const errBody = await response.text();
-                    errorText = `${errorText}: ${errBody}`;
+                    errorBody = await response.text();
+                    errorText = `${errorText}: ${errorBody}`;
                 } catch (e) {
-                    // Ignore text parse errors gracefully
+                    // Unreadable body: the status text is then the only
+                    // description of the failure — carry on with it.
                 }
 
                 const httpErr = Object.assign(new Error(`HTTP Error ${response.status}: ${errorText}`), {
@@ -188,6 +203,12 @@ export async function request(url, options = {}) {
                     if (retryAfter != null) httpErr.retryAfter = retryAfter;
                 } else if (response.status >= 500) {
                     httpErr.type = 'upstream_error';
+                    httpErr.code = `UPSTREAM_HTTP_${response.status}`;
+                } else {
+                    // 4xx: the request is the problem, not the upstream's
+                    // availability. Labelling it correctly is what lets a client
+                    // tell "this history is malformed" apart from "retry later".
+                    httpErr.type = upstreamErrorType(errorBody) || 'invalid_request_error';
                     httpErr.code = `UPSTREAM_HTTP_${response.status}`;
                 }
                 throw httpErr;

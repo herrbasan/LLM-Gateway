@@ -12,6 +12,20 @@ import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('AnthropicAdapter');
 
+// The streaming vocabulary this adapter maps. Anything outside these sets is
+// dropped, and a drop must never be silent: a stream whose only content block is
+// an unmapped type (e.g. `redacted_thinking`) yields nothing but the finish
+// chunk, which is indistinguishable from a clean empty answer. That silence is
+// what made the kimi-k3 "Stream produced zero content" incident of 2026-09-20
+// (issue #8) undiagnosable — the raw frames were never recorded anywhere.
+const MAPPED_EVENT_TYPES = new Set([
+    'message_start', 'message_delta', 'message_stop',
+    'content_block_start', 'content_block_delta', 'content_block_stop',
+    'ping', 'error'
+]);
+const MAPPED_CONTENT_BLOCKS = new Set(['text', 'thinking', 'tool_use']);
+const MAPPED_DELTA_TYPES = new Set(['text_delta', 'thinking_delta', 'input_json_delta']);
+
 // Tool-call thinking round-trip cache.
 //
 // DeepSeek (Anthropic-protocol) requires the prior assistant turn's `thinking`
@@ -87,6 +101,305 @@ async function pruneThinkingCache() {
     }
 }
 
+// The outbound history must satisfy the upstream's structural rules. A stateless
+// client resends its whole history on every turn, so a shape the upstream rejects
+// fails on every retry and the session is dead until the client's own history
+// changes. The gateway is the only party that can repair it, and repairing it is
+// the difference between one bad turn and a lost conversation.
+//
+// The rules below were MEASURED, not assumed — scripts/probe-history-shapes.mjs
+// sends each shape straight to the configured endpoints. Against DeepSeek's and
+// Kimi's Anthropic endpoints (2026-09-19):
+//
+//   consecutive same-role messages .......... accepted by both (no alternation rule)
+//   history starting with an assistant turn . accepted by both
+//   empty content array ..................... DeepSeek 400, Kimi 200
+//   empty text block ........................ DeepSeek 200, Kimi 400
+//   duplicate tool_use id ................... 400 on both
+//   tool_result with no matching tool_use ... 400 on both
+//   tool_use whose result is missing from the
+//     immediately following message (even last) 400 on both
+//
+// Two consequences shape this pass. Neither filler for an emptied message is legal
+// on both providers ([] breaks DeepSeek, an empty text block breaks Kimi), so an
+// emptied message is dropped — safe only because neither provider enforces role
+// alternation. And tool pairing is mandatory in both directions, so every
+// assistant turn is reconciled against the message immediately after it.
+//
+// Nothing is repaired silently: one WARN names everything that changed.
+export function enforceHistoryInvariants(formatted) {
+    const report = {
+        emptyTextBlocks: 0,
+        duplicateCallIds: [],
+        reusedCallIds: [],
+        idlessCallIds: 0,
+        unansweredCalls: [],
+        orphanResults: [],
+        droppedMessages: 0
+    };
+    // What actually left the history. The WARN above reports counts, which is what
+    // an incident needs; the blocks themselves are reported at debug, because a
+    // repair changes what the model sees and that change has to be auditable
+    // afterwards rather than taken on faith. Bounded — a broken history must not be
+    // able to grow a log line without limit.
+    const DROPPED_TRAIL_LIMIT = 20;
+    const droppedTrail = [];
+    const noteDropped = (reason, block) => {
+        if (droppedTrail.length < DROPPED_TRAIL_LIMIT) droppedTrail.push({ reason, block });
+    };
+    const seenIds = new Set();
+
+    const freshId = (base) => {
+        let n = 2;
+        let candidate = `${base}~gw${n}`;
+        while (seenIds.has(candidate)) {
+            n++;
+            candidate = `${base}~gw${n}`;
+        }
+        return candidate;
+    };
+
+    // An empty text block is a 400 on Kimi, so it is never sent. Dropping it here
+    // (rather than substituting something) is what keeps a message that has
+    // nothing else in it empty, and empty messages are dropped below.
+    const cleanBlocks = (content) => content.filter((block) => {
+        if (block?.type === 'text' && (block.text ?? '') === '') {
+            report.emptyTextBlocks++;
+            noteDropped('emptyTextBlock', block);
+            return false;
+        }
+        return true;
+    });
+
+    // Reconcile one assistant turn with the message immediately after it: ids are
+    // made unique, then calls and results are paired, dropping what cannot pair.
+    const reconcilePair = (blocks, nextBlocks) => {
+        const remap = new Map();
+        const inMessage = new Set();
+        const kept = [];
+
+        for (const block of blocks) {
+            if (block?.type !== 'tool_use') {
+                kept.push(block);
+                continue;
+            }
+            if (typeof block.id !== 'string' || block.id.length === 0) {
+                // No identity: nothing can pair with it, and inventing one would
+                // not create the pairing. Sent as the client wrote it.
+                report.idlessCallIds++;
+                kept.push(block);
+                continue;
+            }
+            if (inMessage.has(block.id)) {
+                // Second time in the same turn. The result that follows can only
+                // pair with one call, so the repeat is not representable.
+                report.duplicateCallIds.push(block.id);
+                noteDropped('duplicateCall', block);
+                continue;
+            }
+            inMessage.add(block.id);
+
+            if (seenIds.has(block.id)) {
+                // The same id in an earlier turn: this is a different call wearing
+                // a used id, so it is re-issued. Only this pair's results are
+                // rewritten — a result belongs to the message next to its call.
+                const newId = freshId(block.id);
+                seenIds.add(newId);
+                inMessage.add(newId);
+                remap.set(block.id, newId);
+                report.reusedCallIds.push({ from: block.id, to: newId });
+                kept.push({ ...block, id: newId });
+                continue;
+            }
+
+            seenIds.add(block.id);
+            kept.push(block);
+        }
+
+        if (!nextBlocks) {
+            const finalBlocks = kept.filter((block) => {
+                if (block?.type !== 'tool_use') return true;
+                report.unansweredCalls.push(block.id);
+                noteDropped('unansweredCall', block);
+                return false;
+            });
+            return { blocks: finalBlocks, nextBlocks: null };
+        }
+
+        const results = nextBlocks.map((block) => {
+            if (block?.type !== 'tool_result') return block;
+            if (typeof block.tool_use_id === 'string' && remap.has(block.tool_use_id)) {
+                return { ...block, tool_use_id: remap.get(block.tool_use_id) };
+            }
+            return block;
+        });
+
+        const paired = new Set();
+        const callIds = kept.filter(b => b?.type === 'tool_use').map(b => b.id);
+        const resultIds = new Set(results.filter(b => b?.type === 'tool_result').map(b => b.tool_use_id));
+        for (const id of callIds) {
+            if (resultIds.has(id)) paired.add(id);
+        }
+
+        const finalBlocks = kept.filter((block) => {
+            if (block?.type !== 'tool_use') return true;
+            if (paired.has(block.id)) return true;
+            report.unansweredCalls.push(block.id);
+            noteDropped('unansweredCall', block);
+            return false;
+        });
+
+        const finalResults = results.filter((block) => {
+            if (block?.type !== 'tool_result') return true;
+            if (block.tool_use_id != null && paired.has(block.tool_use_id)) return true;
+            // A result must sit in the message immediately after its call, so an
+            // unpaired one here can no longer be attached to anything.
+            report.orphanResults.push(block.tool_use_id ?? null);
+            noteDropped('orphanResult', block);
+            return false;
+        });
+
+        return { blocks: finalBlocks, nextBlocks: finalResults };
+    };
+
+    const out = [];
+    for (let i = 0; i < formatted.length; i++) {
+        const msg = formatted[i];
+        if (!Array.isArray(msg.content)) {
+            out.push(msg);
+            continue;
+        }
+
+        if (msg.role !== 'assistant') {
+            // Not consumed as the second half of a pair, so any tool_result here
+            // has no call immediately before it — it cannot be attached to one.
+            const kept = cleanBlocks(msg.content).filter((block) => {
+                if (block?.type !== 'tool_result') return true;
+                report.orphanResults.push(block.tool_use_id ?? null);
+                noteDropped('orphanResult', block);
+                return false;
+            });
+            if (kept.length > 0) out.push({ ...msg, content: kept });
+            else report.droppedMessages++;
+            continue;
+        }
+
+        const next = formatted[i + 1];
+        const nextHasResults = next?.role !== 'assistant'
+            && Array.isArray(next?.content)
+            && next.content.some(block => block?.type === 'tool_result');
+        const nextBlocks = nextHasResults ? cleanBlocks(next.content) : null;
+
+        const reconciled = reconcilePair(cleanBlocks(msg.content), nextBlocks);
+
+        if (reconciled.blocks.length > 0) out.push({ ...msg, content: reconciled.blocks });
+        else report.droppedMessages++;
+
+        if (nextHasResults) {
+            if (reconciled.nextBlocks.length > 0) out.push({ ...next, content: reconciled.nextBlocks });
+            else report.droppedMessages++;
+            i++;
+        }
+    }
+
+    if (out.length === 0) {
+        // Every message was empty. There is no request to make, and the caller
+        // can see why — this is the one repair failure that is the caller's input.
+        const err = new Error('[AnthropicAdapter] Request contained no sendable messages');
+        err.status = 400;
+        err.type = 'invalid_request_error';
+        err.code = 'EMPTY_HISTORY';
+        throw err;
+    }
+
+    const { emptyTextBlocks, duplicateCallIds, reusedCallIds, idlessCallIds, unansweredCalls, orphanResults, droppedMessages } = report;
+    const changed = emptyTextBlocks > 0 || duplicateCallIds.length > 0 || reusedCallIds.length > 0
+        || idlessCallIds > 0 || unansweredCalls.length > 0 || orphanResults.length > 0;
+    if (changed) {
+        logger.warn('Repaired outbound history to satisfy upstream rules', {
+            emptyTextBlocks,
+            duplicateCallIds,
+            reusedCallIds,
+            toolUseWithoutId: idlessCallIds,
+            unansweredCalls,
+            orphanResults,
+            droppedMessages,
+            messageCount: formatted.length,
+            sentMessages: out.length
+        }, 'AnthropicAdapter');
+        logger.debug('Dropped from outbound history', {
+            dropped: droppedTrail,
+            trailTruncated: report.emptyTextBlocks + report.duplicateCallIds.length
+                + report.unansweredCalls.length + report.orphanResults.length > droppedTrail.length
+        }, 'AnthropicAdapter');
+    }
+
+    return out;
+}
+
+// A prompt that fills the window plus a large output budget is rejected as a whole:
+// "This model's maximum context length is 1048576 tokens. However, you requested
+// 1048626 tokens (664626 in the messages, 384000 in the completion)." The request
+// overshoots by 50 tokens and a stateless client resends it unchanged forever, so
+// the session dies on an arithmetic detail rather than on anything the user did.
+//
+// The rejection names both numbers the upstream used, so no token estimate is
+// involved: the output budget becomes whatever the window has left. Headroom
+// absorbs any difference between the upstream's count and the one it reports.
+const OUTPUT_BUDGET_HEADROOM = 64;
+
+export function parseContextOverflow(message) {
+    if (typeof message !== 'string') return null;
+    const match = message.match(
+        /maximum context length is (\d+) tokens[\s\S]*?\((\d+) in the messages,\s*(\d+) in the completion\)/i
+    );
+    if (!match) return null;
+    return {
+        contextWindow: Number(match[1]),
+        promptTokens: Number(match[2]),
+        requestedCompletion: Number(match[3])
+    };
+}
+
+/**
+ * Send a Messages request, and if the upstream rejects it for exceeding the context
+ * window, shrink the output budget to what fits and send it once more.
+ *
+ * `send` is injected so the retry can be tested without a live upstream.
+ * Only a context-length rejection is retried, and only once.
+ */
+export async function sendWithBudgetRetry(send, body) {
+    try {
+        return await send(body);
+    } catch (error) {
+        const overflow = parseContextOverflow(error?.message);
+        if (!overflow) throw error;
+
+        const remaining = overflow.contextWindow - overflow.promptTokens - OUTPUT_BUDGET_HEADROOM;
+        if (remaining < 1) {
+            // The prompt alone fills the window: there is no budget to give and
+            // nothing to retry with. The original error is the honest answer.
+            throw error;
+        }
+
+        body.max_tokens = remaining;
+        // Anthropic requires the thinking budget to stay under max_tokens, so a
+        // shrunk budget would otherwise be rejected on a different rule.
+        if (typeof body.thinking?.budget_tokens === 'number' && body.thinking.budget_tokens >= remaining) {
+            body.thinking.budget_tokens = Math.max(1, remaining - 1);
+        }
+
+        logger.warn('Upstream rejected the request for exceeding its context window — retrying with a reduced output budget', {
+            contextWindow: overflow.contextWindow,
+            promptTokens: overflow.promptTokens,
+            requestedCompletion: overflow.requestedCompletion,
+            retryMaxTokens: body.max_tokens
+        }, 'AnthropicAdapter');
+
+        return send(body);
+    }
+}
+
 export function createAnthropicAdapter() {
     pruneThinkingCache().catch(() => {});
     function parseArguments(args) {
@@ -122,8 +435,20 @@ export function createAnthropicAdapter() {
             const prev = result[result.length - 1];
 
             if (prev?.role === 'assistant' && msg.role === 'assistant') {
-                if (msg.tool_calls && !prev.tool_calls) {
-                    prev.tool_calls = msg.tool_calls;
+                if (msg.tool_calls) {
+                    // Two assistant turns in a row is a client-side artifact (a
+                    // retry, a variant, or a split turn). Keep every call: the
+                    // tool results that follow reference them by id, and dropping
+                    // any orphans a result downstream. Repeated ids are repaired
+                    // in enforceHistoryInvariants below.
+                    const merged = [...(prev.tool_calls || [])];
+                    const seenIds = new Set(merged.map(tc => tc.id));
+                    for (const tc of msg.tool_calls) {
+                        if (seenIds.has(tc.id)) continue;
+                        seenIds.add(tc.id);
+                        merged.push(tc);
+                    }
+                    prev.tool_calls = merged;
                 }
                 if (msg.reasoning_content && !prev.reasoning_content) {
                     prev.reasoning_content = msg.reasoning_content;
@@ -288,10 +613,14 @@ export function createAnthropicAdapter() {
             
             result.push({
                 role: m.role === 'assistant' ? 'assistant' : 'user',
-                content: content.length > 0 ? content : [{ type: 'text', text: '' }]
+                // Left possibly empty: an emptied message is dropped by
+                // enforceHistoryInvariants. Substituting an empty text block here
+                // would be a 400 on Kimi, and [] a 400 on DeepSeek.
+                content
             });
         }
-        return result;
+
+        return enforceHistoryInvariants(result);
     }
 
     function buildThinkingConfig(maxTokens, capabilities) {
@@ -534,12 +863,15 @@ export function createAnthropicAdapter() {
                 }
             }
 
-            const res = await httpRequest(`${endpoint}/v1/messages`, {
-                method: 'POST',
-                headers: buildHeaders(apiKey, capabilities),
-                signal: request.signal,
-                body: JSON.stringify(body)
-            });
+            const res = await sendWithBudgetRetry(
+                (payload) => httpRequest(`${endpoint}/v1/messages`, {
+                    method: 'POST',
+                    headers: buildHeaders(apiKey, capabilities),
+                    signal: request.signal,
+                    body: JSON.stringify(payload)
+                }),
+                body
+            );
 
             const data = await res.json();
 
@@ -616,12 +948,15 @@ export function createAnthropicAdapter() {
                 }
             }
 
-            const res = await httpRequest(`${endpoint}/v1/messages`, {
-                method: 'POST',
-                headers: buildHeaders(apiKey, capabilities),
-                signal: request.signal,
-                body: JSON.stringify(body)
-            });
+            const res = await sendWithBudgetRetry(
+                (payload) => httpRequest(`${endpoint}/v1/messages`, {
+                    method: 'POST',
+                    headers: buildHeaders(apiKey, capabilities),
+                    signal: request.signal,
+                    body: JSON.stringify(payload)
+                }),
+                body
+            );
 
             if (!res.ok) {
                 const errorStr = await res.text();
@@ -677,6 +1012,35 @@ export function createAnthropicAdapter() {
                             logger.error('Anthropic stream emitted error event', null, { error: event.error }, 'AnthropicAdapter');
                             throw new Error(`Upstream API Stream Error: ${event.error?.message || JSON.stringify(event.error)}`);
                         }
+
+                        // Tolerance is allowed at this boundary (the upstream is not
+                        // ours to fix), but it leaves a trace. Without these three
+                        // warnings an unmapped frame is simply content that vanished.
+                        if (!MAPPED_EVENT_TYPES.has(event.type)) {
+                            logger.warn('Anthropic stream: unmapped event dropped', {
+                                eventType: event.type,
+                                keys: Object.keys(event)
+                            }, 'AnthropicAdapter');
+                        }
+                        if (event.type === 'content_block_start'
+                            && event.content_block
+                            && !MAPPED_CONTENT_BLOCKS.has(event.content_block.type)) {
+                            logger.warn('Anthropic stream: unmapped content block dropped', {
+                                blockType: event.content_block.type,
+                                index: event.index,
+                                blockKeys: Object.keys(event.content_block)
+                            }, 'AnthropicAdapter');
+                        }
+                        if (event.type === 'content_block_delta'
+                            && event.delta?.type
+                            && !MAPPED_DELTA_TYPES.has(event.delta.type)) {
+                            logger.warn('Anthropic stream: unmapped delta dropped', {
+                                deltaType: event.delta.type,
+                                index: event.index,
+                                deltaKeys: Object.keys(event.delta)
+                            }, 'AnthropicAdapter');
+                        }
+
                         if (event.type === 'message_start' && event.message?.usage) {
                             const u = event.message.usage;
                             inputTokens = u.input_tokens || 0;
@@ -773,6 +1137,30 @@ export function createAnthropicAdapter() {
                                 choices: [{
                                     index: 0,
                                     delta: { content: event.delta.text },
+                                    finish_reason: null
+                                }]
+                            };
+                        }
+                        // Spec says a text block opens with an empty string and the
+                        // words arrive as `text_delta`. A provider that inlines the
+                        // text here would otherwise lose it — carry it through, and
+                        // say so, because it is a departure from the spec.
+                        if (event.type === 'content_block_start'
+                            && event.content_block?.type === 'text'
+                            && event.content_block.text) {
+                            logger.warn('Anthropic stream: text carried on content_block_start, not deltas', {
+                                index: event.index,
+                                length: event.content_block.text.length
+                            }, 'AnthropicAdapter');
+                            yield {
+                                id: event.message?.id || processId,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model,
+                                provider: 'anthropic',
+                                choices: [{
+                                    index: 0,
+                                    delta: { content: event.content_block.text },
                                     finish_reason: null
                                 }]
                             };

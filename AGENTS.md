@@ -23,6 +23,7 @@
 - **v1.x**: Provider-centric architecture (archived docs in `docs/_Archive/`)
 - **Task-based query system**: Named tasks with preset model + parameters, client overrides apply (COMPLETE)
 - **Chat cancellation**: HTTP client disconnect aborts the upstream provider request for fetch-based chat adapters. (The WebSocket transport was removed — see below.)
+- **Zero-content streams fail over HTTP**: SSE headers are withheld until a chunk carries content, so an upstream that produces nothing is answered with an HTTP error + JSON body rather than a 200 stream whose first chunk already claimed `finish_reason: "stop"`.
 - **Per-model `maxOutputTokens`**: Omitted `max_tokens` values fall back to `capabilities.maxOutputTokens` declared in each model config. Required for Anthropic-adapter upstreams (Kimi, DeepSeek, MiniMax). OpenAI-adapter upstreams omit the field and use their own default.
 - **Context telemetry (SSE)**: The gateway attaches a `context` object to the `finish_reason` chunk and injects a final usage chunk so REST clients get cumulative token counts.
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
@@ -206,6 +207,8 @@ The gateway does not synthesize output token budgets. For each model:
 
 This means Anthropic-adapter models (Kimi, DeepSeek, MiniMax) **must** declare `capabilities.maxOutputTokens` in `config.json`.
 
+A prompt plus that budget can exceed the upstream's window (DeepSeek rejects it as a whole, e.g. "you requested 1048626 tokens (664626 in the messages, 384000 in the completion)"). The `anthropic` adapter retries such a request once with `max_tokens` reduced to what the window has left, using the numbers the rejection itself reports. See `documentation/api_rest.md` > Context-Window Overshoot.
+
 ### GLM Models — OpenAI Adapter (z.ai Context Caching)
 
 All GLM chat models (`glm5-chat`, `glm53-chat`, `glm5-turbo-chat`, `glm5v-turbo-chat`) use the `openai` adapter to leverage z.ai's automatic context caching (~50% cost reduction on repeated context).
@@ -298,6 +301,25 @@ Each gateway startup creates a new timestamped log file in `logs/`:
 - Logs older than 1 day are pruned automatically on startup (override with `LOG_RETENTION_DAYS`)
 - Logs are excluded from git via `.gitignore`
 - Access logs programmatically via `GET /logs` with query filters (`level`, `type`, `sessionId`, `limit`)
+
+**Log levels are semantic, not just thresholds:**
+
+| Level | Belongs there | Frequency |
+|-------|---------------|-----------|
+| `debug` | Per-request trace — stream start/end, per-request parameter mapping, background sweeps | every request |
+| `info` | Lifecycle and state changes — startup, config (re)load, cache pruning, admin actions | once per run/event |
+| `warn` | Tolerated or suspicious, request survived — repaired history, dropped data, auth rejection, fallback in use | when it happens |
+| `error` | A request or the service failed | when it happens |
+
+Default is `warn`: a normal log file holds its header and nothing else until something is wrong. Change it at runtime with `POST /logs/level` (localhost-only, no restart) or at startup with `LOG_LEVEL`. Full spec: `documentation/api_rest.md` > Logging.
+
+**Before adding a log line, place it**: per-request detail is `debug` (it is a debugging aid, not a record); anything that persists, changes state, or appears once per run is `info`; anything a human should read when a session breaks is `warn`/`error`.
+
+**Failures go through `logFailure()`** (`src/utils/failure-log.js`), not `logger.error()` directly. It attaches the client identity (`meta.client`, from `describeClient(req)`) and the repeat context (`failure.count`, `firstSeenAt`, `distinctClients`) so an incident names the client and reads as one problem instead of a wall of identical lines. Plain `logger.error` is for internal faults with no client and no incident semantics (a cache write that failed, a subscriber that threw).
+
+**Client identity is a contract clients should adopt** (all optional): `X-Client-Name`, `X-Client-Version`, `X-Session-Id`. Without them two windows of the same client on one machine are indistinguishable in the log.
+
+**Tests must never write into `logs/`.** `tests/setup.js` (loaded via `--require` in every test script) sets `LOG_DIR` to `tests/_Test_Assets/logs`, which the logger wrapper honours. Without it the suite creates a logger per instance and leaves ~48 files reading "Shutting down. Session duration: 0s" in the gateway's own folder — indistinguishable from a crash loop.
 
 ---
 
