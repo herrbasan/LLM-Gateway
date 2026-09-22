@@ -1084,7 +1084,15 @@ same object arrives as an in-band `error` chunk instead:
 | `message` | Verbatim upstream error text (status + body) |
 | `type` | Upstream `error.type` for 4xx; `rate_limit_error` for 429; `upstream_error` for 5xx; `internal_error` if the gateway itself failed |
 | `code` | `RATE_LIMIT`, `UPSTREAM_HTTP_<status>`, `MODEL_UNAVAILABLE`, `INTERNAL_ERROR` |
-| `retryAfter` | Unix ms from the upstream `Retry-After` header (present on 429s) |
+| `retryAfter` | Unix epoch ms (429s and `MODEL_UNAVAILABLE`): when the retry window reopens, from the upstream `Retry-After` header or the provider's stated wait |
+
+#### 429 handling
+
+A 429 rejection processed nothing upstream, so the gateway retries it once when the
+provider names the wait window — the `Retry-After` header or a "retry in Ns" phrase in
+the error body (Gemini states it there). The wait is jittered and capped at 45 s; a
+longer window (e.g. GLM's 5-hour quota reset) or a repeat 429 surfaces to the client
+immediately with `retryAfter` set, and repeated 429s feed the per-model circuit breaker.
 
 ### Stream Failures Before Content
 

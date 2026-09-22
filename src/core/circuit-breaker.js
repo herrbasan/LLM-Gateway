@@ -87,7 +87,8 @@ export class CircuitBreaker {
         err.type = 'model_unavailable';
         err.code = 'MODEL_UNAVAILABLE';
         err.provider = this.name;
-        err.retryAfter = retrySec;
+        // Epoch ms — the same contract the 429 path emits (see api_rest.md).
+        err.retryAfter = Date.now() + retryMs;
         return err;
     }
 

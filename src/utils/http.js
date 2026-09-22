@@ -21,10 +21,20 @@ const DEFAULT_RETRY_OPTIONS = {
     baseDelayMs: 500,
     maxDelayMs: 10000,
     factor: 2,
-    // Only genuine gateway-level transients are retried. 429 is a rate-limit
-    // signal the circuit breaker must see (retrying hides + delays it). 500 on
-    // a non-idempotent chat POST risks double token spend. Neither is retried.
+    // Only genuine gateway-level transients are retried here. 500 on a
+    // non-idempotent chat POST risks double token spend, so it is not
+    // retried. 429s are handled separately in the response path: retried
+    // only when the provider itself names the wait window, otherwise
+    // surfaced immediately so the circuit breaker sees them.
     statusCodesToRetry: [502, 503, 504],
+    // A 429 rejection processed nothing — a retry spends nothing. But we
+    // retry only when the provider states when its window reopens (a
+    // Retry-After header, or "retry in Ns" in the body — Gemini names it
+    // there), at most this many times, and never waiting past the cap:
+    // GLM's "limit will reset at <time>" 5-hour quota must surface to the
+    // client, not hang a request for hours.
+    rateLimitMaxRetries: 1,
+    rateLimitRetryCapMs: 45000,
     // First-byte deadline: how long to wait for the response headers before
     // treating the upstream as hung. Reasoning models (DeepSeek, Kimi) can
     // legitimately spend 60–90s thinking before the first SSE header, so 60s
@@ -69,6 +79,28 @@ function parseRetryAfter(header) {
     }
     const date = Date.parse(trimmed);
     return Number.isFinite(date) ? date : null;
+}
+
+// Extract the provider's own wait hint for a 429: the standard Retry-After
+// header, or a "retry in Ns" phrase inside the error body (Gemini states the
+// window there, SSE-framed). Returns ms from now, or null when the provider
+// names no window — no hint, no retry. We don't invent delays.
+function rateLimitHintMs(header, body) {
+    const epoch = parseRetryAfter(header);
+    if (epoch != null) return Math.max(0, epoch - Date.now());
+    const m = typeof body === 'string' && body.match(/retry (?:in|after) (\d+)\s*(?:s\b|sec|second)/i);
+    if (m) {
+        const seconds = Number(m[1]);
+        if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    }
+    return null;
+}
+
+// ±10% jitter so concurrent requests that hit the same 429 don't realign
+// into a second stampede the moment the window reopens.
+function applyJitter(ms) {
+    const jitter = ms * 0.1 * (Math.random() * 2 - 1);
+    return Math.max(0, Math.floor(ms + jitter));
 }
 
 // Upstreams name the reason for a rejected request in `error.type`
@@ -135,6 +167,7 @@ export async function readWithDeadline(reader, ms = STREAM_READ_DEADLINE_MS) {
 export async function request(url, options = {}) {
     const retryOptions = { ...DEFAULT_RETRY_OPTIONS, ...(options.retry || {}) };
     let attempt = 0;
+    let rateLimitRetries = 0;
 
     const fetchOptions = { ...options };
     delete fetchOptions.retry;
@@ -199,8 +232,16 @@ export async function request(url, options = {}) {
                 if (response.status === 429) {
                     httpErr.type = 'rate_limit_error';
                     httpErr.code = 'RATE_LIMIT';
-                    const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
-                    if (retryAfter != null) httpErr.retryAfter = retryAfter;
+                    const hintMs = rateLimitHintMs(response.headers.get('retry-after'), errorBody);
+                    if (hintMs != null) {
+                        httpErr.retryAfter = Date.now() + hintMs;
+                        if (hintMs <= retryOptions.rateLimitRetryCapMs
+                            && rateLimitRetries < retryOptions.rateLimitMaxRetries) {
+                            rateLimitRetries++;
+                            await delay(applyJitter(hintMs));
+                            continue;
+                        }
+                    }
                 } else if (response.status >= 500) {
                     httpErr.type = 'upstream_error';
                     httpErr.code = `UPSTREAM_HTTP_${response.status}`;
@@ -256,10 +297,7 @@ export async function request(url, options = {}) {
 
             let currentDelay = retryOptions.baseDelayMs * Math.pow(retryOptions.factor, attempt);
             currentDelay = Math.min(currentDelay, retryOptions.maxDelayMs);
-            
-            // Jitter calculation
-            const jitter = currentDelay * 0.1 * (Math.random() * 2 - 1);
-            currentDelay = Math.floor(currentDelay + jitter);
+            currentDelay = applyJitter(currentDelay);
 
             await delay(currentDelay);
             attempt++;
