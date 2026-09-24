@@ -69,6 +69,24 @@ describe('Gemini Interactions Adapter - Live', function () {
         expect(result.choices[0].message.content).to.match(/Rex/i);
     });
 
+    it('should complete when the history ENDS with an assistant reply (trailing model_output dropped)', async () => {
+        // The Interactions API 400s any input whose final step is model_output.
+        // Clients that re-request with the model's previous reply appended
+        // (retry, queued interjection) hit this; the adapter drops the
+        // trailing model_output step instead of forwarding a doomed request.
+        // Verified live 2026-09-24: the same history minus the trailing
+        // assistant message returns 200, with it appended returns 400.
+        const adapter = adapters.get('gemini');
+        const result = await adapter.chatComplete(geminiModel, {
+            messages: [
+                { role: 'user', content: 'My dog is named Rex.' },
+                { role: 'assistant', content: 'Got it — Rex the dog.' }
+            ]
+        });
+        expect(result.object).to.equal('chat.completion');
+        expect(result.choices[0].message.content).to.be.a('string');
+    });
+
     it('should return a function call for a tool request', async () => {
         const adapter = adapters.get('gemini');
         const result = await adapter.chatComplete(geminiModel, {

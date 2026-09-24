@@ -541,6 +541,23 @@ async function buildInteractionPayload(request, capabilities) {
         input.push(...await buildInputSteps(m, callIdToName, droppedCallIds));
     }
 
+    // The Interactions API rejects any request whose input's FINAL step is
+    // model_output ("Request contains an invalid argument", size- and
+    // content-independent — verified 2026-09-24: a 1-char trailing
+    // model_output on an otherwise-200 history 400s, a tiny 2-step history
+    // ending in model_output 400s, mid-history model_output steps are fine).
+    // Clients that append the model's previous reply before re-requesting
+    // (retry after a failed turn, queued user interjection) end their history
+    // exactly that way. Drop the trailing run and let the model regenerate.
+    let trailingOutputs = 0;
+    while (input.length > 0 && input[input.length - 1].type === 'model_output') {
+        input.pop();
+        trailingOutputs++;
+    }
+    if (trailingOutputs > 0) {
+        logger.warn(`Dropped ${trailingOutputs} trailing model_output step(s): the Interactions API rejects an input ending with the model's own output`, {}, 'GeminiAdapter');
+    }
+
     const payload = {
         input,
         store: false
