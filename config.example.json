@@ -44,6 +44,38 @@
         "dimensions": 2560
       }
     },
+
+    "_comment_image": "--- Image generation (OpenRouter image-output chat model) ---",
+    "krea-2-image": {
+      "type": "image",
+      "adapter": "openai",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "apiKey": "your-openrouter-api-key",
+      "adapterModel": "krea/krea-2-medium-turbo",
+      "capabilities": {
+        "aspectRatios": ["1:1", "4:3", "3:2", "16:9", "2.35:1", "4:5", "2:3", "9:16"]
+      },
+      "_comment": "Served via POST /v1/images/generations. Client sends prompt + size (WxH, snapped to a declared aspectRatios entry) or aspect_ratio directly. Krea extras (seed, creativity, intensity/complexity/movement) ride in extraBody."
+    },
+
+    "_comment_image_edit": "--- Image generation + editing (image-to-image via input_references) ---",
+    "qwen-image": {
+      "type": "image",
+      "adapter": "openai",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "apiKey": "your-openrouter-api-key",
+      "adapterModel": "qwen/qwen-image-3",
+      "capabilities": {
+        "aspectRatios": ["1:1", "4:3", "3:2", "16:9", "2.35:1", "4:5", "2:3", "9:16"],
+        "editing": true
+      },
+      "imageInputLimit": {
+        "maxDimension": 2048,
+        "maxFileSize": 10485760,
+        "supportedFormats": ["png", "jpeg", "webp"]
+      },
+      "_comment": "capabilities.editing gates input_references (image-to-image). References are auto-conformed to imageInputLimit.maxDimension via the media processor (same as chat vision) and always sent as data URIs — zero-retention providers reject remote URLs."
+    },
     
     "_comment_gemini": "--- Google Gemini ---",
     "gemini-flash": {
@@ -275,6 +307,11 @@
       "description": "Image understanding and visual analysis",
       "maxTokens": 4096,
       "temperature": 0.4
+    },
+    "imagegen": {
+      "model": "krea-2-image",
+      "description": "Image generation",
+      "default": true
     }
   }
 }

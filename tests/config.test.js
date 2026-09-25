@@ -81,7 +81,7 @@ describe('Configuration Manager', () => {
       }
       
       // Verify type is valid
-      expect(['chat', 'embedding']).to.include(modelConfig.type);
+      expect(['chat', 'embedding', 'image']).to.include(modelConfig.type);
       
       // Verify adapter is valid
       expect(['gemini', 'openai', 'anthropic', 'responses']).to.include(modelConfig.adapter);

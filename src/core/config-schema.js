@@ -3,7 +3,7 @@
  * Explicit validation - fails fast on invalid config.
  */
 
-const MODEL_TYPES = ['chat', 'embedding'];
+const MODEL_TYPES = ['chat', 'embedding', 'image'];
 
 const REQUIRED_MODEL_FIELDS = ['type', 'adapter', 'capabilities'];
 
@@ -88,6 +88,9 @@ function validateCapabilities(modelId, type, capabilities) {
         case 'embedding':
             validateEmbeddingCapabilities(modelId, capabilities);
             break;
+        case 'image':
+            validateImageCapabilities(modelId, capabilities);
+            break;
     }
 }
 
@@ -155,6 +158,27 @@ function validateEmbeddingCapabilities(modelId, caps) {
     }
     if ('batchSize' in caps && typeof caps.batchSize !== 'number') {
         throw new Error(`[Config] Model "${modelId}": capabilities.batchSize must be a number`);
+    }
+}
+
+function validateImageCapabilities(modelId, caps) {
+    // aspectRatios: the "W:H" strings the upstream accepts. Declared means the
+    // adapter can snap a client's size to a supported ratio — undeclared means
+    // sizes pass through untouched. Optional per-model extras (seed, creativity,
+    // Krea's K2 sliders) ride in extraBody, not here.
+    if ('aspectRatios' in caps) {
+        if (!Array.isArray(caps.aspectRatios) || caps.aspectRatios.some(r => typeof r !== 'string' || !/^\d+(\.\d+)?:\d+(\.\d+)?$/.test(r))) {
+            throw new Error(`[Config] Model "${modelId}": capabilities.aspectRatios must be an array of "W:H" strings`);
+        }
+    }
+    if ('maxN' in caps && (typeof caps.maxN !== 'number' || caps.maxN < 1)) {
+        throw new Error(`[Config] Model "${modelId}": capabilities.maxN must be a positive number`);
+    }
+    const boolCaps = ['editing', 'streaming'];
+    for (const cap of boolCaps) {
+        if (cap in caps && typeof caps[cap] !== 'boolean') {
+            throw new Error(`[Config] Model "${modelId}": capabilities.${cap} must be boolean`);
+        }
     }
 }
 

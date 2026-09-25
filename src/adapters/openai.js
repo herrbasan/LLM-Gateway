@@ -204,6 +204,102 @@ export function createOpenAIAdapter() {
         },
 
         /**
+         * Generate image(s) via the upstream's OpenAI-native /images endpoint
+         * (OpenRouter pattern, verified live 2026-09-24: krea-2-medium-turbo
+         * answers { created, data: [{ b64_json, media_type }], usage.cost }).
+         * The gateway's job is parameter normalization — size/aspect_ratio
+         * snapping and capability gating — the response passes through as-is.
+         */
+        async generateImage(modelConfig, request) {
+            const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
+
+            if (typeof request.prompt !== 'string' || request.prompt.length === 0) {
+                const err = new Error('[OpenAIAdapter] generateImage requires a non-empty prompt');
+                err.status = 400;
+                throw err;
+            }
+
+            const payload = {
+                model: adapterModel,
+                prompt: request.prompt
+            };
+
+            const aspectRatio = request.aspect_ratio ?? sizeToAspectRatio(request.size);
+            if (aspectRatio != null) {
+                if (Array.isArray(capabilities?.aspectRatios) && !capabilities.aspectRatios.includes(aspectRatio)) {
+                    const err = new Error(`[OpenAIAdapter] Aspect ratio "${aspectRatio}" not supported (declared: ${capabilities.aspectRatios.join(', ')})`);
+                    err.status = 422;
+                    throw err;
+                }
+                payload.aspect_ratio = aspectRatio;
+            }
+
+            if (request.n != null) {
+                if (typeof capabilities?.maxN === 'number' && request.n > capabilities.maxN) {
+                    const err = new Error(`[OpenAIAdapter] n=${request.n} exceeds model maxN=${capabilities.maxN}`);
+                    err.status = 422;
+                    throw err;
+                }
+                payload.n = request.n;
+            }
+            if (request.seed != null) payload.seed = request.seed;
+            if (request.user) payload.user = request.user;
+
+            // Image-to-image: reference images ride as input_references.
+            // Verified wire shape (OpenRouter, qwen/qwen-image-3, 2026-09-25):
+            // { type: 'image_url', image_url: { url } } — data URIs required
+            // under zero-retention providers, remote URLs rejected there.
+            if (request.input_references != null) {
+                if (capabilities?.editing !== true) {
+                    const err = new Error(`[OpenAIAdapter] Model does not declare capabilities.editing — input_references rejected`);
+                    err.status = 422;
+                    throw err;
+                }
+                if (!Array.isArray(request.input_references) || request.input_references.length === 0) {
+                    const err = new Error('[OpenAIAdapter] input_references must be a non-empty array');
+                    err.status = 400;
+                    throw err;
+                }
+                payload.input_references = request.input_references.map(normalizeReference);
+            }
+
+            if (modelConfig?.extraBody) {
+                Object.assign(payload, modelConfig.extraBody);
+            }
+            if (request.extra_body) {
+                Object.assign(payload, request.extra_body);
+            }
+
+            const headers = buildHeaders(apiKey, {}, customHeaders);
+            const res = await httpRequest(`${endpoint}/images`, {
+                method: 'POST',
+                headers,
+                signal: request.signal,
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+            if (data.error) {
+                const err = new Error(`OpenAI API Error: ${data.error.message}`);
+                err.status = data.error.code || 500;
+                throw err;
+            }
+
+            if (!Array.isArray(data.data) || data.data.length === 0) {
+                const err = new Error('[OpenAIAdapter] Upstream returned no images');
+                err.status = 502;
+                throw err;
+            }
+
+            return {
+                created: data.created ?? Math.floor(Date.now() / 1000),
+                data: data.data,
+                usage: data.usage,
+                provider: 'openai'
+            };
+        },
+
+        /**
          * List available models.
          */
         async listModels(modelConfig) {
@@ -252,6 +348,50 @@ export function createOpenAIAdapter() {
                 });
         }
     };
+}
+
+// Canonical aspect-ratio ladder used to snap an OpenAI-style "WxH" size to the
+// nearest declared ratio. Sorted application-agnostic; matching is by distance.
+const COMMON_ASPECT_RATIOS = ['1:1', '4:3', '3:2', '16:9', '2.35:1', '4:5', '2:3', '9:16'];
+
+function ratioValue(r) {
+    const [w, h] = r.split(':').map(Number);
+    return w / h;
+}
+
+// Accepts a data-URI/URL string, an { image_url } / { image_url: { url } }
+// object, or an already-shaped { type: 'image_url', image_url: { url } }.
+function normalizeReference(ref) {
+    const url = typeof ref === 'string'
+        ? ref
+        : ref?.image_url?.url ?? (typeof ref?.image_url === 'string' ? ref.image_url : null) ?? ref?.url;
+    if (typeof url !== 'string' || url.length === 0) {
+        const err = new Error('[OpenAIAdapter] input_references entries must be a URL/data-URI string or an object with image_url');
+        err.status = 400;
+        throw err;
+    }
+    return { type: 'image_url', image_url: { url } };
+}
+
+function sizeToAspectRatio(size) {
+    if (typeof size !== 'string') return null;
+    const m = /^(\d+)x(\d+)$/.exec(size);
+    if (!m) {
+        const err = new Error(`[OpenAIAdapter] Invalid size "${size}" — expected "WxH" (e.g. "1024x1024")`);
+        err.status = 400;
+        throw err;
+    }
+    const target = Number(m[1]) / Number(m[2]);
+    let best = null;
+    let bestDist = Infinity;
+    for (const r of COMMON_ASPECT_RATIOS) {
+        const dist = Math.abs(ratioValue(r) - target);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = r;
+        }
+    }
+    return best;
 }
 
 function applyTokenParams(payload, request, capabilities) {

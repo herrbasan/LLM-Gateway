@@ -294,6 +294,109 @@ export class ModelRouter {
     }
 
     /**
+     * Route an image generation request (POST /v1/images/generations).
+     * Synchronous: image-output models answer via the chat-completions wire,
+     * so no ticket machinery. Returns the normalized { created, data } shape.
+     */
+    async routeImageGeneration(request) {
+        if (!request || typeof request !== 'object') {
+            throw new Error('[ModelRouter] Request must be an object');
+        }
+        if (typeof request.prompt !== 'string' || request.prompt.length === 0) {
+            const err = new Error('[ModelRouter] Image generation requires a non-empty "prompt"');
+            err.status = 400;
+            throw err;
+        }
+
+        const taskRegistry = this.registry.getTaskRegistry();
+        const { resolvedRequest, taskInfo } = this._resolveRequest(request, taskRegistry, taskRegistry.resolveChatRequest, 'image');
+
+        const { id: modelId, config: modelConfig } = this.registry.resolveModel(resolvedRequest.model, 'image');
+        const adapter = this._getAdapter(modelConfig.adapter);
+
+        if (typeof adapter.generateImage !== 'function') {
+            const err = new Error(`[ModelRouter] Adapter "${modelConfig.adapter}" does not support image generation`);
+            err.status = 422;
+            throw err;
+        }
+
+        logger.debug('Image generation request', {
+            model: modelId,
+            adapter: modelConfig.adapter,
+            aspect_ratio: resolvedRequest.aspect_ratio ?? null,
+            size: resolvedRequest.size ?? null,
+            n: resolvedRequest.n ?? 1,
+            task: taskInfo?.id || null
+        }, 'ModelRouter');
+
+        // Conform reference images (i2i) to the model's imageInputLimit before
+        // the adapter sees them — same auto-conform as the chat vision path.
+        // Always delivered as data URIs: zero-retention providers (Krea) reject
+        // remote URLs outright.
+        const finalRequest = {
+            ...resolvedRequest,
+            input_references: await this._processImageReferences(resolvedRequest.input_references, modelConfig)
+        };
+
+        const result = await adapter.generateImage(modelConfig, finalRequest);
+        result.model = modelId;
+        return result;
+    }
+
+    /**
+     * Fetch input_references (data URIs or remote URLs, SSRF-safe) and resize
+     * them to the model's imageInputLimit.maxDimension via the media processor.
+     * A reference is required input for i2i — a fetch/process failure must fail
+     * the request, never silently drop the image (the generation result would
+     * not be what the caller asked for).
+     */
+    async _processImageReferences(inputReferences, modelConfig) {
+        if (inputReferences == null) return undefined;
+        if (!Array.isArray(inputReferences)) return inputReferences; // adapter validates shape
+
+        const maxDimension = modelConfig.imageInputLimit?.maxDimension;
+        const conform = maxDimension && this.mediaProcessor.isEnabled;
+        if (maxDimension && !this.mediaProcessor.isEnabled) {
+            logger.warn('imageInputLimit declared but MediaService disabled — references pass through unconformed', { maxDimension }, 'ModelRouter');
+        }
+
+        const results = [];
+        for (const ref of inputReferences) {
+            const url = typeof ref === 'string'
+                ? ref
+                : ref?.image_url?.url ?? (typeof ref?.image_url === 'string' ? ref.image_url : null) ?? ref?.url;
+            if (typeof url !== 'string' || url.length === 0) {
+                results.push(ref); // malformed — adapter rejects with 400
+                continue;
+            }
+
+            let fetched;
+            try {
+                fetched = await imageFetcher.fetchImage(url);
+            } catch (error) {
+                const err = new Error(`[ModelRouter] Failed to fetch input reference: ${error.message}`);
+                err.status = 502;
+                throw err;
+            }
+
+            if (conform) {
+                let processed;
+                try {
+                    processed = await this.mediaProcessor.processImage(fetched.base64, fetched.mimeType, { maxDimension, quality: 90 });
+                } catch (error) {
+                    const err = new Error(`[ModelRouter] Failed to conform input reference to maxDimension=${maxDimension}: ${error.message}`);
+                    err.status = 502;
+                    throw err;
+                }
+                results.push(`data:${fetched.mimeType};base64,${processed}`);
+            } else {
+                results.push(`data:${fetched.mimeType};base64,${fetched.base64}`);
+            }
+        }
+        return results;
+    }
+
+    /**
      * List all available models.
      * @param {string} [type] - Optional filter by model type
      */

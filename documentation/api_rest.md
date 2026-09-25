@@ -318,6 +318,48 @@ Generate embeddings for text input.
 
 ---
 
+### POST /v1/images/generations
+
+Generate an image. Synchronous — no ticket machinery. Requires a model of `type: "image"` (or the default `imagegen` task).
+
+```json
+{
+  "model": "krea-2-image",
+  "prompt": "An amber circle on a muted teal background",
+  "size": "1920x1080",
+  "n": 1,
+  "seed": 42,
+  "extra_body": { "creativity": "high" }
+}
+```
+
+**Request fields:**
+
+| Field | Notes |
+|-------|-------|
+| `prompt` | Required. 400 if missing/empty. |
+| `model` / `task` | Same resolution rules as chat. |
+| `size` | OpenAI-style `"WxH"`. Snapped to the nearest entry in the model's declared `capabilities.aspectRatios`. |
+| `aspect_ratio` | Direct `"W:H"` — wins over `size`. 422 if not in the model's declared `aspectRatios`. |
+| `n` | Number of images. 422 above `capabilities.maxN` when declared. |
+| `seed`, `user` | Passed through. |
+| `input_references` | Image-to-image. Array of data-URI/URL strings or `{image_url:{url}}` objects. Requires `capabilities.editing: true` on the model (422 otherwise). References are fetched (SSRF-safe) and auto-conformed to the model's `imageInputLimit.maxDimension` via the media processor — same as chat vision — then always sent upstream as data URIs (zero-retention providers reject remote URLs). |
+| `extra_body` | Provider extras (Krea: `creativity`, `intensity`, `complexity`, `movement`). Merged last, wins over model `extraBody`. |
+
+**Response** (upstream shape passed through):
+```json
+{
+  "created": 1758700000,
+  "data": [{ "b64_json": "...", "media_type": "image/png" }],
+  "usage": { "cost": 0.015 },
+  "model": "krea-2-image"
+}
+```
+
+Errors: 400 invalid `size`/missing prompt · 422 unsupported aspect ratio / `n` over `maxN` · 502 upstream returned no images.
+
+---
+
 ### GET /v1/models
 
 List available models from config. Supports filtering by type.
@@ -326,6 +368,7 @@ List available models from config. Supports filtering by type.
 GET /v1/models
 GET /v1/models?type=chat
 GET /v1/models?type=embedding
+GET /v1/models?type=image
 ```
 
 **Response:**
@@ -940,7 +983,7 @@ POST /v1/chat/completions
 
 ### Media Generation
 
-Media generation (text-to-image, text-to-speech, text-to-video) has been removed from the gateway. Speech is handled by the dedicated nVoice/nSpeech services.
+**Image generation** is supported via `POST /v1/images/generations` (see Endpoints Reference) — synchronous, OpenAI-shaped, currently backed by OpenRouter image models (Krea 2). Text-to-speech and video remain outside the gateway: speech is handled by the dedicated nVoice/nSpeech services.
 
 ### Tool Use / Function Calling
 
@@ -1252,6 +1295,7 @@ for await (const event of ticket.stream()) {
 
 - `chat` - Chat completion models
 - `embedding` - Text embedding models
+- `image` - Image generation models (see POST /v1/images/generations)
 
 ### Capability Fields
 
@@ -1271,6 +1315,29 @@ for await (const event of ticket.stream()) {
 - `contextWindow` (number) - Maximum input tokens
 - `dimensions` (number) - Output embedding dimensions
 
+**Image Models:**
+- `aspectRatios` (array of `"W:H"` strings) - Ratios the upstream accepts. Client `size` (`"WxH"`) is snapped to the nearest declared entry; an explicit `aspect_ratio` outside the set is rejected with 422. Undeclared means sizes pass through untouched.
+- `maxN` (number) - Maximum images per request (`n` above it is rejected with 422)
+- `editing` (boolean) - Accepts `input_references` for image-to-image (verified on OpenRouter `qwen/qwen-image-3` 2026-09-25; Krea 2's i2i is broken upstream — data-URI references return 502 RuntimeError)
+- `imageInputLimit` (object, model-level not capability) - `{ maxDimension, maxFileSize, supportedFormats }`. Reference images are resized to `maxDimension` by the media processor before upload; without a media processor they pass through unconformed (logged as warn).
+- Provider extras (seed, creativity, Krea's `intensity`/`complexity`/`movement` sliders) are not capability-gated — they ride `extraBody` / `extra_body`.
+
+Example (`krea-2-image` via OpenRouter):
+```json
+"krea-2-image": {
+  "type": "image",
+  "adapter": "openai",
+  "endpoint": "https://openrouter.ai/api/v1",
+  "apiKey": "sk-or-...",
+  "adapterModel": "krea/krea-2-medium-turbo",
+  "capabilities": {
+    "aspectRatios": ["1:1", "4:3", "3:2", "16:9", "2.35:1", "4:5", "2:3", "9:16"]
+  }
+}
+```
+
+> The `openai` adapter posts to the upstream's OpenAI-native `/images` endpoint. OpenRouter image models 404 on `/chat/completions` — do not route them through the chat endpoint (verified 2026-09-24).
+
 ---
 
 ## Migration from v1.x
@@ -1282,7 +1349,7 @@ for await (const event of ticket.stream()) {
 - **Capability inference** - All capabilities explicitly declared
 - **WebSocket transport** (removed 2026-07-26) - REST/SSE only; no `chat.cancel`, no binary WS uploads, no `gateway-media://` scheme
 - **Per-provider adapters** (`llamacpp`, `kimi`, `alibaba`, `dashscope`, `ollama`, `lmstudio`) - Replaced by four protocol adapters; providers are now endpoint config (llama.cpp via `openai` adapter)
-- **Media generation** (image/audio/video types, `/v1/videos/generations`) - Removed; speech handled by dedicated nVoice/nSpeech services
+- **Media generation** (v1's forced-async image/video routes, `/v1/videos/generations`) - Removed; image generation was re-introduced 2026-09-24 as a synchronous OpenAI-shaped route (`/v1/images/generations`), speech handled by dedicated nVoice/nSpeech services
 
 ### Config Changes
 

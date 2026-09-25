@@ -87,7 +87,7 @@ Disabled models:
 
 | Adapter | Description | Supported Types | Notes |
 |---------|-------------|-----------------|-------|
-| `openai` | Standard OpenAI Chat Completions API | chat, embedding | Omits `max_tokens` when client omits it; upstream decides default |
+| `openai` | Standard OpenAI Chat Completions API | chat, embedding, image | Omits `max_tokens` when client omits it; upstream decides default. `generateImage` targets the upstream's OpenAI-native `/images` endpoint (OpenRouter pattern, verified with krea-2-medium-turbo 2026-09-24) |
 | `responses` | OpenAI Responses API (newer format) | chat | — |
 | `anthropic` | Anthropic Claude API | chat | Requires `max_tokens`; falls back to `capabilities.maxOutputTokens` if client omits it |
 | `gemini` | Google Gemini API | chat, embedding | Chat uses the Interactions API (stateless); embeddings stay on generateContent/batchEmbedContents |
@@ -101,6 +101,7 @@ Disabled models:
 | POST | `/v1/chat/completions` | Chat completions (streaming SSE, async via `X-Async`) |
 | POST | `/v1/responses` | OpenAI Responses API proxy |
 | POST | `/v1/embeddings` | Embedding generation |
+| POST | `/v1/images/generations` | Image generation (`type: "image"` models, synchronous) |
 | GET | `/v1/models` | List available models (supports `?type=` filter) |
 | GET | `/v1/tasks` | List available tasks |
 | GET | `/v1/tasks/:id` | Poll async ticket status |
