@@ -1,4 +1,5 @@
 import { getRawConfig, saveRawConfig, loadConfig } from '../config.js';
+import { validateConfig } from '../core/config-schema.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger();
@@ -38,8 +39,20 @@ export function createConfigStoreHandler(router) {
 
       const newConfigPayload = req.body;
       logger.info('Saving new configuration payload from WebAdmin', {}, 'Config');
-      
-      // Save it as raw JSON 
+
+      // Validate BEFORE anything touches disk. An invalid payload that reaches
+      // config.json leaves the running router on its old in-memory config while
+      // the file breaks the next cold start. Rejecting the raw payload is strictly
+      // stronger than post-substitution validation: a field that passes raw holds
+      // no ${ENV} placeholder, so substitution cannot change the verdict.
+      try {
+        validateConfig(newConfigPayload);
+      } catch (error) {
+        error.status = 400;
+        throw error;
+      }
+
+      // Save it as raw JSON
       await saveRawConfig(newConfigPayload);
 
       // Load it normally to apply ENV vars to the router

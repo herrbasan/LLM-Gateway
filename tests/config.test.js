@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.js';
+import { createConfigStoreHandler } from '../src/routes/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -86,5 +87,68 @@ describe('Configuration Manager', () => {
       // Verify adapter is valid
       expect(['gemini', 'openai', 'anthropic', 'responses']).to.include(modelConfig.adapter);
     }
+  });
+});
+
+describe('Config store handler', () => {
+  const configPath = path.resolve(__dirname, '../config.json');
+
+  function makeReq(body) {
+    return { body, socket: { remoteAddress: '127.0.0.1' } };
+  }
+
+  function makeRes() {
+    const res = { statusCode: null, payload: null };
+    res.status = (code) => { res.statusCode = code; return res; };
+    res.json = (data) => { res.payload = data; return res; };
+    return res;
+  }
+
+  it('rejects an invalid payload with 400 and never writes it to disk', async () => {
+    const before = await fs.readFile(configPath, 'utf8');
+    const parsed = JSON.parse(before);
+    // Reproduces the 2026-09-25 muse-image incident: model without capabilities
+    parsed.models['test-invalid-model'] = {
+      prettyName: 'Invalid', type: 'image', adapter: 'openai',
+      endpoint: 'https://example.com', adapterModel: 'x/y'
+    };
+
+    const router = { reloadConfig() { throw new Error('reloadConfig must not run'); } };
+    const handler = createConfigStoreHandler(router);
+    const nextErrors = [];
+    const res = makeRes();
+
+    try {
+      await handler(makeReq(parsed), res, (err) => nextErrors.push(err));
+    } finally {
+      // Disk must be untouched regardless of outcome
+      const after = await fs.readFile(configPath, 'utf8');
+      expect(after).to.equal(before);
+    }
+
+    expect(nextErrors).to.have.lengthOf(1);
+    expect(nextErrors[0].message).to.include('missing required field "capabilities"');
+    expect(nextErrors[0].status).to.equal(400);
+  });
+
+  it('accepts a valid payload, saves and reloads', async () => {
+    const before = await fs.readFile(configPath, 'utf8');
+    const parsed = JSON.parse(before);
+
+    const router = { reloaded: null, reloadConfig(cfg) { this.reloaded = cfg; } };
+    const handler = createConfigStoreHandler(router);
+    const res = makeRes();
+    const nextErrors = [];
+
+    try {
+      await handler(makeReq(parsed), res, (err) => nextErrors.push(err));
+    } finally {
+      // Restore in case assertion below fails mid-write
+      await fs.writeFile(configPath, before, 'utf8');
+    }
+
+    expect(nextErrors).to.have.lengthOf(0);
+    expect(res.payload).to.have.property('success', true);
+    expect(router.reloaded).to.be.an('object');
   });
 });
