@@ -137,17 +137,36 @@ export function createOpenAIAdapter() {
                         if (trimmed.startsWith('data:')) {
                             const data = trimmed.slice(5).trimStart();
                             if (data === '[DONE]') return;
+
+                            let parsed;
                             try {
-                                const parsed = JSON.parse(data);
-                                parsed.provider = 'openai';
-                                yield parsed;
-                            } catch (e) {
+                                parsed = JSON.parse(data);
+                            } catch {
                                 // Malformed SSE data line — log but don't halt the stream.
                                 // A single corrupt line shouldn't kill the entire response.
                                 if (data.length > 0 && data !== '[DONE]') {
                                     console.error(`[OpenAIAdapter] Failed to parse SSE data line: ${data.slice(0, 200)}`);
                                 }
+                                continue;
                             }
+
+                            // Some OpenAI-compatible routers report a failed
+                            // generation as an ordinary SSE frame — empty choices
+                            // plus an `error` object (OpenRouter: {"choices":[],
+                            // "error":{"code":502,"message":"JSON error injected
+                            // into SSE stream","metadata":{"error_type":
+                            // "provider_unavailable"}}}). Yielding that frame
+                            // looks like a content-free stream, so the caller
+                            // raises its own ZERO_CONTENT and the real cause is
+                            // lost. Surface the upstream error instead.
+                            if (parsed.error) {
+                                const err = new Error(`OpenAI API Error: ${parsed.error.message || JSON.stringify(parsed.error)}`);
+                                err.status = parsed.error.code || 500;
+                                throw err;
+                            }
+
+                            parsed.provider = 'openai';
+                            yield parsed;
                         }
                     }
                 }

@@ -50,6 +50,52 @@ function lowestOf(levels) {
     return levels.reduce((a, b) => (EFFORT_ORDER.indexOf(a) < EFFORT_ORDER.indexOf(b) ? a : b));
 }
 
+/**
+ * Fill in an empty `parameters` schema for tools that omit it.
+ *
+ * Some clients declare argument-less tools with only a name and description —
+ * VS Code Copilot's `terminal_last_command` and `terminal_selection` are two.
+ * OpenAI's function-tool spec expects `parameters`, and not every upstream
+ * tolerates its absence: stealth/space-bunny-alpha rejects the entire request
+ * with a 502 provider_unavailable when even one tool lacks it, which looks
+ * nothing like a schema problem from the client's side. Normalising here keeps
+ * the outgoing request spec-shaped no matter what the client sent.
+ */
+function withEmptyParameters(tool) {
+    if (!tool || typeof tool !== 'object') return tool;
+
+    // OpenAI function-tool shape: { type: 'function', function: { name, parameters } }
+    if (tool.type === 'function' && tool.function && typeof tool.function === 'object') {
+        if (tool.function.parameters) return tool;
+        return {
+            ...tool,
+            function: { ...tool.function, parameters: { type: 'object', properties: {} } }
+        };
+    }
+
+    // Legacy `functions` shape: { name, parameters }
+    if (typeof tool.name === 'string' && !tool.parameters) {
+        return { ...tool, parameters: { type: 'object', properties: {} } };
+    }
+
+    return tool;
+}
+
+function normalizeToolSchemas(list) {
+    if (!Array.isArray(list)) return list;
+
+    let changed = false;
+    const normalized = list.map(tool => {
+        const fixed = withEmptyParameters(tool);
+        if (fixed !== tool) changed = true;
+        return fixed;
+    });
+
+    // Return the original array when nothing needed fixing, so a request that
+    // was already spec-shaped passes through reference-identical.
+    return changed ? normalized : list;
+}
+
 function convertInputToMessages(input) {
     if (!Array.isArray(input)) return [{ role: 'user', content: String(input) }];
 
@@ -437,10 +483,10 @@ export class ModelRouter {
             systemPrompt: request.systemPrompt,
             schema: request.response_format?.json_schema?.schema,
             // Extended OpenAI features
-            tools: request.tools,
+            tools: normalizeToolSchemas(request.tools),
             tool_choice: request.tool_choice,
             parallel_tool_calls: request.parallel_tool_calls,
-            functions: request.functions,
+            functions: normalizeToolSchemas(request.functions),
             function_call: request.function_call,
             response_format: request.response_format,
             stream_options: request.stream_options,

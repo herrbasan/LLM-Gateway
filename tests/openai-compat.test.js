@@ -471,11 +471,12 @@ describe('_buildChatOptions parameter forwarding', () => {
     });
 
     it('forwards tools, tool_choice, parallel_tool_calls', () => {
-        const tools = [{ type: 'function', function: { name: 'bash' } }];
+        const tools = [{ type: 'function', function: { name: 'bash', parameters: { type: 'object', properties: {} } } }];
         const opts = router._buildChatOptions(
             { messages: [], tools, tool_choice: 'auto', parallel_tool_calls: false },
             { extraBody: {} }
         );
+        // Already spec-shaped, so it passes through reference-identical.
         expect(opts.tools).to.equal(tools);
         expect(opts.tool_choice).to.equal('auto');
         expect(opts.parallel_tool_calls).to.equal(false);

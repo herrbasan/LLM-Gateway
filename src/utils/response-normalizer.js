@@ -4,6 +4,36 @@
  */
 
 /**
+ * Adopt OpenRouter's reasoning alias.
+ *
+ * OpenRouter reports reasoning in a `reasoning` field, and the full trace in
+ * `reasoning_details[]`, instead of OpenAI's `reasoning_content`. Unmapped, the
+ * gateway cannot see that the model produced anything: the stream handler's
+ * zero-content guard counts `reasoning_content` only, so a reasoning-only turn
+ * is reported to the client as "Upstream returned no content" (502
+ * ZERO_CONTENT) — and clients that read `reasoning_content` (VS Code Copilot)
+ * never see the thinking at all. Mapping the alias here makes OpenRouter models
+ * behave like every other reasoning provider (Kimi, DeepSeek) that already
+ * sends `reasoning_content`.
+ */
+function adoptReasoningAlias(obj) {
+    if (!obj || obj.reasoning_content !== undefined) return obj;
+    const text = typeof obj.reasoning === 'string' && obj.reasoning.length > 0
+        ? obj.reasoning
+        : reasoningDetailsText(obj.reasoning_details);
+    if (!text) return obj;
+    return { ...obj, reasoning_content: text };
+}
+
+function reasoningDetailsText(details) {
+    if (!Array.isArray(details)) return '';
+    return details
+        .map(d => (typeof d?.text === 'string' ? d.text : ''))
+        .filter(Boolean)
+        .join('\n');
+}
+
+/**
  * Normalize a complete chat completion response to OpenAI format.
  * Ensures all responses include refusal and system_fingerprint fields.
  */
@@ -51,11 +81,11 @@ export function normalizeStreamChunk(chunk) {
 function normalizeMessage(message) {
     if (!message) return message;
 
-    const normalized = {
+    const normalized = adoptReasoningAlias({
         ...message,
         refusal: message.refusal ?? null,
         annotations: message.annotations ?? []
-    };
+    });
 
     if (normalized.function_call === undefined) {
         normalized.function_call = null;
@@ -82,8 +112,8 @@ function normalizeMessage(message) {
 function normalizeDelta(delta) {
     if (!delta) return delta;
 
-    const normalized = { ...delta };
-    
+    const normalized = adoptReasoningAlias({ ...delta });
+
     if (delta.refusal !== undefined) {
         normalized.refusal = delta.refusal;
     }

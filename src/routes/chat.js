@@ -38,6 +38,108 @@ function bindRequestAbortController(req, res) {
     return controller;
 }
 
+// Upstream attempts allowed when an attempt produces nothing usable.
+// Free/shared endpoints (OpenRouter's stealth slot among them) fail in bursts:
+// a 200 SSE stream carrying an error frame, an empty body, or a stream that
+// reasons and stops without ever emitting an answer. The same request usually
+// succeeds on the next try, so one bad attempt should not become the client's
+// problem. See `streamWithRetry` for why re-running is safe.
+const UPSTREAM_ATTEMPTS = 3;
+const UPSTREAM_RETRY_DELAY_MS = 400;
+
+/**
+ * Did this chunk carry output the client can use? Mirrors the content rule in
+ * sse.js, minus reasoning: reasoning alone is not an answer, so a stream that
+ * only thinks still counts as a failed attempt and is worth retrying.
+ */
+function hasUsableOutput(chunk) {
+    const delta = chunk?.choices?.[0]?.delta;
+    if (!delta) return false;
+    return (typeof delta.content === 'string' && delta.content.length > 0)
+        || delta.tool_calls != null
+        || delta.function_call != null;
+}
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Run a streaming attempt, retrying while the upstream produces nothing usable.
+ *
+ * Safe because nothing has been committed yet: every mode emits `delta.content`
+ * or `delta.tool_calls` before the client sees anything, and sse.js withholds
+ * all frames until the first content chunk. So an attempt that fails before
+ * that point can be discarded and re-run without the client noticing — the same
+ * property that lets a pre-content failure become a real HTTP error status.
+ *
+ * Once an attempt commits, later failures are rethrown untouched: the stream is
+ * already flowing and there is nothing to retry into.
+ *
+ * `makeAttempt` must return a fresh `{ generator, context, meta }` — a generator
+ * is single-use, so each attempt needs its own.
+ *
+ * Retries stop on a 4xx: a rejected request will be rejected again, so those
+ * pass through untouched rather than burning attempts.
+ */
+async function* streamWithRetry(makeAttempt, onAttempt) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
+        const buffered = [];
+        let committed = false;
+
+        try {
+            const result = await makeAttempt();
+
+            if (result?.stream !== true || !result?.generator) {
+                const err = new Error('[ChatRoute] Invalid streaming response: expected { stream: true, generator }');
+                err.status = 500;
+                throw err;
+            }
+
+            onAttempt(result, attempt);
+
+            for await (const chunk of result.generator) {
+                if (committed) {
+                    yield chunk;
+                    continue;
+                }
+                buffered.push(chunk);
+                if (hasUsableOutput(chunk)) {
+                    committed = true;
+                    for (const held of buffered) yield held;
+                    buffered.length = 0;
+                }
+            }
+
+            if (committed) return;
+
+            // Stream finished cleanly but produced no answer the client can use.
+            const err = new Error('Upstream produced no content.');
+            err.code = 'ZERO_CONTENT';
+            err.type = 'zero_content_error';
+            lastError = err;
+        } catch (err) {
+            // Mid-stream failures cannot be retried — the client already has
+            // chunks. Anything after this point is the caller's to report.
+            if (committed || isAbortError(err)) throw err;
+            // A rejected request stays rejected; retrying would only delay it.
+            if (err.status >= 400 && err.status < 500) throw err;
+            lastError = err;
+        }
+
+        if (attempt < UPSTREAM_ATTEMPTS) {
+            logger.warn(
+                `Upstream attempt ${attempt}/${UPSTREAM_ATTEMPTS} produced nothing usable — retrying`,
+                { reason: lastError?.message, code: lastError?.code },
+                'ChatRoute'
+            );
+            await delay(UPSTREAM_RETRY_DELAY_MS * attempt);
+        }
+    }
+
+    throw lastError;
+}
+
 export function createChatHandler(router, ticketRegistry) {
     return async (req, res, next) => {
         try {
@@ -67,20 +169,25 @@ export function createChatHandler(router, ticketRegistry) {
                 const _streamStart = Date.now();
                 logger.debug('Stream start', { model: req.body?.model, msgCount: req.body?.messages?.length, streamId: _streamStart }, 'ChatRoute');
                 try {
-                    result = await router.routeChatCompletion(requestBody);
+                    // Mutable holders, not snapshots: sse.js reads them lazily
+                    // (context at chunk time, meta when it logs), so a retried
+                    // attempt still reports its own model/adapter and context.
+                    const attemptState = { context: {}, meta: { client } };
 
-                    if (result?.stream === true && result?.generator) {
-                        await streamHandler.process(
-                            result.generator,
-                            result.context,
-                            { ...result.meta, client }
-                        );
-                        logger.debug('Stream end', { model: req.body?.model, durationMs: Date.now() - _streamStart, streamId: _streamStart }, 'ChatRoute');
-                    } else {
-                        const err = new Error('[ChatRoute] Invalid streaming response: expected { stream: true, generator }');
-                        err.status = 500;
-                        throw err;
-                    }
+                    const generator = streamWithRetry(
+                        () => router.routeChatCompletion(requestBody),
+                        (attemptResult, attempt) => {
+                            result = attemptResult;
+                            Object.assign(attemptState.context, attemptResult.context ?? {});
+                            Object.assign(attemptState.meta, attemptResult.meta ?? {});
+                            if (attempt > 1) {
+                                logger.debug('Stream attempt', { model: req.body?.model, attempt, streamId: _streamStart }, 'ChatRoute');
+                            }
+                        }
+                    );
+
+                    await streamHandler.process(generator, attemptState.context, attemptState.meta);
+                    logger.debug('Stream end', { model: req.body?.model, durationMs: Date.now() - _streamStart, streamId: _streamStart }, 'ChatRoute');
                 } catch (err) {
                     if (isAbortError(err)) {
                         logger.debug('Streaming request aborted by client', {}, 'ChatRoute');
