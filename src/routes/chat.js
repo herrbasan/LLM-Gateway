@@ -1,7 +1,7 @@
 import { StreamHandler } from '../streaming/sse.js';
 import { getLogger } from '../utils/logger.js';
 import { isAbortError } from '../utils/http.js';
-import { normalizeResponse } from '../utils/response-normalizer.js';
+import { normalizeResponse, normalizeStreamChunk } from '../utils/response-normalizer.js';
 import { describeClient } from '../utils/client-identity.js';
 import { logFailure } from '../utils/failure-log.js';
 
@@ -38,41 +38,56 @@ function bindRequestAbortController(req, res) {
     return controller;
 }
 
-// Upstream attempts allowed when an attempt produces nothing usable.
-// Free/shared endpoints (OpenRouter's stealth slot among them) fail in bursts:
-// a 200 SSE stream carrying an error frame, an empty body, or a stream that
-// reasons and stops without ever emitting an answer. The same request usually
+// Upstream attempts allowed when an attempt produces nothing the client could
+// render — a 200 SSE stream carrying an error frame, or an empty body. Free and
+// shared endpoints fail in bursts like that, and the same request usually
 // succeeds on the next try, so one bad attempt should not become the client's
 // problem. See `streamWithRetry` for why re-running is safe.
 const UPSTREAM_ATTEMPTS = 3;
 const UPSTREAM_RETRY_DELAY_MS = 400;
 
 /**
- * Did this chunk carry output the client can use? Mirrors the content rule in
- * sse.js, minus reasoning: reasoning alone is not an answer, so a stream that
- * only thinks still counts as a failed attempt and is worth retrying.
+ * Did this chunk carry an answer — the output that ends the client's wait?
  */
-function hasUsableOutput(chunk) {
-    const delta = chunk?.choices?.[0]?.delta;
-    if (!delta) return false;
+function carriesAnswer(delta) {
     return (typeof delta.content === 'string' && delta.content.length > 0)
         || delta.tool_calls != null
         || delta.function_call != null;
 }
 
+/**
+ * Did this chunk carry anything the client should be shown now?
+ *
+ * Reasoning counts. A thinking model can reason for minutes before its first
+ * answer token, and holding that back starves the client completely — not even
+ * SSE headers are flushed, so the chat app's 120s TTFT trip fires and it retries
+ * the whole request, which for a reasoning model means minutes of dead air and
+ * duplicate upstream spend. Reasoning is output the client renders, so it is
+ * released the moment it arrives.
+ */
+function carriesOutput(delta) {
+    return carriesAnswer(delta) || delta.reasoning_content != null;
+}
+
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Run a streaming attempt, retrying while the upstream produces nothing usable.
+ * Run a streaming attempt, retrying while the upstream produces nothing at all.
  *
- * Safe because nothing has been committed yet: every mode emits `delta.content`
- * or `delta.tool_calls` before the client sees anything, and sse.js withholds
- * all frames until the first content chunk. So an attempt that fails before
- * that point can be discarded and re-run without the client noticing — the same
- * property that lets a pre-content failure become a real HTTP error status.
+ * Safe because nothing has been committed yet: a chunk is held until the
+ * upstream says something the client can render (an answer or reasoning), and
+ * sse.js withholds all frames — headers included — until the first chunk is
+ * released. An attempt that emitted nothing can therefore be discarded and
+ * re-run without the client noticing, which is the same property that lets a
+ * pre-content failure become a real HTTP error status.
  *
- * Once an attempt commits, later failures are rethrown untouched: the stream is
- * already flowing and there is nothing to retry into.
+ * Once a chunk is released the attempt is committed, and everything after that
+ * point is the caller's to report:
+ *  - a mid-stream failure is rethrown untouched (the stream is already flowing,
+ *    there is nothing to retry into), and
+ *  - an attempt that streamed reasoning but never produced an answer is an
+ *    error too. Reasoning was already sent, so the client must not be left
+ *    holding a finished stream with no answer in it.
  *
  * `makeAttempt` must return a fresh `{ generator, context, meta }` — a generator
  * is single-use, so each attempt needs its own.
@@ -86,6 +101,7 @@ async function* streamWithRetry(makeAttempt, onAttempt) {
     for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
         const buffered = [];
         let committed = false;
+        let answered = false;
 
         try {
             const result = await makeAttempt();
@@ -98,25 +114,38 @@ async function* streamWithRetry(makeAttempt, onAttempt) {
 
             onAttempt(result, attempt);
 
-            for await (const chunk of result.generator) {
+            for await (const rawChunk of result.generator) {
+                // Normalized here, not only in sse.js, because the alias mapping
+                // decides what this loop counts as reasoning: `reasoning` and
+                // `reasoning_details` are OpenRouter's names for the same thing.
+                const chunk = normalizeStreamChunk(rawChunk);
+                const delta = chunk?.choices?.[0]?.delta;
+
+                if (delta && carriesAnswer(delta)) answered = true;
+
                 if (committed) {
                     yield chunk;
                     continue;
                 }
                 buffered.push(chunk);
-                if (hasUsableOutput(chunk)) {
+                if (delta && carriesOutput(delta)) {
                     committed = true;
                     for (const held of buffered) yield held;
                     buffered.length = 0;
                 }
             }
 
-            if (committed) return;
+            if (answered) return;
 
-            // Stream finished cleanly but produced no answer the client can use.
-            const err = new Error('Upstream produced no content.');
+            // The attempt ended without an answer. Nothing was sent: a silent
+            // attempt is discarded and re-run. Reasoning reached the client:
+            // there is nothing to retry into, so the missing answer is an error.
+            const err = new Error(committed
+                ? 'Upstream streamed reasoning but never produced an answer.'
+                : 'Upstream produced no content.');
             err.code = 'ZERO_CONTENT';
             err.type = 'zero_content_error';
+            if (committed) throw err;
             lastError = err;
         } catch (err) {
             // Mid-stream failures cannot be retried — the client already has

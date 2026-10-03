@@ -3,10 +3,15 @@ import EventEmitter from 'node:events';
 import { createChatHandler } from '../src/routes/chat.js';
 
 // Shared/free endpoints fail in bursts: a 200 SSE stream carrying an error
-// frame, or a stream that reasons and stops without ever emitting an answer.
-// sse.js withholds every frame until the first content chunk, so an attempt
-// that produced nothing can be discarded and re-run without the client
-// noticing.
+// frame, or a stream that ends without emitting anything at all. sse.js withholds
+// every frame until the first chunk is released, so an attempt that produced
+// nothing can be discarded and re-run without the client noticing.
+//
+// Reasoning is released as it arrives rather than withheld until an answer
+// appears (2026-10-02). Withholding it starved the client completely — no bytes
+// at all while a thinking model reasoned — and the chat app's 120s TTFT trip
+// retried the whole request, so a long-thinking turn cost minutes of dead air
+// and duplicate upstream spend.
 class MockResponse extends EventEmitter {
     constructor() {
         super();
@@ -28,7 +33,9 @@ const ERROR_FRAME = {
     choices: [],
     error: { code: 502, message: 'Provider returned an empty response', metadata: { error_type: 'provider_unavailable' } }
 };
+const REASONING = { choices: [{ index: 0, delta: { content: '', reasoning: 'thinking...' }, finish_reason: null }] };
 const REASONING_ONLY = { choices: [{ index: 0, delta: { content: '', reasoning: 'thinking...' }, finish_reason: 'stop' }] };
+const NOTHING = { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] };
 const ANSWER = { choices: [{ index: 0, delta: { content: 'Hello!' }, finish_reason: null }] };
 const THROW = err => ({ __throw: err });
 
@@ -72,11 +79,32 @@ describe('chat route — upstream retry', () => {
         expect(res.statusCode).to.equal(200);
     });
 
-    it('retries a reasoning-only attempt and delivers the good attempt', async () => {
+    it('releases reasoning as it arrives and keeps the attempt that answered', async () => {
+        const { router, res } = await run([[REASONING, ANSWER]]);
+        expect(router.calls).to.equal(1);
+        expect(res.body).to.include('"reasoning_content":"thinking..."');
+        expect(res.body).to.include('"content":"Hello!"');
+        // Reasoning first: that is what keeps a long-thinking turn from looking
+        // dead to the client between the request and the answer.
+        expect(res.body.indexOf('thinking...')).to.be.lessThan(res.body.indexOf('Hello!'));
+    });
+
+    it('reports an answer-less reasoning stream in-band instead of retrying it', async () => {
         const { router, res } = await run([[REASONING_ONLY], [ANSWER]]);
+        // Reasoning already reached the client — a retry has nothing to hide and
+        // would only spend the upstream's tokens twice.
+        expect(router.calls).to.equal(1);
+        expect(res.body).to.include('"reasoning_content":"thinking..."');
+        expect(res.body).to.not.include('"content":"Hello!"');
+        expect(res.statusCode).to.equal(200);
+        expect(res.body).to.include('"code":"ZERO_CONTENT"');
+        expect(res.body).to.include('streamed reasoning but never produced an answer');
+    });
+
+    it('retries an attempt that emitted nothing at all', async () => {
+        const { router, res } = await run([[NOTHING], [ANSWER]]);
         expect(router.calls).to.equal(2);
         expect(res.body).to.include('"content":"Hello!"');
-        expect(res.body).to.not.include('thinking...');
     });
 
     it('surfaces a real HTTP error when every attempt fails', async () => {

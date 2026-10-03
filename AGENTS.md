@@ -23,7 +23,8 @@
 - **v1.x**: Provider-centric architecture (archived docs in `docs/_Archive/`)
 - **Task-based query system**: Named tasks with preset model + parameters, client overrides apply (COMPLETE)
 - **Chat cancellation**: HTTP client disconnect aborts the upstream provider request for fetch-based chat adapters. (The WebSocket transport was removed — see below.)
-- **Zero-content streams fail over HTTP**: SSE headers are withheld until a chunk carries content, so an upstream that produces nothing is answered with an HTTP error + JSON body rather than a 200 stream whose first chunk already claimed `finish_reason: "stop"`.
+- **Zero-output streams fail over HTTP**: SSE headers are withheld until a chunk carries output the client renders — answer content, a tool call, or reasoning. An upstream that produces nothing at all is answered with an HTTP error + JSON body rather than a 200 stream whose first chunk already claimed `finish_reason: "stop"`.
+- **Reasoning streams live**: reasoning deltas are released the moment they arrive, never held back until the first answer token. A thinking model can reason for minutes, and a client that sees no bytes at all aborts and retries the whole request. An attempt that streamed reasoning but never produced an answer is reported in-band (`ZERO_CONTENT`, "streamed reasoning but never produced an answer") instead of being retried.
 - **Per-model `maxOutputTokens`**: Omitted `max_tokens` values fall back to `capabilities.maxOutputTokens` declared in each model config. Required for Anthropic-adapter upstreams (Kimi, DeepSeek, MiniMax). OpenAI-adapter upstreams omit the field and use their own default.
 - **Context telemetry (SSE)**: The gateway attaches a `context` object to the `finish_reason` chunk and injects a final usage chunk so REST clients get cumulative token counts.
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions

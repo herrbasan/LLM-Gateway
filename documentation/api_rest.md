@@ -1137,12 +1137,13 @@ the error body (Gemini states it there). The wait is jittered and capped at 45 s
 longer window (e.g. GLM's 5-hour quota reset) or a repeat 429 surfaces to the client
 immediately with `retryAfter` set, and repeated 429s feed the per-model circuit breaker.
 
-### Stream Failures Before Content
+### Stream Failures Before Output
 
-SSE headers are not flushed up front. Chunks that arrive before any content — a
-finish marker, a usage-only chunk — are held back until content proves the stream is
-real. A stream that never produces content therefore never starts the SSE response,
-and the failure arrives as an ordinary HTTP error with a JSON body:
+SSE headers are not flushed up front. Chunks that arrive before any output — a
+finish marker, a usage-only chunk — are held back until the upstream produces
+something the client renders: answer content, a tool call, or reasoning. A stream
+that never produces any of those never starts the SSE response, and the failure
+arrives as an ordinary HTTP error with a JSON body:
 
 ```
 HTTP/1.1 502 Bad Gateway
@@ -1154,10 +1155,27 @@ clients: an `error` chunk carries no `choices`, so a consumer reading `choices[0
 sees only a stream that ended. Worse, the finish chunk that preceded it reported
 `finish_reason: "stop"` — a normal completion — so the client cannot distinguish an
 empty answer from a failure. An upstream that produces no content has failed, and
-the gateway logs `Stream produced zero content` at `error` level either way.
+the gateway logs either shape at `error` level.
 
-Once content has been delivered the response is committed: a failure after that
-point is reported in-band, as the error chunk above.
+Holding the frames back also has a limit: **reasoning is released the moment it
+arrives**, never held until the first answer token. A thinking model (Kimi K3,
+DeepSeek V4) can reason for minutes before that token, and a client that receives
+nothing at all in the meantime cannot tell "working" from "dead" — it aborts and
+retries, paying for the same reasoning twice. Reasoning is output the client
+renders, so it counts as proof the stream is real.
+
+An attempt that emitted nothing at all is discarded and re-run (up to 3 attempts,
+logged at `warn`) — nothing reached the client, so the retry is invisible. Once
+output has been released the response is committed, and everything after that is
+reported in-band, as the error chunk above. That includes an attempt that streamed
+reasoning and then ended without an answer:
+
+```
+data: {"error":{"message":"Upstream streamed reasoning but never produced an answer.","type":"zero_content_error","code":"ZERO_CONTENT"}}
+```
+
+A committed stream is never retried: the client already has the reasoning, so a
+retry would repeat work the user is watching and bill the upstream twice.
 
 ### Malformed Tool-Call History
 
