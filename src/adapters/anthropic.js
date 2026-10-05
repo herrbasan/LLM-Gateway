@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
+import { splitInstructions } from '../utils/system-messages.js';
 
 const logger = getLogger('AnthropicAdapter');
 
@@ -103,6 +104,52 @@ async function pruneThinkingCache() {
     } catch {
         // Cache pruning is best-effort; a failure must not affect requests.
     }
+}
+
+// Compact, content-free summary of an outbound /v1/messages body for failure
+// logs: roles and block types of the last turns, thinking-block health, and
+// the generation settings. Never the text itself.
+export function describeRequestShape(body) {
+    const thinkingBlocks = { total: 0, empty: 0, unsigned: 0 };
+    const turns = body.messages.map((m) => {
+        const types = m.content.map((block) => {
+            if (block.type === 'thinking') {
+                thinkingBlocks.total++;
+                if (block.thinking === '') thinkingBlocks.empty++;
+                if (block.signature === undefined) thinkingBlocks.unsigned++;
+            }
+            return block.type;
+        });
+        return `${m.role}:${types.join('+')}`;
+    });
+    return {
+        messageCount: body.messages.length,
+        lastTurns: turns.slice(-8),
+        thinkingBlocks,
+        systemChars: body.system === undefined ? 0 : body.system.length,
+        toolCount: body.tools === undefined ? 0 : body.tools.length,
+        maxTokens: body.max_tokens,
+        thinking: body.thinking ?? null,
+        outputConfig: body.output_config ?? null
+    };
+}
+
+// A history whose last message is the model's own finished answer has nothing
+// left to answer. A prefill (partial assistant text to continue) never carries
+// reasoning, so a trailing assistant turn WITH thinking is a completed turn the
+// client re-sent by mistake. Upstreams do not say so: DeepSeek returns a 400
+// ("content[].thinking ... must be passed back"), Kimi a complete but empty
+// answer that the gateway could only report as a retried 502 — each retry
+// re-sending the whole context.
+export function rejectAnsweredHistory(formatted) {
+    const last = formatted[formatted.length - 1];
+    if (last.role !== 'assistant') return;
+    if (!last.content.some(block => block.type === 'thinking')) return;
+    const err = new Error('The conversation ends on the model\'s own finished answer (an assistant message with reasoning), so there is nothing to answer. End the history on a user message or a tool result.');
+    err.status = 400;
+    err.type = 'invalid_request_error';
+    err.code = 'ENDS_ON_ANSWER';
+    throw err;
 }
 
 // The outbound history must satisfy the upstream's structural rules. A stateless
@@ -423,12 +470,7 @@ export function createAnthropicAdapter() {
     // Helper functions defined at factory scope
     function extractSystemPrompt(messages) {
         if (!messages) return { messages: [], systemPrompt: null };
-        const systemMsg = messages.find(m => m.role === 'system');
-        const otherMessages = messages.filter(m => m.role !== 'system');
-        return {
-            messages: otherMessages,
-            systemPrompt: systemMsg?.content || null
-        };
+        return splitInstructions(messages);
     }
 
     function normalizeMessages(messages) {
@@ -818,6 +860,7 @@ export function createAnthropicAdapter() {
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = await formatMessages(messages, capabilities);
+            rejectAnsweredHistory(formattedMessages);
 
             const body = {
                 model,
@@ -911,6 +954,7 @@ export function createAnthropicAdapter() {
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = await formatMessages(messages, capabilities);
+            rejectAnsweredHistory(formattedMessages);
 
             const body = {
                 model,
@@ -984,7 +1028,7 @@ export function createAnthropicAdapter() {
             // be able to name its own shape — without this the consumer can only
             // report "produced no content" and the upstream sequence is unrecoverable
             // (the gap that made issue #8 unanswerable from logs alone).
-            const inv = { events: {}, blockTypes: {}, deltaTypes: {}, textChars: 0, bareJsonLines: 0 };
+            const inv = { events: {}, blockTypes: {}, deltaTypes: {}, textChars: 0, bareJsonLines: 0, stopReason: null };
             const count = (bucket, key) => { bucket[key] = (bucket[key] ?? 0) + 1; };
 
             try {
@@ -1213,6 +1257,7 @@ export function createAnthropicAdapter() {
                             };
                         }
                         if (event.type === 'message_delta') {
+                            inv.stopReason = event.delta?.stop_reason ?? null;
                             if (event.usage) {
                                 outputTokens = event.usage.output_tokens || 0;
                             }
@@ -1277,10 +1322,18 @@ export function createAnthropicAdapter() {
                     || (inv.blockTypes.tool_use ?? 0) > 0
                     || (inv.deltaTypes.input_json_delta ?? 0) > 0;
                 if (!completed || !usable) {
+                    // The request shape rides along: an empty answer is only
+                    // explainable by what was sent (e.g. a history ending on the
+                    // model's own answer reads as "continue it", and Kimi then
+                    // completes with nothing).
                     logger.warn('Anthropic stream produced nothing usable', {
+                        model,
                         completed,
                         usable,
-                        ...inv
+                        inputTokens,
+                        outputTokens,
+                        ...inv,
+                        request: describeRequestShape(body)
                     }, 'AnthropicAdapter');
                 }
             } finally {

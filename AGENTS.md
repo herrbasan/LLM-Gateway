@@ -151,6 +151,8 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 
 **System prompt handling:** Task `systemPrompt` is prepended before all existing messages, regardless of role.
 
+**Mid-conversation system messages:** The `anthropic` and `gemini` adapters send the leading `system`/`developer` run as the top-level system prompt and keep any later one in place as a user turn (`src/utils/system-messages.js`). Never delete them: Copilot appends one after the model's last answer, and without it the history ends on the assistant — DeepSeek 400s ("content[].thinking ... must be passed back") and Kimi returns an empty answer. See `documentation/api_rest.md` > System and Developer Messages.
+
 **Task validation:** Task models must reference existing models. Unknown task names return `400`.
 
 **Default tasks:** When a request has no `model` and no `task`, the router finds the task with `"default": true` and uses its model. Each request type (chat, embedding) should have exactly one default task.

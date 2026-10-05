@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
+import { splitInstructions } from '../utils/system-messages.js';
 
 const logger = getLogger();
 
@@ -515,9 +516,7 @@ function buildInteractionTools(openAiTools) {
 }
 
 async function buildInteractionPayload(request, capabilities) {
-    const messages = request.messages || [];
-    const systemMsg = messages.find(m => m.role === 'system');
-    const otherMessages = messages.filter(m => m.role !== 'system');
+    const { systemPrompt, messages: otherMessages } = splitInstructions(request.messages || []);
 
     // Resolve each tool result's name from the assistant tool_calls it belongs
     // to. OpenAI-format tool messages carry only tool_call_id (no name), but the
@@ -563,8 +562,8 @@ async function buildInteractionPayload(request, capabilities) {
         store: false
     };
 
-    if (systemMsg) {
-        payload.system_instruction = String(systemMsg.content);
+    if (systemPrompt !== null) {
+        payload.system_instruction = systemPrompt;
     }
 
     // The Interactions API has no tool_choice/tool_config field. A request for

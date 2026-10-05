@@ -1177,6 +1177,41 @@ data: {"error":{"message":"Upstream streamed reasoning but never produced an ans
 A committed stream is never retried: the client already has the reasoning, so a
 retry would repeat work the user is watching and bill the upstream twice.
 
+On the `anthropic` adapter, an empty stream also logs a `WARN` ("Anthropic stream
+produced nothing usable") carrying the upstream `stopReason`, input/output tokens,
+and a content-free `request` summary: message count, roles and block types of the
+last 8 turns, thinking-block health (`total`/`empty`/`unsigned`), system length,
+tool count, `max_tokens`, and the thinking/effort settings. An empty answer is only
+explainable by what was sent, so the shape travels with the failure.
+
+### System and Developer Messages
+
+OpenAI clients may send `system`/`developer` messages anywhere in `messages`. The
+`openai` and `responses` adapters pass them through in place. The `anthropic` and
+`gemini` adapters map onto an API with a single top-level system field:
+
+- The **leading** run of `system`/`developer` messages becomes the system prompt
+  (joined with a blank line).
+- A **later** one stays where the client put it, sent as a user turn.
+- Content must be a string or an array of `text` parts; anything else is a `400`
+  (`INVALID_SYSTEM_MESSAGE`).
+
+Copilot appends a system message after the model's last answer. Deleting it — the
+former behaviour — left the history ending on the model's own answer, which the
+upstream reads as "continue that answer": DeepSeek rejects it with
+`content[].thinking ... must be passed back to the API` (400) and Kimi completes with
+an empty answer. Both providers accept consecutive user turns, so no merging is done.
+
+### History Ending on a Finished Answer
+
+A history whose last message is an assistant message **with reasoning** is the
+model's own finished turn re-sent — there is nothing to answer. On the `anthropic`
+adapter it is rejected before dispatch with a `400` (`ENDS_ON_ANSWER`) instead of
+being sent: DeepSeek would return its misleading `content[].thinking` 400, Kimi an
+empty completion the gateway could only report as a retried `502` (each attempt
+re-sending the whole context). A prefill — a trailing assistant message of plain
+text, without reasoning — is still sent.
+
 ### Malformed Tool-Call History
 
 Anthropic-protocol upstreams reject structurally invalid histories — and because the
