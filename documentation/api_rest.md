@@ -14,7 +14,8 @@ Complete API reference for the LLM Gateway v2.0 (model-centric, stateless archit
 6. [System Events](#system-events)
 7. [Usage Patterns](#usage-patterns)
 8. [Error Handling](#error-handling)
-9. [Client Library Design](#client-library-design)
+9. [Kimi Code Endpoint](#kimi-code-endpoint-apikimicomcoding)
+10. [Client Library Design](#client-library-design)
 
 ---
 
@@ -1257,14 +1258,113 @@ A prompt that fills the window plus a large output budget is rejected as a whole
 A stateless client resends that identical request on every retry, so a 50-token
 overshoot kills the session as surely as a malformed history.
 
-The `anthropic` adapter retries it once with `max_tokens` set to whatever the window
-has left. No token estimate is involved — the rejection reports both numbers the
-upstream used — and a `WARN` records the original and reduced budgets. A thinking
-budget that would then exceed `max_tokens` is lowered with it. Only this rejection is
-retried, and only once; if the prompt alone fills the window there is nothing to give
-and the original error stands.
+**Prevention.** An upstream enforces one ceiling on the *sum* of prompt and
+completion, so a model with a 1M window declaring a 384K output cap produces a
+request that cannot succeed once the prompt passes **616,000 tokens** — always,
+not occasionally. `ModelRouter` therefore fits the budget to the room the prompt
+leaves before dispatch: `max_tokens = min(requested, contextWindow − estimatedPrompt − 64)`.
+The 64-token slack absorbs the disagreement between the local estimate and the
+upstream tokeniser.
+
+**Rescue.** The `anthropic` adapter still retries a rejection once, with
+`max_tokens` set to whatever the window has left. No token estimate is involved —
+the rejection reports both numbers the upstream used — and a `WARN` records the
+model, the original budget and the reduced one. A thinking budget that would then
+exceed `max_tokens` is lowered with it. Only this rejection is retried, and only
+once.
+
+The two are complementary: prevention acts on a local estimate, rescue acts on the
+upstream's own count. When the estimate under-counts, the upstream still rejects
+and the rescue still corrects. The pre-flight never clamps to an invented number
+— with no usable estimate, or with the prompt alone filling the window, the budget
+is passed through untouched and the upstream's rejection remains the honest answer.
+
+A pre-flight that works is visible in the log as the **absence** of the rescue
+`WARN`: a long session that previously logged one rejection per turn logs none.
 
 Verify end-to-end with `node scripts/verify-budget-retry-e2e.mjs [modelId]`.
+
+### Kimi Code Endpoint (`api.kimi.com/coding`)
+
+The Kimi Code subscription is a **separate system from the Kimi Open Platform**.
+Keys and base URLs are not interchangeable: a `platform.kimi.com` key against the
+Code base URL fails `401 Invalid Authentication`, and an Open Platform base URL
+(`api.moonshot.ai/v1`) is a different product with different limits. Our models use
+the Anthropic protocol, so the base URL carries no `/v1` suffix — the adapter appends
+`/v1/messages`.
+
+| Protocol | China | Overseas |
+|---|---|---|
+| OpenAI compatible | `https://api.kimi.com/coding/v1` | `https://api.kimi.ai/coding/v1` |
+| Anthropic compatible | `https://api.kimi.com/coding/` | `https://api.kimi.ai/coding/` |
+
+**Model IDs.** Requests must carry the model *ID*, never the model *version* name.
+`K3` or `K2.8 Preview` fail with `401 Your model id does not exist, recognized as
+other:<id>`. The quoted `k3[1m]` form exists only in Claude Code's environment
+variable to force a 1M window — it is not valid in an API request.
+
+| `adapterModel` | Version | Context | Reasoning |
+|---|---|---|---|
+| `k3` | K3 | 1048576 *(higher-tier plans only)* | `low`/`high`/`max`, default `high` |
+| `k3-256k` | K3, 256K | 262144 | `low`/`high`/`max`, default `high` |
+| `kimi-for-coding` | K2.8 Preview | 1048576 | `low`/`high`/`max`, default `max` |
+| `kimi-for-coding-highspeed` | K2.7 Code HighSpeed | 262144 | thinking always on |
+
+`kimi-for-coding` was upgraded in place — the ID is unchanged, but it now serves
+K2.8 Preview, and `k3` (1M) consumes roughly twice the quota of `k3-256k`.
+
+**Context window is plan-gated, not a property of the model.** `1048576` is only
+available above Allegretto/Pro; a lower tier silently gets 256K and answers `401
+Your current plan supports only kimi-k3 up to 256K context`. The gateway's declared
+`capabilities.contextWindow` therefore records what the *account* is entitled to,
+not what the model can do — if the plan changes, the config is wrong and must be
+corrected by hand. There is no discovery call to read the real value back.
+
+**Reasoning effort** is sent as `reasoning_effort` and mapped server-side. Unknown
+values are a hard `400`, not a fallback:
+
+| Sent | Result |
+|---|---|
+| `null` / absent | model default — `high` for K3, `max` for K2.8 Preview |
+| `ultra` / `max` / `xhigh` | `max` |
+| `high` / `medium` | `high` |
+| `low` / `minimum` / `light` | `low` |
+| `none` | thinking disabled |
+| anything else | `400` |
+
+Disabling thinking does **not** disable it in place: requests to the K3 series and
+K2.8 Preview with thinking off are served by K2.8 Preview with thinking off.
+
+**Two independent limits, both easy to mistake for one:**
+
+- **2 MB message size** — `400 total message size N exceeds limit 2097152`. The
+  gateway's own request-size guard produces this before the upstream is involved.
+- **Token limit** — `400 Your request exceeded model token limit: 262144
+  (requested: 558009)`.
+
+Neither is the [context-window overshoot](#context-window-overshoot) above: that one
+reports `maximum context length is N tokens ... (X in the messages, Y in the
+completion)`, which is the *sum* of a prompt and an output budget, and the adapter
+retries it automatically. A Kimi token-limit rejection is not retried — it means the
+prompt alone is too long, and only the client can shorten it.
+
+**Overload is 429, not 529.** `The engine is currently overloaded` is transient
+server capacity, documented as most likely 14:00–17:00 on weekdays, and unrelated
+to account quota. The retry path handles it; a `warn` per attempt is expected
+during peak hours. Quota exhaustion is different and is **not** transient — 403 with
+`You've reached your 5-hour usage limit`, the 7-day limit (legacy plans only), the
+monthly limit (shared across all Kimi products), or the concurrent-request limit.
+Retrying a 403 quota error only burns the remaining quota.
+
+**Thinking round-trip.** With thinking enabled, an assistant tool-call message must
+carry `reasoning_content`, or the upstream answers
+`400 thinking is enabled but reasoning_content is missing in assistant tool call
+message at index N`. This is the Kimi half of the history-repair contract above —
+`capabilities.priorReasoning` is what keeps the gateway on the right side of it.
+
+Source: <https://www.kimi.com/code/docs/en/kimi-code/models.html> and
+<https://www.kimi.com/code/docs/en/kimi-code/error-reference.html> (retrieved
+2026-10-07).
 
 ---
 

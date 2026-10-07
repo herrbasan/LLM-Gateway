@@ -39,6 +39,37 @@
 
 - [REST API](../documentation/api_rest.md) - Standard HTTP interface
 
+### Provider documentation lives in storage, not in this repo
+
+The canonical per-provider references are kept in the workshop storage box, **not**
+in this repository:
+
+```
+storage/documentation/LLM APIs/provider_<name>.md
+```
+
+Covers anthropic, gemini, openai, deepseek, kimi, minimax, xai, zai, alibaba,
+openrouter, nvidia_nim, plus the wire-protocol specs (`api_completions.md`,
+`api_messages.md`, `api_responses_spec_reference.md`) and `README.md` as the domain
+index.
+
+**When you learn something new about a provider, update its `provider_*.md` there.**
+This is not optional bookkeeping — it is the only durable record, because:
+
+- `config.json` is gitignored (it holds live API keys), so provider settings have
+  **no git history**. The storage docs are where the reasoning behind a config
+  value survives.
+- Vendors change upstreams without notice. `kimi-for-coding` silently changed model
+  version under a stable ID; DeepSeek moved a 1M window and a 384K output cap onto a
+  model that previously had neither. A config that was correct last month can be
+  wrong today with nothing in the repo to say when it flipped.
+- Every attribution mistake costs hours. In `logs/main-0.log` a context-window
+  warning carried no model name, which caused two wrong conclusions before the
+  numbers were checked. The provider docs are where that evidence gets filed.
+
+Update the domain index in `README.md` when a provider's headline quirk changes, and
+keep the `date:` frontmatter honest so a stale file is visible at a glance.
+
 ## Overall Design & Architecture
 
 The LLM Gateway is a lightweight, high-performance Node.js API that sits between client applications and disparate LLM providers (OpenAI, Anthropic, Gemini, local models, etc.), normalizing these endpoints into a single unified interface.

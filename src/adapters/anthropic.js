@@ -419,7 +419,7 @@ export function parseContextOverflow(message) {
  * `send` is injected so the retry can be tested without a live upstream.
  * Only a context-length rejection is retried, and only once.
  */
-export async function sendWithBudgetRetry(send, body) {
+export async function sendWithBudgetRetry(send, body, modelId = null) {
     try {
         return await send(body);
     } catch (error) {
@@ -440,7 +440,11 @@ export async function sendWithBudgetRetry(send, body) {
             body.thinking.budget_tokens = Math.max(1, remaining - 1);
         }
 
+        // The model belongs on this line. Without it a context rejection is
+        // unattributable — two different models declare the same budget, and a
+        // reader has no way to tell which one produced the numbers.
         logger.warn('Upstream rejected the request for exceeding its context window — retrying with a reduced output budget', {
+            model: modelId,
             contextWindow: overflow.contextWindow,
             promptTokens: overflow.promptTokens,
             requestedCompletion: overflow.requestedCompletion,
@@ -917,10 +921,11 @@ export function createAnthropicAdapter() {
                     signal: request.signal,
                     body: JSON.stringify(payload)
                 }),
-                body
-            );
+                            body,
+                            model
+                        );
 
-            const data = await res.json();
+                        const data = await res.json();
 
             if (data.content && Array.isArray(data.content)) {
                 const thinkingBlocks = data.content.filter(b => b.type === 'thinking');
@@ -1003,10 +1008,11 @@ export function createAnthropicAdapter() {
                     signal: request.signal,
                     body: JSON.stringify(payload)
                 }),
-                body
-            );
+                            body,
+                            model
+                        );
 
-            if (!res.ok) {
+                        if (!res.ok) {
                 const errorStr = await res.text();
                 logger.error('Anthropic API Streaming Error', null, { status: res.status, body: errorStr }, 'AnthropicAdapter');
                 throw new Error(`Anthropic API Streaming Error (${res.status}): ${errorStr}`);

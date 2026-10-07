@@ -17,6 +17,13 @@ const logger = getLogger();
 // Canonical effort scale, low → high. 'none' is off-scale (thinking disabled).
 const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
+// Slack left between the prompt and the output budget so a request lands just
+// inside the window rather than exactly on it. The local estimate and the
+// upstream tokeniser never agree to the token; without slack the pre-flight
+// would clear a request the upstream still rejects, and the rescue path would
+// fire on requests that should have passed clean.
+const OUTPUT_BUDGET_HEADROOM = 64;
+
 /**
  * Map a requested effort value to the nearest level the model declares.
  * 'none' only matches when declared (it means OFF, not "lowest thinking").
@@ -223,28 +230,31 @@ export class ModelRouter {
 
         const context = await this._buildContextStats(messages, modelConfig, adapter);
 
-        const resolvedMaxTokens = effectiveRequest.max_completion_tokens ?? effectiveRequest.max_tokens ?? effectiveRequest.maxTokens
-            ?? modelConfig.capabilities?.maxOutputTokens
-            ?? null;
+        const requestedMaxTokens = effectiveRequest.max_completion_tokens ?? effectiveRequest.max_tokens ?? effectiveRequest.maxTokens ?? null;
+                const resolvedMaxTokens = this._fitMaxTokensToWindow(
+                    requestedMaxTokens ?? modelConfig.capabilities?.maxOutputTokens ?? null,
+                    context
+                );
 
-        const finalOpts = {
-            ...opts,
-            messages,
-            maxTokens: resolvedMaxTokens,
-            sessionId: effectiveRequest.sessionId || effectiveRequest.session_id || null,
-            __modelId: modelId
-        };
+                const finalOpts = {
+                    ...opts,
+                    messages,
+                    maxTokens: resolvedMaxTokens,
+                    sessionId: effectiveRequest.sessionId || effectiveRequest.session_id || null,
+                    __modelId: modelId
+                };
 
-        logger.debug('Chat request prepared', {
-            model: modelId,
-            adapter: modelConfig.adapter,
-            stream: effectiveRequest.stream === true,
-            message_count: messages.length,
-            context,
-            explicit_max_tokens: resolvedMaxTokens,
-            temperature: finalOpts.temperature ?? null,
-            task: taskInfo?.id || null
-        }, 'ModelRouter');
+                logger.debug('Chat request prepared', {
+                    model: modelId,
+                    adapter: modelConfig.adapter,
+                    stream: effectiveRequest.stream === true,
+                    message_count: messages.length,
+                    context,
+                    explicit_max_tokens: resolvedMaxTokens,
+                    requested_max_tokens: requestedMaxTokens,
+                    temperature: finalOpts.temperature ?? null,
+                    task: taskInfo?.id || null
+                }, 'ModelRouter');
 
         // Route to adapter
         let result;
@@ -315,11 +325,14 @@ export class ModelRouter {
         const messages = this._prepareImagesForModel(processedMessages, modelConfig);
         const context = await this._buildContextStats(messages, modelConfig, adapter);
 
-        const resolvedMaxTokens = request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens
-            ?? modelConfig.capabilities?.maxOutputTokens
-            ?? null;
+        const resolvedMaxTokens = this._fitMaxTokensToWindow(
+                    request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens
+                        ?? modelConfig.capabilities?.maxOutputTokens
+                        ?? null,
+                    context
+                );
 
-        const finalOpts = { ...opts, messages, maxTokens: resolvedMaxTokens, signal: request.signal };
+                const finalOpts = { ...opts, messages, maxTokens: resolvedMaxTokens, signal: request.signal };
 
         if (request.stream) {
             const nativeRequest = { ...rawRequest };
@@ -608,9 +621,46 @@ export class ModelRouter {
     }
 
     /**
-     * Estimate tokens for messages to populate context stats.
-     */
-    async _buildContextStats(messages, modelConfig, adapter) {
+         * Fit an output budget to the room the prompt actually leaves.
+         *
+         * An upstream enforces ONE ceiling on the SUM of prompt and completion. A
+         * model with a 1M window and a 384K declared output cap therefore produces a
+         * request that CANNOT succeed once the prompt passes 616K — not
+         * occasionally, always. The stateless client resends it unchanged, so every
+         * turn pays a rejected round-trip before `sendWithBudgetRetry` rescues it.
+         *
+         * That rescue stays. This is the pre-flight: the estimate is local and
+         * approximate, so when it under-counts the upstream still rejects and the
+         * retry still corrects using the upstream's own numbers. When it over-counts
+         * the budget is merely a little smaller than it needed to be.
+         *
+         * Returns `maxTokens` unchanged when it already fits, and unchanged when
+         * the estimate is missing — an absent number is not evidence of overflow,
+         * and inventing one is exactly the guess this codebase forbids.
+         */
+        _fitMaxTokensToWindow(maxTokens, context) {
+            if (maxTokens == null) return maxTokens;
+
+            const windowSize = context?.windowSize;
+            const usedTokens = context?.usedTokens;
+            if (typeof windowSize !== 'number' || typeof usedTokens !== 'number') return maxTokens;
+            if (isNaN(windowSize) || isNaN(usedTokens)) return maxTokens;
+
+            const headroom = windowSize - usedTokens - OUTPUT_BUDGET_HEADROOM;
+            if (headroom >= maxTokens) return maxTokens;
+
+            // The prompt alone fills the window. There is no budget to give and
+            // nothing sensible to invent — let the upstream reject it with its own
+            // authoritative numbers rather than substituting a made-up one.
+            if (headroom < 1) return maxTokens;
+
+            return Math.floor(headroom);
+        }
+
+        /**
+         * Estimate tokens for messages to populate context stats.
+         */
+        async _buildContextStats(messages, modelConfig, adapter) {
         const contextWindow = modelConfig.capabilities.contextWindow;
         
         let estimatedTokens = 0;
