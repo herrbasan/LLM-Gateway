@@ -614,9 +614,20 @@ async function buildInteractionPayload(request, capabilities) {
         generationConfig.thinking_level = request.enable_thinking ? 'high' : 'low';
     }
 
-    if (Object.keys(generationConfig).length > 0) {
-        payload.generation_config = generationConfig;
-    }
+    // Strip parameters the model rejects. Gemini 3.6+ ignores sampling overrides
+        // and Google's deprecation notice says upcoming models return 400 for them,
+        // so a declared excludeParams has to be honoured here. The anthropic adapter
+        // already does this; without the same pass the capability silently protected
+        // nothing on this adapter, which is worse than not offering it — the config
+        // would read as a guard that is not there.
+        const excludeParams = capabilities?.excludeParams;
+        if (Array.isArray(excludeParams)) {
+            for (const key of excludeParams) delete generationConfig[key];
+        }
+
+        if (Object.keys(generationConfig).length > 0) {
+            payload.generation_config = generationConfig;
+        }
 
     if (request.schema && capabilities?.structuredOutput) {
         payload.response_format = [{
