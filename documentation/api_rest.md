@@ -564,6 +564,7 @@ Every failure carries two things beyond the message: **who it happened to** and 
 
 - `count` and `firstSeenAt` turn a wall of identical lines into one incident: seven 400s over thirty minutes reads as *one* stuck client, retrying, since 06:47.
 - `distinctClients` separates "one chat is stuck" from "this model is broken for everyone".
+- Network-level failures carry their underlying reason: `cause` (plus `causeCode` when the transport provides one) is the socket-level error behind generic messages — undici's `terminated` alone names the symptom, the cause names the diagnosis (reset, half-close, idle kill).
 - Nothing is suppressed. Every occurrence is written, because the individual lines are the evidence; the counters are context on them.
 - Counting groups on component + type + code + model + adapter, never on the message (upstream text varies between retries) and never on the client.
 - Counters are per-process; a restart starts counting again.

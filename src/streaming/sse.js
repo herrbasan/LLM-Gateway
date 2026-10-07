@@ -5,6 +5,19 @@ import { logFailure } from '../utils/failure-log.js';
 
 const logger = getLogger();
 
+// undici reports a socket-level mid-body failure as a bare `TypeError:
+// terminated` and keeps the real reason (connection reset, half-close, idle
+// kill) on `err.cause`. Without extracting it, every upstream drop logs
+// identically and a repeat offender cannot be diagnosed from the file alone.
+export function describeCause(err) {
+    const cause = err?.cause;
+    if (cause instanceof Error) {
+        return { cause: cause.message, ...(cause.code != null && { causeCode: cause.code }) };
+    }
+    if (cause != null) return { cause: String(cause) };
+    return {};
+}
+
 export class StreamHandler {
     constructor(res, options = {}) {
         this.res = res;
@@ -237,7 +250,7 @@ export class StreamHandler {
                     logger,
                     component: 'StreamHandler',
                     message: err.message,
-                    meta: { ...opMeta, type: err.type, code: err.code }
+                    meta: { ...opMeta, type: err.type, code: err.code, ...describeCause(err) }
                 });
                 if (!headersSent) {
                     // Never started the SSE stream — re-throw so the caller can

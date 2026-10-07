@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { StreamHandler } from '../src/streaming/sse.js';
+import { StreamHandler, describeCause } from '../src/streaming/sse.js';
 import EventEmitter from 'node:events';
 
 class MockResponse extends EventEmitter {
@@ -113,5 +113,44 @@ describe('Streaming & SSE', () => {
         expect(res.headers['Content-Type']).to.equal('text/event-stream');
         expect(res.body).to.include('"content":"hello"');
         expect(res.body).to.include('data: [DONE]');
+    });
+
+    it('should write an in-band error chunk when the stream dies after content', async () => {
+        const res = new MockResponse();
+        const handler = new StreamHandler(res);
+
+        async function* dyingGenerator() {
+            yield { choices: [{ delta: { content: 'partial' } }] };
+            const err = new TypeError('terminated');
+            err.cause = Object.assign(new Error('other side closed'), { code: 'ECONNRESET' });
+            throw err;
+        }
+
+        await handler.process(dyingGenerator());
+
+        // Headers were already flushed by the content chunk, so the error can
+        // only travel in-band; the stream must not end with a normal [DONE].
+        expect(res.headers['Content-Type']).to.equal('text/event-stream');
+        expect(res.body).to.include('"content":"partial"');
+        expect(res.body).to.include('"code":"STREAM_ERROR"');
+        expect(res.body).to.include('terminated');
+        expect(res.body).to.not.include('data: [DONE]');
+    });
+
+    it('should name the socket-level cause of a failure in the log meta', () => {
+        const reset = new TypeError('terminated');
+        reset.cause = Object.assign(new Error('other side closed'), { code: 'ECONNRESET' });
+        expect(describeCause(reset)).to.deep.equal({ cause: 'other side closed', causeCode: 'ECONNRESET' });
+
+        const bare = new TypeError('terminated');
+        bare.cause = new Error('socket hang up');
+        expect(describeCause(bare)).to.deep.equal({ cause: 'socket hang up' });
+
+        const plain = new Error('HTTP Error 529');
+        expect(describeCause(plain)).to.deep.equal({});
+
+        const stringCause = new Error('wrapped');
+        stringCause.cause = 'weird upstream';
+        expect(describeCause(stringCause)).to.deep.equal({ cause: 'weird upstream' });
     });
 });
