@@ -5,6 +5,28 @@ import { getEncoding } from 'js-tiktoken';
 const CL100K = getEncoding('cl100k_base');
 const O200K = getEncoding('o200k_base');
 
+// The encode below is synchronous and sits in the request path, and
+// js-tiktoken's BPE is quadratic on long runs of very few distinct
+// characters: measured 1.15s at 5KB, 4.5s at 10KB, 17.8s at 20KB of one
+// repeated glyph (and equally for two alternating ones) — a multi-megabyte
+// payload of that shape would stall every request the gateway is serving.
+// Real text never looks like that: even hex, a bare 16 distinct characters,
+// encodes 100KB in 22ms. So anything at or under a handful of distinct
+// characters is garbage for estimation purposes — the char-ratio fallback is
+// exact for repeated ASCII (cl100k 'rrrr' is one token), and where it
+// under-counts, the upstream's context-window rejection remains the backstop.
+const DEGENERATE_MIN_CHARS = 4000;
+const DEGENERATE_DISTINCT_CHARS = 6;
+
+function distinctCharCountAtMost(text, limit) {
+    const seen = new Set();
+    for (let i = 0; i < text.length; i++) {
+        seen.add(text.charCodeAt(i));
+        if (seen.size > limit) return false;
+    }
+    return true;
+}
+
 export class TokenEstimator {
     constructor(config) {
         this.fallbackRatio = config?.tokenEstimation?.fallbackRatio ?? 0.25;
@@ -34,6 +56,10 @@ export class TokenEstimator {
         }
 
         if (!text) return imageCost;
+
+        if (text.length >= DEGENERATE_MIN_CHARS && distinctCharCountAtMost(text, DEGENERATE_DISTINCT_CHARS)) {
+            return Math.ceil(text.length * this.fallbackRatio) + imageCost;
+        }
 
         // tiktoken (synchronous). On a lone-surrogate encode failure, fall back
         // to the char-ratio heuristic — but log nothing here (hot path); the
