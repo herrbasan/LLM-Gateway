@@ -417,9 +417,11 @@ export function parseContextOverflow(message) {
  * window, shrink the output budget to what fits and send it once more.
  *
  * `send` is injected so the retry can be tested without a live upstream.
+ * `client` (from describeClient, attached by the chat route) names the caller on
+ * the warning — without it the numbers below say what happened but not to whom.
  * Only a context-length rejection is retried, and only once.
  */
-export async function sendWithBudgetRetry(send, body, modelId = null) {
+export async function sendWithBudgetRetry(send, body, modelId = null, client = null) {
     try {
         return await send(body);
     } catch (error) {
@@ -440,11 +442,13 @@ export async function sendWithBudgetRetry(send, body, modelId = null) {
             body.thinking.budget_tokens = Math.max(1, remaining - 1);
         }
 
-        // The model belongs on this line. Without it a context rejection is
-        // unattributable — two different models declare the same budget, and a
-        // reader has no way to tell which one produced the numbers.
+        // The model and the client belong on this line. Without the model a
+        // context rejection is unattributable — two different models declare
+        // the same budget; without the client it says what happened but not
+        // which of the gateway's callers it happened to.
         logger.warn('Upstream rejected the request for exceeding its context window — retrying with a reduced output budget', {
             model: modelId,
+            ...(client ? { client } : {}),
             contextWindow: overflow.contextWindow,
             promptTokens: overflow.promptTokens,
             requestedCompletion: overflow.requestedCompletion,
@@ -922,7 +926,8 @@ export function createAnthropicAdapter() {
                     body: JSON.stringify(payload)
                 }),
                             body,
-                            model
+                            model,
+                            request.client ?? null
                         );
 
                         const data = await res.json();
@@ -1009,7 +1014,8 @@ export function createAnthropicAdapter() {
                     body: JSON.stringify(payload)
                 }),
                             body,
-                            model
+                            model,
+                            request.client ?? null
                         );
 
                         if (!res.ok) {

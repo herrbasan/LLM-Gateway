@@ -179,9 +179,15 @@ export function createChatHandler(router, ticketRegistry) {
             // request, so an incident names the client instead of arriving anonymous.
             const client = describeClient(req);
             const abortController = !isAsync ? bindRequestAbortController(req, res) : null;
-            const requestBody = abortController
-                ? { ...req.body, signal: abortController.signal, sessionId }
-                : { ...req.body, sessionId };
+            // The client descriptor travels with the request so deep layers
+            // (adapters) can attribute their warnings — a context-window retry
+            // without a caller is a number with no one to ask about.
+            const requestBody = {
+                ...req.body,
+                sessionId,
+                client,
+                ...(abortController ? { signal: abortController.signal } : {})
+            };
 
             // Handle streaming
             if (isStream && !isAsync) {
@@ -196,7 +202,7 @@ export function createChatHandler(router, ticketRegistry) {
 
                 let result;
                 const _streamStart = Date.now();
-                logger.debug('Stream start', { model: req.body?.model, msgCount: req.body?.messages?.length, streamId: _streamStart }, 'ChatRoute');
+                logger.debug('Stream start', { model: req.body?.model, msgCount: req.body?.messages?.length, client, streamId: _streamStart }, 'ChatRoute');
                 try {
                     // Mutable holders, not snapshots: sse.js reads them lazily
                     // (context at chunk time, meta when it logs), so a retried
