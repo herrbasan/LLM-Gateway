@@ -1266,6 +1266,13 @@ leaves before dispatch: `max_tokens = min(requested, contextWindow − estimated
 The 64-token slack absorbs the disagreement between the local estimate and the
 upstream tokeniser.
 
+The estimate covers the whole payload the upstream counts, not just message
+text: tool definitions, assistant `tool_calls`, and `reasoning`/`reasoning_content`
+traces are all included. They travel outside `content` but are billed as input
+all the same — an agent session can hold more tokens in these fields than in its
+visible text (2026-10-08: a messages-only estimate of ≤664K against an upstream
+count of 869K let every turn of a session reach the rejection before the fix).
+
 **Rescue.** The `anthropic` adapter still retries a rejection once, with
 `max_tokens` set to whatever the window has left. No token estimate is involved —
 the rejection reports both numbers the upstream used — and a `WARN` records the

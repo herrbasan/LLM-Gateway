@@ -14,6 +14,7 @@
 import { describe, it } from 'mocha';
 import { expect } from 'chai';
 import { ModelRouter } from '../src/core/model-router.js';
+import { TokenEstimator } from '../src/context/estimator.js';
 
 const WINDOW = 1000000;
 const BUDGET = 384000;
@@ -87,5 +88,62 @@ describe('ModelRouter — output budget pre-flight', () => {
         it('still clamps when a small window is genuinely exceeded', () => {
             expect(fit(64000, { windowSize: 200000, usedTokens: 180000 })).to.equal(200000 - 180000 - 64);
         });
+    });
+});
+
+// The estimate must cover what the upstream counts, not just message content.
+// The 2026-10-08 miss was exactly here: a 1M-window session whose payload was
+// fat with tool schemas, assistant tool_calls, and reasoning traces estimated
+// at ≤664K while DeepSeek counted 869K — so the clamp above never fired and
+// every turn of the session paid a rejected round-trip before the retry saved it.
+describe('ModelRouter — context estimate covers the whole payload', () => {
+    const MODEL = { capabilities: { contextWindow: WINDOW }, adapterModel: 'deepseek-flash' };
+    const bare = Object.create(ModelRouter.prototype);
+    bare.tokenEstimator = new TokenEstimator({});
+    const usedTokens = async (messages, tools) =>
+        (await bare._buildContextStats(messages, MODEL, null, tools)).usedTokens;
+    // Varied filler — js-tiktoken's BPE degenerates on megabytes of a single
+    // repeated glyph, which is not a shape real payloads have.
+    const filler = (chars) => 'the quick brown fox jumps over the lazy dog '.repeat(Math.ceil(chars / 45));
+
+    it('counts tool definitions, which travel outside the messages', async () => {
+        const messages = [{ role: 'user', content: 'run it' }];
+        const withoutTools = await usedTokens(messages);
+        const withTools = await usedTokens(messages, [{
+            type: 'function',
+            function: { name: 'dispatch', description: filler(20000), parameters: { type: 'object' } }
+        }]);
+        expect(withTools).to.be.greaterThan(withoutTools + 4000);
+    });
+
+    it('counts assistant tool calls', async () => {
+        const plain = await usedTokens([{ role: 'assistant', content: 'ok' }]);
+        const withCalls = await usedTokens([{
+            role: 'assistant',
+            content: 'ok',
+            tool_calls: [{ id: 'c1', function: { name: 'f', arguments: JSON.stringify({ blob: filler(20000) }) } }]
+        }]);
+        expect(withCalls).to.be.greaterThan(plain + 4000);
+    });
+
+    it('counts reasoning traces that ride alongside the answer', async () => {
+        const plain = await usedTokens([{ role: 'assistant', content: 'ok' }]);
+        const withReasoning = await usedTokens([{ role: 'assistant', content: 'ok', reasoning_content: filler(20000) }]);
+        expect(withReasoning).to.be.greaterThan(plain + 4000);
+    });
+
+    it('makes the 2026-10-08 shape clamp instead of sailing into a rejection', async () => {
+        // Small visible text, fat invisible payload: the exact blind spot.
+        const messages = [
+            { role: 'user', content: 'continue' },
+            { role: 'assistant', content: 'done', reasoning_content: filler(1300000) }
+        ];
+        const tools = [{
+            type: 'function',
+            function: { name: 't', description: filler(2000000), parameters: { type: 'object' } }
+        }];
+        const context = { windowSize: WINDOW, usedTokens: await usedTokens(messages, tools) };
+        expect(context.usedTokens).to.be.greaterThan(WINDOW - BUDGET - 64);
+        expect(fit(BUDGET, context)).to.be.lessThan(BUDGET);
     });
 });

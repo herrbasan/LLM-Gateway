@@ -228,7 +228,7 @@ export class ModelRouter {
         // Replace image blocks with descriptive text for non-vision models
         const messages = this._prepareImagesForModel(processedMessages, modelConfig);
 
-        const context = await this._buildContextStats(messages, modelConfig, adapter);
+        const context = await this._buildContextStats(messages, modelConfig, adapter, opts.tools);
 
         const requestedMaxTokens = effectiveRequest.max_completion_tokens ?? effectiveRequest.max_tokens ?? effectiveRequest.maxTokens ?? null;
                 const resolvedMaxTokens = this._fitMaxTokensToWindow(
@@ -323,7 +323,7 @@ export class ModelRouter {
 
         const processedMessages = await this._processImagesInMessages(opts.messages, modelConfig, request.image_processing);
         const messages = this._prepareImagesForModel(processedMessages, modelConfig);
-        const context = await this._buildContextStats(messages, modelConfig, adapter);
+        const context = await this._buildContextStats(messages, modelConfig, adapter, opts.tools);
 
         const resolvedMaxTokens = this._fitMaxTokensToWindow(
                     request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens
@@ -660,15 +660,23 @@ export class ModelRouter {
         /**
          * Estimate tokens for messages to populate context stats.
          */
-        async _buildContextStats(messages, modelConfig, adapter) {
+        async _buildContextStats(messages, modelConfig, adapter, tools = null) {
         const contextWindow = modelConfig.capabilities.contextWindow;
-        
+
         let estimatedTokens = 0;
         if (messages.length > 0) {
             estimatedTokens = await this._estimateMessagesTokens(messages, adapter, modelConfig);
         }
+            // Tool definitions are input tokens to the upstream but travel outside
+            // the messages, so a messages-only count silently under-reports exactly
+            // the requests most likely to overflow — an agent session can carry a
+            // six-figure schema bill (2026-10-08: estimate ≤664K, upstream 869K;
+            // the pre-flight missed and every turn of the session paid a rejection).
+            if (Array.isArray(tools) && tools.length > 0) {
+                estimatedTokens += this.tokenEstimator.estimate(JSON.stringify(tools), null, modelConfig.adapterModel);
+            }
 
-        const available = Math.max(0, contextWindow - estimatedTokens);
+            const available = Math.max(0, contextWindow - estimatedTokens);
 
         return {
             // camelCase (new clients)
@@ -696,6 +704,18 @@ export class ModelRouter {
                 total += this.tokenEstimator.estimate(m.content, null, modelConfig.adapterModel);
             } else {
                 total += this.tokenEstimator.estimate(String(m.content || ''), null, modelConfig.adapterModel);
+            }
+            // Tool calls and reasoning traces travel outside `content`, but the
+            // upstream counts them as input all the same — a long agent history
+            // can hold more tokens in these two fields than in the visible text
+            // (observed 2026-10: 215K reasoning + 103K tool-call tokens in one
+            // conversation), and omitting them is what blinded the pre-flight.
+            if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+                total += this.tokenEstimator.estimate(JSON.stringify(m.tool_calls), null, modelConfig.adapterModel);
+            }
+            const reasoning = m.reasoning_content ?? m.reasoning;
+            if (typeof reasoning === 'string' && reasoning.length > 0) {
+                total += this.tokenEstimator.estimate(reasoning, null, modelConfig.adapterModel);
             }
         }
         return total;
