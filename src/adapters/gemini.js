@@ -133,6 +133,13 @@ export function createGeminiAdapter() {
                 throw err;
             }
 
+            // Terminal interaction statuses. A failed or cancelled interaction is
+            // still an HTTP 200 carrying whatever steps exist, so reporting it as
+            // a normal 'stop' would hand the client a successful empty answer.
+            if (data.status === 'failed' || data.status === 'cancelled') {
+                throw new Error(`Gemini interaction ${data.status}`);
+            }
+
             const steps = data.steps || [];
             let outText = '';
             const tool_calls = [];
@@ -173,9 +180,10 @@ export function createGeminiAdapter() {
             const message = { role: 'assistant', content: outText || null };
             if (tool_calls.length > 0) message.tool_calls = tool_calls;
 
-            const finishReason = (data.status === 'requires_action' || tool_calls.length > 0)
-                ? 'tool_calls'
-                : 'stop';
+            // 'incomplete' means the model used all of max_output_tokens — OpenAI's
+            // 'length'. A pending tool call is the more specific signal and wins.
+            let finishReason = data.status === 'incomplete' ? 'length' : 'stop';
+            if (data.status === 'requires_action' || tool_calls.length > 0) finishReason = 'tool_calls';
 
             return {
                 id: `gemini-${Date.now()}`,
@@ -191,7 +199,12 @@ export function createGeminiAdapter() {
                 usage: {
                     prompt_tokens: data.usage?.total_input_tokens || 0,
                     completion_tokens: data.usage?.total_output_tokens || 0,
-                    total_tokens: data.usage?.total_tokens || 0
+                    total_tokens: data.usage?.total_tokens || 0,
+                    // Implicit caching is best-effort and works with store:false,
+                    // so this is the only place a caller can see whether it landed.
+                    prompt_tokens_details: {
+                        cached_tokens: data.usage?.total_cached_tokens || 0
+                    }
                 }
             };
         },
@@ -234,6 +247,7 @@ export function createGeminiAdapter() {
             let argsBuffer = '';              // accumulated arguments_delta fragments
             let hasEmittedTools = false;
             let usage = null;
+            let terminalStatus = null;        // last status seen (status_update / completed)
 
             const chunkFor = (delta, finishReason = null) => ({
                 id: processId,
@@ -273,13 +287,24 @@ export function createGeminiAdapter() {
 
                         const type = event.event_type;
 
+                        if (type === 'interaction.status_update') {
+                            if (event.status) terminalStatus = event.status;
+                            continue;
+                        }
+
                         if (type === 'interaction.completed') {
                             const u = event.interaction?.usage;
+                            // The event name is not a success signal: it carries
+                            // requires_action (tool call pending) and failed/cancelled.
+                            if (event.interaction?.status) terminalStatus = event.interaction.status;
                             if (u) {
                                 usage = {
                                     prompt_tokens: u.total_input_tokens || 0,
                                     completion_tokens: u.total_output_tokens || 0,
-                                    total_tokens: u.total_tokens || 0
+                                    total_tokens: u.total_tokens || 0,
+                                    prompt_tokens_details: {
+                                        cached_tokens: u.total_cached_tokens || 0
+                                    }
                                 };
                             }
                             continue;
@@ -340,12 +365,21 @@ export function createGeminiAdapter() {
                             continue;
                         }
 
-                        // interaction.created / interaction.status_update / done — ignored
+                        // interaction.created / done — ignored
                     }
                 }
 
+                // A stream that ended on failed/cancelled still delivered whatever
+                // steps it produced before dying; finishing with 'stop' would
+                // report that truncated answer as complete.
+                if (terminalStatus === 'failed' || terminalStatus === 'cancelled') {
+                    throw new Error(`Gemini interaction ${terminalStatus}`);
+                }
+
                 // Terminal finish_reason chunk, then usage chunk.
-                yield chunkFor({}, hasEmittedTools ? 'tool_calls' : 'stop');
+                let finishReason = hasEmittedTools ? 'tool_calls' : 'stop';
+                if (terminalStatus === 'incomplete') finishReason = 'length';
+                yield chunkFor({}, finishReason);
                 if (usage) {
                     yield {
                         id: processId,
