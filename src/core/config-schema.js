@@ -65,6 +65,12 @@ export function validateModelConfig(modelId, config) {
         throw new Error(`[Config] Model "${modelId}": maxTokens must be a positive number`);
     }
 
+    // The output budget sent when the client sends none — declared policy for models
+    // whose upstream requires the field. Validated so a typo cannot become a request.
+    if ('defaultMaxTokens' in config && (typeof config.defaultMaxTokens !== 'number' || config.defaultMaxTokens < 1)) {
+        throw new Error(`[Config] Model "${modelId}": defaultMaxTokens must be a positive number`);
+    }
+
     // Validate optional extraBody if present (must be an object)
     if ('extraBody' in config && (typeof config.extraBody !== 'object' || config.extraBody === null || Array.isArray(config.extraBody))) {
         throw new Error(`[Config] Model "${modelId}": extraBody must be an object`);

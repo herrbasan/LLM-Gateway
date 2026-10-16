@@ -76,6 +76,20 @@ const CASES = [
         ]
     },
     {
+        // The 2026-10-16 incident. The same upstream slip as the case above, but the
+        // client executed BOTH calls it was handed, so each carries its own result.
+        // This shape was missing here, and the repair pass was built against the
+        // one-result variant: it dropped the repeat, left the second result with no
+        // call to answer, and the session died on every resend.
+        name: 'two identical tool_use with ONE shared id, TWO results',
+        tools: true,
+        messages: [
+            { role: 'user', content: [text('Ping two hosts.')] },
+            { role: 'assistant', content: [call('call_dup', 'a'), call('call_dup', 'b')] },
+            { role: 'user', content: [result('call_dup'), result('call_dup')] }
+        ]
+    },
+    {
         name: 'distinct tool_use ids, one result each (control)',
         tools: true,
         messages: [

@@ -39,6 +39,7 @@ const poisoned = [
     {
         role: 'assistant',
         content: 'Checking.',
+        reasoning_content: 'The client echoes the model\'s reasoning back, and DeepSeek refuses a tool-call continuation without it.',
         tool_calls: [
             { type: 'function', id: 'call_dup', function: { name: 'ping', arguments: '{"host":"a"}' } },
             { type: 'function', id: 'call_dup', function: { name: 'ping', arguments: '{"host":"a"}' } }
@@ -47,6 +48,25 @@ const poisoned = [
     { role: 'tool', tool_call_id: 'call_dup', content: 'pong' },
     { role: 'tool', tool_call_id: 'call_ghost', content: 'pong' },
     { role: 'user', content: '' }
+];
+
+// The 2026-10-16 shape: the same upstream slip, but this time the client executed
+// BOTH calls it was handed and sent a result for each. Dropping the repeat then left
+// the second result with no call to answer — "each tool_use must have a single
+// result", on every resend, until the session died.
+const poisonedTwice = [
+    { role: 'user', content: 'Ping host a and host b.' },
+    {
+        role: 'assistant',
+        content: 'Checking both.',
+        reasoning_content: 'The client echoes the model\'s reasoning back, and DeepSeek refuses a tool-call continuation without it.',
+        tool_calls: [
+            { type: 'function', id: 'call_twice', function: { name: 'ping', arguments: '{"host":"a"}' } },
+            { type: 'function', id: 'call_twice', function: { name: 'ping', arguments: '{"host":"b"}' } }
+        ]
+    },
+    { role: 'tool', tool_call_id: 'call_twice', content: 'pong a' },
+    { role: 'tool', tool_call_id: 'call_twice', content: 'pong b' }
 ];
 
 // The same first turn as raw Anthropic blocks — what the adapter would emit if the
@@ -69,7 +89,7 @@ const adapter = createAnthropicAdapter();
 
 console.log('\n1. endpoint reachable?');
 try {
-    await adapter.chatComplete(modelConfig, { messages: [{ role: 'user', content: 'Say hi.' }], max_tokens: 16, stream: false });
+    await adapter.chatComplete(modelConfig, { messages: [{ role: 'user', content: 'Say hi.' }], maxTokens: 16, stream: false });
     console.log('   ok');
 } catch (error) {
     console.log(`   FAILED: ${error.message.slice(0, 200)}`);
@@ -81,7 +101,7 @@ try {
     const response = await adapter.chatComplete(modelConfig, {
         messages: poisoned,
         tools: TOOLS,
-        max_tokens: 32,
+        maxTokens: 32,
         stream: false
     });
     console.log(`   ACCEPTED: ${JSON.stringify(response).slice(0, 180)}`);
@@ -111,7 +131,20 @@ console.log('\n3. same duplicate-id turn sent raw (pass bypassed) — expect rej
     console.log(`   REJECTED as expected (${response.status}): ${body.replace(/\s+/g, ' ').slice(0, 200)}`);
 }
 
-console.log('\nRead the pair: step 3 shows the exact rejection the incident produced');
-console.log('(`tool_use` ids must be unique). Step 2 shows that rejection is gone when the');
-console.log('pass runs — if step 2 names a DIFFERENT rule, that rule is the next blocker for');
-console.log('this upstream, not a failure of the pass.');
+console.log('\n4. the 2026-10-16 shape (both calls answered) — expect success');
+try {
+    const response = await adapter.chatComplete(modelConfig, {
+        messages: poisonedTwice,
+        tools: TOOLS,
+        maxTokens: 32,
+        stream: false
+    });
+    console.log(`   ACCEPTED: ${JSON.stringify(response).slice(0, 180)}`);
+} catch (error) {
+    console.log(`   REJECTED: ${error.message.slice(0, 240)}`);
+}
+
+console.log('\nRead the pair: step 3 shows the exact rejection the incidents produced');
+console.log('(a `tool_use` id must have exactly one result). Steps 2 and 4 show that');
+console.log('rejection gone when the pass runs — if one names a DIFFERENT rule, that rule is');
+console.log('the next blocker for this upstream, not a failure of the pass.');

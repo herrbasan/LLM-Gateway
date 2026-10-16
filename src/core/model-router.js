@@ -17,12 +17,22 @@ const logger = getLogger();
 // Canonical effort scale, low → high. 'none' is off-scale (thinking disabled).
 const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
-// Slack left between the prompt and the output budget so a request lands just
-// inside the window rather than exactly on it. The local estimate and the
-// upstream tokeniser never agree to the token; without slack the pre-flight
-// would clear a request the upstream still rejects, and the rescue path would
-// fire on requests that should have passed clean.
-const OUTPUT_BUDGET_HEADROOM = 64;
+/**
+ * The output budget for one request: the client's own, verbatim, or nothing at all.
+ *
+ * `capabilities.maxOutputTokens` is a published fact about the model and is never
+ * sent as a request. Asking for the whole ceiling is what manufactured impossible
+ * requests — 2026-10-16, a 745K-token prompt plus a 384K budget nobody asked for,
+ * rejected on every turn of that session — and the gateway has no way to size an
+ * answer on a client's behalf. When the upstream *requires* the field (native
+ * Anthropic, Kimi), the model declares `defaultMaxTokens`: stated policy, sent
+ * unchanged, never derived from a capability.
+ */
+export function resolveOutputBudget(request, modelConfig) {
+    return request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens
+        ?? modelConfig?.defaultMaxTokens
+        ?? null;
+}
 
 /**
  * Map a requested effort value to the nearest level the model declares.
@@ -231,10 +241,7 @@ export class ModelRouter {
         const context = await this._buildContextStats(messages, modelConfig, adapter, opts.tools);
 
         const requestedMaxTokens = effectiveRequest.max_completion_tokens ?? effectiveRequest.max_tokens ?? effectiveRequest.maxTokens ?? null;
-                const resolvedMaxTokens = this._fitMaxTokensToWindow(
-                    requestedMaxTokens ?? modelConfig.capabilities?.maxOutputTokens ?? null,
-                    context
-                );
+        const resolvedMaxTokens = resolveOutputBudget(effectiveRequest, modelConfig);
 
                 const finalOpts = {
                     ...opts,
@@ -325,12 +332,7 @@ export class ModelRouter {
         const messages = this._prepareImagesForModel(processedMessages, modelConfig);
         const context = await this._buildContextStats(messages, modelConfig, adapter, opts.tools);
 
-        const resolvedMaxTokens = this._fitMaxTokensToWindow(
-                    request.max_completion_tokens ?? request.max_tokens ?? request.maxTokens
-                        ?? modelConfig.capabilities?.maxOutputTokens
-                        ?? null,
-                    context
-                );
+        const resolvedMaxTokens = resolveOutputBudget(request, modelConfig);
 
                 const finalOpts = { ...opts, messages, maxTokens: resolvedMaxTokens, signal: request.signal };
 
@@ -621,44 +623,7 @@ export class ModelRouter {
     }
 
     /**
-         * Fit an output budget to the room the prompt actually leaves.
-         *
-         * An upstream enforces ONE ceiling on the SUM of prompt and completion. A
-         * model with a 1M window and a 384K declared output cap therefore produces a
-         * request that CANNOT succeed once the prompt passes 616K — not
-         * occasionally, always. The stateless client resends it unchanged, so every
-         * turn pays a rejected round-trip before `sendWithBudgetRetry` rescues it.
-         *
-         * That rescue stays. This is the pre-flight: the estimate is local and
-         * approximate, so when it under-counts the upstream still rejects and the
-         * retry still corrects using the upstream's own numbers. When it over-counts
-         * the budget is merely a little smaller than it needed to be.
-         *
-         * Returns `maxTokens` unchanged when it already fits, and unchanged when
-         * the estimate is missing — an absent number is not evidence of overflow,
-         * and inventing one is exactly the guess this codebase forbids.
-         */
-        _fitMaxTokensToWindow(maxTokens, context) {
-            if (maxTokens == null) return maxTokens;
-
-            const windowSize = context?.windowSize;
-            const usedTokens = context?.usedTokens;
-            if (typeof windowSize !== 'number' || typeof usedTokens !== 'number') return maxTokens;
-            if (isNaN(windowSize) || isNaN(usedTokens)) return maxTokens;
-
-            const headroom = windowSize - usedTokens - OUTPUT_BUDGET_HEADROOM;
-            if (headroom >= maxTokens) return maxTokens;
-
-            // The prompt alone fills the window. There is no budget to give and
-            // nothing sensible to invent — let the upstream reject it with its own
-            // authoritative numbers rather than substituting a made-up one.
-            if (headroom < 1) return maxTokens;
-
-            return Math.floor(headroom);
-        }
-
-        /**
-         * Estimate tokens for messages to populate context stats.
+     * Estimate tokens for messages to populate context stats.
          */
         async _buildContextStats(messages, modelConfig, adapter, tools = null) {
         const contextWindow = modelConfig.capabilities.contextWindow;

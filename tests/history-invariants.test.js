@@ -33,7 +33,40 @@ describe('enforceHistoryInvariants', () => {
         expect(enforceHistoryInvariants(messages)).to.deep.equal(messages);
     });
 
-    it('drops a repeated id inside one turn and keeps the result paired with the survivor', () => {
+    it('re-issues a repeated id inside one turn when the client executed both calls', () => {
+        // 2026-10-16: this history was refused with "each tool_use must have a single
+        // result" on every resend. The repeat used to be dropped while both of its
+        // results stayed, and the session died with it.
+        const messages = [
+            user(text('ping both hosts')),
+            assistant(call('dup', { host: 'a' }), call('dup', { host: 'b' })),
+            user(result('dup'), result('dup')),
+            assistant(text('both answered'))
+        ];
+
+        const out = enforceHistoryInvariants(messages);
+
+        const ids = idsOf(out[1]);
+        expect(ids).to.have.length(2);
+        expect(new Set(ids).size, 'one id per call').to.equal(2);
+        expect(ids[0], 'the first call keeps the id the client wrote').to.equal('dup');
+        expect(resultIdsOf(out[2]), 'each result answers its own call').to.deep.equal(ids);
+    });
+
+    it('drops a second result for a call that a first result already answered', () => {
+        const messages = [
+            user(text('ping')),
+            assistant(call('solo')),
+            user(result('solo'), result('solo'))
+        ];
+
+        const out = enforceHistoryInvariants(messages);
+
+        expect(idsOf(out[1])).to.deep.equal(['solo']);
+        expect(resultIdsOf(out[2])).to.deep.equal(['solo']);
+    });
+
+    it('drops a repeated id inside one turn when nothing can answer the repeat', () => {
         const messages = [
             user(text('ping')),
             assistant(call('dup', { host: 'a' }), call('dup', { host: 'a' })),
@@ -157,6 +190,21 @@ describe('enforceHistoryInvariants', () => {
     it('refuses a request that has no sendable message left', () => {
         expect(() => enforceHistoryInvariants([user(text('')), assistant()]))
             .to.throw(/no sendable messages/);
+    });
+
+    it('drops a call that carries no id, having nothing to answer it', () => {
+        const messages = [
+            user(text('ping')),
+            assistant({ type: 'tool_use', name: 'ping', input: { host: 'a' } }),
+            user({ type: 'tool_result', content: 'pong' }),
+            assistant(text('carry on'))
+        ];
+
+        const out = enforceHistoryInvariants(messages);
+
+        // Neither side can reference the other, so neither can be sent.
+        expect(out.map(m => m.role)).to.deep.equal(['user', 'assistant']);
+        expect(out[1].content).to.deep.equal([text('carry on')]);
     });
 
     it('keeps non-tool content untouched', () => {

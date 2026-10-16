@@ -897,7 +897,7 @@ POST /v1/chat/completions
 | Adapter | `enable_thinking` becomes |
 |---------|--------------------------|
 | `openai` | `chat_template_kwargs.enable_thinking` (only if `capabilities.thinking === "chat_template_kwargs"`) |
-| `gemini` | `generation_config.thinking_level` (`high`/`minimal`) |
+| `gemini` | `generation_config.thinking_level` (`high`/`low`) |
 | `anthropic` | `thinking` block |
 | `responses` | `reasoning.effort` |
 
@@ -1232,16 +1232,42 @@ shape straight to the configured endpoints; DeepSeek and Kimi, 2026-09-19):
 | empty content array | **rejected** | accepted |
 | empty text block | accepted | **rejected** |
 | duplicate `tool_use` id | **rejected** | **rejected** |
+| duplicate `tool_use` id, a result for each | **rejected** | not measured |
 | `tool_result` with no matching `tool_use` | **rejected** | **rejected** |
 | `tool_use` whose result is missing from the immediately next message | **rejected** | **rejected** |
 
-So the pass drops empty text blocks, makes tool ids unique (a repeat inside one turn
-is dropped; an id reused from an earlier turn is re-issued with that pair's result
-rewritten), pairs calls with the results in the message immediately after them —
-dropping either side when it cannot pair — and drops any message left empty, since
-neither filler is legal on both providers (`[]` breaks DeepSeek, an empty text block
-breaks Kimi). Dropping messages is only safe because neither provider enforces role
-alternation.
+So the pass drops empty text blocks, makes tool ids unique, pairs calls with the
+results in the message immediately after them — dropping either side when it cannot
+pair — and drops any message left empty, since neither filler is legal on both
+providers (`[]` breaks DeepSeek, an empty text block breaks Kimi). Dropping messages
+is only safe because neither provider enforces role alternation.
+
+A repeated call id is **re-issued**, not dropped. One upstream slip — the model emits
+one id for two calls — arrives in two shapes that need opposite halves repaired
+(2026-09-19 vs 2026-10-16): a repeat the client recorded once has no second result, so
+the repeat goes; a repeat the client executed twice comes back with a result for each,
+and dropping either half leaves a `tool_result` no call can answer, which the upstream
+refuses with "each tool_use must have a single result" on every resend. Re-issuing the
+repeat keeps both calls and both results, and the upstream reads two ordinary parallel
+calls. Both shapes are covered by `scripts/probe-history-shapes.mjs` and
+`scripts/verify-history-repair-e2e.mjs`, which proves the repaired history is accepted
+live (the missing second shape is the gap that produced the 2026-10-16 incident).
+
+### One id, one call — the duplicate never leaves the gateway
+
+Repair is the net, not the plan. The OpenAI wire format the client reads says a tool
+call id is unique within a message, and the client keys its results by exactly that
+id — so when an upstream emits one id for two calls, the client executes both and
+returns two results under one id, and every later turn carries the poison. The
+`anthropic` adapter therefore re-issues a repeated id **as it reads the upstream
+response** (streaming and non-streaming alike): the client sees two distinct ids, its
+next-turn history is valid without repair, and the re-issue is logged at `warn` with
+the model, the id it was given and the id it sent. Everything keyed by the id — the
+cached thinking block replayed on the next turn — follows the client-visible id.
+
+Observed live 2026-10-16 on `deepseek-flash-chat` (DeepSeek's Anthropic endpoint):
+two `tool_use` blocks sharing one id, two results returned by the client, then
+`400 each tool_use must have a single result` on every request of that session.
 
 One `WARN` on the `AnthropicAdapter` logger names everything that changed. A request
 whose messages are all empty throws `EMPTY_HISTORY` (400) — that one is the caller's
@@ -1259,27 +1285,27 @@ A prompt that fills the window plus a large output budget is rejected as a whole
 A stateless client resends that identical request on every retry, so a 50-token
 overshoot kills the session as surely as a malformed history.
 
-**Prevention.** An upstream enforces one ceiling on the *sum* of prompt and
-completion, so a model with a 1M window declaring a 384K output cap produces a
-request that cannot succeed once the prompt passes **616,000 tokens** — always,
-not occasionally. `ModelRouter` therefore fits the budget to the room the prompt
-leaves before dispatch: `max_tokens = min(requested, contextWindow − estimatedPrompt − 64)`.
-The 64-token slack absorbs the disagreement between the local estimate and the
-upstream tokeniser.
+**The gateway does not size the budget, and does not pre-flight the window.** The
+client's `max_tokens` is forwarded verbatim; when the client sends none, none is sent
+(or the model's declared `defaultMaxTokens`, for upstreams that require the field).
+That is deliberate. Until 2026-10-16 the router fell back to
+`capabilities.maxOutputTokens`, so a Copilot turn on a long session asked for a
+384,000-token completion nobody had requested, against a 1,048,576-token window —
+50 rejections in 44 minutes, every one of them self-inflicted. A ceiling is a fact
+about the model, not a request on the client's behalf.
 
-The estimate covers the whole payload the upstream counts, not just message
-text: tool definitions, assistant `tool_calls`, and `reasoning`/`reasoning_content`
-traces are all included. They travel outside `content` but are billed as input
-all the same — an agent session can hold more tokens in these fields than in its
-visible text (2026-10-08: a messages-only estimate of ≤664K against an upstream
-count of 869K let every turn of a session reach the rejection before the fix).
+There is no pre-flight either, because judging whether a request fits needs the
+prompt's true token count and a local estimate is not it: on 2026-10-08 an estimate
+of ≤664K sat against an upstream count of 869K, and every turn of that session
+reached the rejection. The estimate remains — as telemetry, and as the number behind
+`context.usedTokens` and the client's context gauge.
 
-**Rescue.** The `anthropic` adapter still retries a rejection once, with
+**Rescue.** A rejection for length is retried once by the `anthropic` adapter, with
 `max_tokens` set to whatever the window has left. No token estimate is involved —
 the rejection reports both numbers the upstream used — and a `WARN` records the
-model, the original budget and the reduced one. A thinking budget that would then
-exceed `max_tokens` is lowered with it. Only this rejection is retried, and only
-once.
+model, the client, the original budget and the reduced one. A thinking budget that
+would then exceed `max_tokens` is lowered with it. Only this rejection is retried,
+and only once.
 
 The two are complementary: prevention acts on a local estimate, rescue acts on the
 upstream's own count. When the estimate under-counts, the upstream still rejects

@@ -25,6 +25,7 @@ import path from 'node:path';
 import EventEmitter from 'node:events';
 import { createAdapters } from '../src/core/adapters.js';
 import { StreamHandler } from '../src/streaming/sse.js';
+import { enforceHistoryInvariants } from '../src/adapters/anthropic.js';
 
 class MockResponse extends EventEmitter {
     constructor() {
@@ -186,6 +187,51 @@ describe('Anthropic adapter — streaming frames', function () {
         } finally {
             globalThis.fetch = realFetch;
         }
+    });
+
+    it('re-issues a tool_use id the upstream reused, so the client can key its results', async () => {
+        // 2026-10-16: DeepSeek's anthropic endpoint emitted one id for two calls. The
+        // client executed both and sent two results under that id; the upstream
+        // refused it ("each tool_use must have a single result") on every resend and
+        // the session died. The duplicate must not leave the gateway at all.
+        const result = await collect([
+            { type: 'message_start', message: { id: 'msg_probe', usage: { input_tokens: 100 } } },
+            { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_dup', name: 'ping' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"host":"a"}' } },
+            { type: 'content_block_stop', index: 0 },
+            { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_dup', name: 'ping' } },
+            { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"host":"b"}' } },
+            { type: 'content_block_stop', index: 1 },
+            { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+            { type: 'message_stop' }
+        ]);
+
+        const calls = result.chunks
+            .flatMap(c => c.choices?.[0]?.delta?.tool_calls ?? [])
+            .filter(tc => tc.id);
+        const ids = calls.map(tc => tc.id);
+
+        expect(ids).to.have.length(2);
+        expect(new Set(ids).size, 'one id per call').to.equal(2);
+        expect(ids[0], 'the first call keeps the id the upstream gave').to.equal('toolu_dup');
+
+        // What the client sends back next turn, built from those ids. The history
+        // repair stays in place as a net, but it must have nothing to do here.
+        const history = [
+            { role: 'user', content: [{ type: 'text', text: 'ping both' }] },
+            {
+                role: 'assistant',
+                content: calls.map(tc => ({
+                    type: 'tool_use',
+                    id: tc.id,
+                    name: tc.function.name,
+                    input: JSON.parse(tc.function.arguments || '{}')
+                }))
+            },
+            { role: 'user', content: ids.map(id => ({ type: 'tool_result', tool_use_id: id, content: 'pong' })) }
+        ];
+
+        expect(enforceHistoryInvariants(history)).to.deep.equal(history);
     });
 
     it('carries the thinking signature through to the tool-call turn', async () => {

@@ -134,6 +134,37 @@ export function describeRequestShape(body) {
     };
 }
 
+// One id, one call — the OpenAI wire contract we present to clients, and the handle
+// the client keys its tool results by. When an upstream slips and emits a single id
+// for two calls (DeepSeek, 2026-10-16) the client executes both and returns two
+// results under that one id, which the upstream then refuses for the rest of the
+// session: "each tool_use must have a single result". Repairing that history is a
+// net for damage already done; it is not the solution, because the duplicate never
+// has to leave the gateway. A repeat is re-issued as it is read, so the id the client
+// sees — and therefore sends back next turn — is already unique, and everything
+// keyed by it downstream (the thinking cache, the cached signature) follows.
+function createToolUseIdAllocator(model) {
+    const used = new Set();
+    return (id) => {
+        if (typeof id !== 'string' || id.length === 0) return id;
+        let candidate = id;
+        let n = 1;
+        while (used.has(candidate)) {
+            n += 1;
+            candidate = `${id}~gw${n}`;
+        }
+        used.add(candidate);
+        if (candidate !== id) {
+            logger.warn('Upstream reused one tool_use id for two calls — re-issued for the client', {
+                model,
+                from: id,
+                to: candidate
+            }, 'AnthropicAdapter');
+        }
+        return candidate;
+    };
+}
+
 // A history whose last message is the model's own finished answer has nothing
 // left to answer. A prefill (partial assistant text to continue) never carries
 // reasoning, so a trailing assistant turn WITH thinking is a completed turn the
@@ -177,6 +208,17 @@ export function rejectAnsweredHistory(formatted) {
 // alternation. And tool pairing is mandatory in both directions, so every
 // assistant turn is reconciled against the message immediately after it.
 //
+// A repeated call id is re-issued, never dropped. One upstream slip (the model
+// emits a single id for two calls) produces two arriving shapes, and each needs the
+// opposite half repaired: a repeat the client recorded once has no second result, so
+// the repeat goes; a repeat the client executed twice comes back with a result for
+// each, and dropping either half leaves a tool_result no call can answer — the
+// upstream's "each tool_use must have a single result" then fails every resend and
+// the session dies (2026-10-16, the shape `scripts/probe-history-shapes.mjs` was
+// missing). Re-issuing keeps both calls and both results, and the upstream reads two
+// ordinary parallel calls; a result left with no call to answer is dropped as an
+// orphan, which is what the one-result shape reduces to.
+//
 // Nothing is repaired silently: one WARN names everything that changed.
 export function enforceHistoryInvariants(formatted) {
     const report = {
@@ -188,15 +230,19 @@ export function enforceHistoryInvariants(formatted) {
         orphanResults: [],
         droppedMessages: 0
     };
-    // What actually left the history. The WARN above reports counts, which is what
-    // an incident needs; the blocks themselves are reported at debug, because a
-    // repair changes what the model sees and that change has to be auditable
-    // afterwards rather than taken on faith. Bounded — a broken history must not be
-    // able to grow a log line without limit.
-    const DROPPED_TRAIL_LIMIT = 20;
+    // What actually left the history, and what was rewritten to stay in it. The WARN
+    // above reports counts, which is what an incident needs; the blocks themselves are
+    // reported at debug, because a repair changes what the model sees and that change
+    // has to be auditable afterwards rather than taken on faith. Bounded — a broken
+    // history must not be able to grow a log line without limit.
+    const TRAIL_LIMIT = 20;
     const droppedTrail = [];
+    const reissuedTrail = [];
     const noteDropped = (reason, block) => {
-        if (droppedTrail.length < DROPPED_TRAIL_LIMIT) droppedTrail.push({ reason, block });
+        if (droppedTrail.length < TRAIL_LIMIT) droppedTrail.push({ reason, block });
+    };
+    const noteReissued = (reason, from, to) => {
+        if (reissuedTrail.length < TRAIL_LIMIT) reissuedTrail.push({ reason, from, to });
     };
     const seenIds = new Set();
 
@@ -223,11 +269,15 @@ export function enforceHistoryInvariants(formatted) {
     });
 
     // Reconcile one assistant turn with the message immediately after it: ids are
-    // made unique, then calls and results are paired, dropping what cannot pair.
+    // made unique, then calls and results are paired one for one, dropping what
+    // cannot pair.
     const reconcilePair = (blocks, nextBlocks) => {
-        const remap = new Map();
-        const inMessage = new Set();
         const kept = [];
+        // Every kept call in source order, with the id its result has to carry.
+        const calls = [];
+        // Ids as the client wrote them, to tell a repeat inside this turn from an id
+        // reused from an earlier one — the two are reported differently.
+        const originalsInTurn = new Set();
 
         for (const block of blocks) {
             if (block?.type !== 'tool_use') {
@@ -235,36 +285,40 @@ export function enforceHistoryInvariants(formatted) {
                 continue;
             }
             if (typeof block.id !== 'string' || block.id.length === 0) {
-                // No identity: nothing can pair with it, and inventing one would
-                // not create the pairing. Sent as the client wrote it.
+                // No identity: nothing can pair with it, and inventing one would not
+                // create the pairing. It is dropped below, as any unanswered call is.
                 report.idlessCallIds++;
                 kept.push(block);
+                calls.push({ originalId: block.id, finalId: block.id, block });
                 continue;
             }
-            if (inMessage.has(block.id)) {
-                // Second time in the same turn. The result that follows can only
-                // pair with one call, so the repeat is not representable.
+
+            const repeatedInTurn = originalsInTurn.has(block.id);
+            originalsInTurn.add(block.id);
+
+            if (!seenIds.has(block.id)) {
+                seenIds.add(block.id);
+                kept.push(block);
+                calls.push({ originalId: block.id, finalId: block.id, block });
+                continue;
+            }
+
+            // The id is taken — by an earlier call in this turn or by one in an
+            // earlier turn. Either way this is a different call wearing a used id, so
+            // it is re-issued. Only this pair's result follows the rename: a result
+            // belongs to the message next to its call.
+            const newId = freshId(block.id);
+            seenIds.add(newId);
+            const reissued = { ...block, id: newId };
+            kept.push(reissued);
+            calls.push({ originalId: block.id, finalId: newId, block: reissued });
+            if (repeatedInTurn) {
                 report.duplicateCallIds.push(block.id);
-                noteDropped('duplicateCall', block);
-                continue;
-            }
-            inMessage.add(block.id);
-
-            if (seenIds.has(block.id)) {
-                // The same id in an earlier turn: this is a different call wearing
-                // a used id, so it is re-issued. Only this pair's results are
-                // rewritten — a result belongs to the message next to its call.
-                const newId = freshId(block.id);
-                seenIds.add(newId);
-                inMessage.add(newId);
-                remap.set(block.id, newId);
+                noteReissued('duplicateCall', block.id, newId);
+            } else {
                 report.reusedCallIds.push({ from: block.id, to: newId });
-                kept.push({ ...block, id: newId });
-                continue;
+                noteReissued('reusedCall', block.id, newId);
             }
-
-            seenIds.add(block.id);
-            kept.push(block);
         }
 
         if (!nextBlocks) {
@@ -277,36 +331,41 @@ export function enforceHistoryInvariants(formatted) {
             return { blocks: finalBlocks, nextBlocks: null };
         }
 
-        const results = nextBlocks.map((block) => {
-            if (block?.type !== 'tool_result') return block;
-            if (typeof block.tool_use_id === 'string' && remap.has(block.tool_use_id)) {
-                return { ...block, tool_use_id: remap.get(block.tool_use_id) };
+        // Pair by occurrence, in source order: the Nth result carrying an id answers
+        // the Nth call carrying it. Position is what holds a repeated id's two results
+        // to their two calls — the id alone cannot say which result is which.
+        const answered = new Map();
+        const finalResults = [];
+        for (const block of nextBlocks) {
+            if (block?.type !== 'tool_result') {
+                finalResults.push(block);
+                continue;
             }
-            return block;
-        });
-
-        const paired = new Set();
-        const callIds = kept.filter(b => b?.type === 'tool_use').map(b => b.id);
-        const resultIds = new Set(results.filter(b => b?.type === 'tool_result').map(b => b.tool_use_id));
-        for (const id of callIds) {
-            if (resultIds.has(id)) paired.add(id);
+            // A result with no id of its own can answer nothing: the upstream requires
+            // the field, so it is dropped here rather than sent as written.
+            const call = block.tool_use_id == null
+                ? null
+                : calls.find(c => c.originalId === block.tool_use_id && !answered.has(c));
+            if (call) {
+                answered.set(call, call.finalId);
+                finalResults.push(call.finalId === block.tool_use_id
+                    ? block
+                    : { ...block, tool_use_id: call.finalId });
+                continue;
+            }
+            // A result must sit in the message immediately after its call, so an
+            // unpaired one here can no longer be attached to anything — a second
+            // result for a call that another result already answered included.
+            report.orphanResults.push(block.tool_use_id ?? null);
+            noteDropped('orphanResult', block);
         }
 
         const finalBlocks = kept.filter((block) => {
             if (block?.type !== 'tool_use') return true;
-            if (paired.has(block.id)) return true;
+            const call = calls.find(c => c.block === block);
+            if (call && answered.has(call)) return true;
             report.unansweredCalls.push(block.id);
             noteDropped('unansweredCall', block);
-            return false;
-        });
-
-        const finalResults = results.filter((block) => {
-            if (block?.type !== 'tool_result') return true;
-            if (block.tool_use_id != null && paired.has(block.tool_use_id)) return true;
-            // A result must sit in the message immediately after its call, so an
-            // unpaired one here can no longer be attached to anything.
-            report.orphanResults.push(block.tool_use_id ?? null);
-            noteDropped('orphanResult', block);
             return false;
         });
 
@@ -378,10 +437,12 @@ export function enforceHistoryInvariants(formatted) {
             messageCount: formatted.length,
             sentMessages: out.length
         }, 'AnthropicAdapter');
-        logger.debug('Dropped from outbound history', {
+        logger.debug('Changed the outbound history to satisfy upstream rules', {
             dropped: droppedTrail,
+            reissued: reissuedTrail,
             trailTruncated: report.emptyTextBlocks + report.duplicateCallIds.length
-                + report.unansweredCalls.length + report.orphanResults.length > droppedTrail.length
+                + report.reusedCallIds.length + report.unansweredCalls.length
+                + report.orphanResults.length > droppedTrail.length + reissuedTrail.length
         }, 'AnthropicAdapter');
     }
 
@@ -933,6 +994,13 @@ export function createAnthropicAdapter() {
                         const data = await res.json();
 
             if (data.content && Array.isArray(data.content)) {
+                // The id the client sees is the id it sends back, so a repeat is
+                // re-issued here — before the thinking cache and the response are
+                // built from it.
+                const allocateToolUseId = createToolUseIdAllocator(model);
+                for (const block of data.content) {
+                    if (block?.type === 'tool_use') block.id = allocateToolUseId(block.id);
+                }
                 const thinkingBlocks = data.content.filter(b => b.type === 'thinking');
                 const toolUses = data.content.filter(b => b.type === 'tool_use');
                 if (thinkingBlocks.length > 0 && toolUses.length > 0) {
@@ -1035,6 +1103,7 @@ export function createAnthropicAdapter() {
             let thinkingSignature = null;
             let thinkingText = '';
             const toolUseIds = [];
+            const allocateToolUseId = createToolUseIdAllocator(model);
 
             // What the upstream actually sent. A stream that yields nothing has to
             // be able to name its own shape — without this the consumer can only
@@ -1182,7 +1251,11 @@ export function createAnthropicAdapter() {
                             };
                         }
                         if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-                            toolUseIds.push(event.content_block.id);
+                            // One id, one call: the client keys its result by this id,
+                            // so a repeat from upstream is re-issued here (and cached,
+                            // and echoed back next turn, under this id).
+                            const toolUseId = allocateToolUseId(event.content_block.id);
+                            toolUseIds.push(toolUseId);
                             yield {
                                 id: event.message?.id || processId,
                                 object: 'chat.completion.chunk',
@@ -1194,7 +1267,7 @@ export function createAnthropicAdapter() {
                                     delta: {
                                         tool_calls: [{
                                             index: event.index,
-                                            id: event.content_block.id,
+                                            id: toolUseId,
                                             type: 'function',
                                             function: { name: event.content_block.name, arguments: '' }
                                         }]

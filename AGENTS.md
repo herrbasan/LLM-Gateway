@@ -25,7 +25,7 @@
 - **Chat cancellation**: HTTP client disconnect aborts the upstream provider request for fetch-based chat adapters. (The WebSocket transport was removed — see below.)
 - **Zero-output streams fail over HTTP**: SSE headers are withheld until a chunk carries output the client renders — answer content, a tool call, or reasoning. An upstream that produces nothing at all is answered with an HTTP error + JSON body rather than a 200 stream whose first chunk already claimed `finish_reason: "stop"`.
 - **Reasoning streams live**: reasoning deltas are released the moment they arrive, never held back until the first answer token. A thinking model can reason for minutes, and a client that sees no bytes at all aborts and retries the whole request. An attempt that streamed reasoning but never produced an answer is reported in-band (`ZERO_CONTENT`, "streamed reasoning but never produced an answer") instead of being retried.
-- **Per-model `maxOutputTokens`**: Omitted `max_tokens` values fall back to `capabilities.maxOutputTokens` declared in each model config. Required for Anthropic-adapter upstreams (Kimi, DeepSeek, MiniMax). OpenAI-adapter upstreams omit the field and use their own default.
+- **Output budget**: the client's `max_tokens` / `max_completion_tokens` is forwarded verbatim and never clamped. When the client sends none, the gateway sends none — `capabilities.maxOutputTokens` is published in `/v1/models` as a fact about the model and never becomes a request. A model whose upstream *requires* the field declares `defaultMaxTokens` (verified live 2026-10-16: Kimi and native Anthropic answer 400 without it; DeepSeek and MiniMax do not care).
 - **Context telemetry (SSE)**: The gateway attaches a `context` object to the `finish_reason` chunk and injects a final usage chunk so REST clients get cumulative token counts.
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
 - **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST with adapter-specific format conversion (COMPLETE)
@@ -121,7 +121,7 @@ Disabled models:
 |---------|-------------|-----------------|-------|
 | `openai` | Standard OpenAI Chat Completions API | chat, embedding, image | Omits `max_tokens` when client omits it; upstream decides default. `generateImage` targets the upstream's OpenAI-native `/images` endpoint (OpenRouter pattern, verified with krea-2-medium-turbo 2026-09-24) |
 | `responses` | OpenAI Responses API (newer format) | chat | — |
-| `anthropic` | Anthropic Claude API | chat | Requires `max_tokens`; falls back to `capabilities.maxOutputTokens` if client omits it |
+| `anthropic` | Anthropic Claude API | chat | Requires `max_tokens`; falls back to `capabilities.maxOutputTokens` if client omits it. Repairs malformed tool history and re-issues a tool-call id the upstream repeats — one id never reaches a client twice (see `documentation/api_rest.md` > Malformed Tool-Call History, One id, one call) |
 | `gemini` | Google Gemini API | chat, embedding | Chat uses the Interactions API (stateless); embeddings stay on generateContent/batchEmbedContents |
 
 > Only these four adapters are registered (`src/core/adapters.js`) and validated (`config-schema.js`). A config naming any other adapter (e.g. the removed `kimi`/`alibaba`/`llamacpp`) fails validation at startup.
@@ -225,24 +225,40 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 
 The Gemini chat paths (`chatComplete`, `streamComplete`) were migrated from the legacy `generateContent` API to the **Interactions API** (`POST /v1beta/interactions`).
 
-- **Stateless mode**: the gateway sends `store: false` and passes the full conversation history in `input` (a step timeline). No server-side interaction IDs, and Google retains nothing.
+- **Stateless mode**: the gateway sends `store: false` and passes the full conversation history in `input` (a step timeline). No server-side interaction IDs, and Google retains nothing. Both follow from sending the timeline itself — input mapping, not a retention policy: `store` is a flag, and flipping it leaves the client contract untouched.
 - **Input step mapping** (OpenAI messages → `input` steps): user → `user_input`, assistant text → `model_output`, assistant `tool_calls` → `thought` + `function_call`, tool → `function_result`.
 - **Function calls carry a native `id`**, and Gemini rejects an echoed `function_call` without its preceding `thought` step. The thought `signature` is cached to disk keyed by the call id (`logs/gemini-signatures/`) and replayed on the next turn — the same cache as the old `thought_signature` solution, now keyed by the native id instead of a synthesized one.
 - **No `tool_choice`/`tool_config`** in the Interactions API. `tool_choice: "none"` is honoured by omitting tools; other choices are unsupported (model decides).
-- **`enable_thinking`** maps to `generation_config.thinking_level`; the valid enum is `minimal|low|medium|high` (no `none`/`dynamic`).
+- **`enable_thinking`** maps to `generation_config.thinking_level` — `true` → `high`, `false` → `low`. The upstream enum is `low|medium|high`: `minimal` was dropped in Gemini 3.x and there is no off switch (`none` is not a level).
 - Embeddings and `listModels` are **unchanged** (still `generateContent`/`batchEmbedContents` — the Interactions API does not cover them).
+
+### Gemini Terminal Statuses and Long Decode (2026-10-13)
+
+The Interactions API answers HTTP 200 for every terminal state; the outcome rides in `status` (non-streaming) and in the `interaction.status_update` / `interaction.completed` events (streaming). **`interaction.completed` is not a success signal** — a pending tool call reports `status: "requires_action"` on that event.
+
+- `failed` / `cancelled` → the adapter throws. Both states still return whatever steps the dying interaction produced, so reporting them as `finish_reason: "stop"` handed the client a truncated or empty answer claiming success.
+- `incomplete` (the model used all of `max_output_tokens`) → `finish_reason: "length"`.
+- `completed` / `requires_action` → `stop` / `tool_calls`, unchanged.
+
+**Long decode is not wired up.** Gemini 4 Argon generates past 64K only with `background: true`, and the API rejects that with `store=false` — verified live 2026-10-13: `store=true is required for background interactions.` The adapter sends `store: false` because passing the full step timeline makes server-side state unnecessary — an input-mapping choice, not a retention policy (there is none). So output stays capped at 65,536 today, and a client asking for more gets the upstream's own 400 naming the reason (`max_output_tokens greater than 65536 is not yet supported with background=false`) — fail loud, never clamp.
+
+Unlocking it is code, not policy: send `store: true` and drive background execution for over-cap requests only — `POST` with `background: true` returns `{ id, status: "in_progress" }` immediately with no steps, then poll `GET /interactions/{id}` until terminal and join the text of every `model_output` step (verified live 2026-10-13). `store: true` leaves the client contract untouched: clients still send full history and `previous_interaction_id` stays unused. The difference is that Google keeps a copy of the interaction.
+
+> Google's background-execution guide claims `store=false` is accepted with background (24h TTL). The API disagrees; the probe above is authoritative.
+
+Gemini 4 Argon (`gemini-4-argon`, config `gemini-argon-chat`) is the flagship reasoning model: one 1,048,576-token window shared by input, thinking and output; thinking levels `low|medium|high` with `medium` the default and no way to switch thinking off; `temperature`/`top_p`/`top_k` ignored, hence `excludeParams`.
+
+**Implicit caching is the cost lever, and it is best-effort.** On by default for Gemini 2.5+ (minimum 4,096 input tokens on Argon), it works with `store: false` — retention is not the enabler — and discounts cached input by 95%. It is not dependable: verified live 2026-10-13, three identical requests sent back-to-back all reported 0 cached tokens, while the same prefix ten seconds apart hit for 2,193 of 4,242 input tokens, and hits and misses alternated with no change in the request. The adapter reports hits as `usage.prompt_tokens_details.cached_tokens` (the gateway's convention, see `src/utils/response-format.js`) so the discount is observable instead of assumed.
 
 ### Max Output Tokens
 
-The gateway does not synthesize output token budgets. For each model:
+The gateway does not synthesize output budgets, and it does not enforce a model's ceiling:
 
-- If the client sends `max_tokens` / `max_completion_tokens`, it is forwarded unchanged.
-- If omitted and the model declares `capabilities.maxOutputTokens`, that value is sent upstream.
-- If omitted and no `maxOutputTokens` is declared, the field is omitted (OpenAI-adapter upstreams provide their own default; Anthropic-adapter upstreams will reject the request).
+- If the client sends `max_tokens` / `max_completion_tokens`, it is forwarded unchanged — not clamped to anything.
+- If the client sends none, **none is sent**, unless the model declares `defaultMaxTokens`: stated policy, sent verbatim. Measured live 2026-10-16 — `deepseek-flash` and both MiniMax models answer 200 with no `max_tokens` (and also accept `max_tokens: 2000000`); Kimi (all three IDs) and native Anthropic answer `400 max_tokens: Field required`. Those seven models declare `defaultMaxTokens` in `config.json`.
+- `capabilities.maxOutputTokens` never becomes a request. It did until 2026-10-16, and that is what manufactured impossible requests: a Copilot turn on a long session sent "745,526 in the messages, 384,000 in the completion" against a 1,048,576-token window and paid a rejected round trip on every turn — 50 warnings in 44 minutes, all self-inflicted, because nobody had asked for 384,000 tokens.
 
-This means Anthropic-adapter models (Kimi, DeepSeek, MiniMax) **must** declare `capabilities.maxOutputTokens` in `config.json`.
-
-A prompt plus that budget can exceed the upstream's window (DeepSeek rejects it as a whole, e.g. "you requested 1048626 tokens (664626 in the messages, 384000 in the completion)"). The `anthropic` adapter retries such a request once with `max_tokens` reduced to what the window has left, using the numbers the rejection itself reports. See `documentation/api_rest.md` > Context-Window Overshoot.
+The gateway does not pre-flight the window either: the local token estimate is telemetry, not a gate. If a request genuinely does not fit, the upstream's own rejection is the authority — the `anthropic` adapter retries once with `max_tokens` set to what the window has left. See `documentation/api_rest.md` > Context-Window Overshoot.
 
 ### GLM Models — OpenAI Adapter (z.ai Context Caching)
 
@@ -298,7 +314,7 @@ The gateway supports disabling/enabling model reasoning per-request over REST. A
 | Adapter | `enable_thinking` becomes | Gate |
 |---------|--------------------------|------|
 | `openai` | `chat_template_kwargs.enable_thinking` | Only if `capabilities.thinking === "chat_template_kwargs"` |
-| `gemini` | `generation_config.thinking_level` (`high`\|`minimal`) | Always |
+| `gemini` | `generation_config.thinking_level` (`high`\|`low`) | Always |
 | `anthropic` | `thinking` block | Always |
 | `responses` | `reasoning.effort` | Always |
 
