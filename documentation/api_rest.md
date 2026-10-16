@@ -340,8 +340,9 @@ Generate an image. Synchronous — no ticket machinery. Requires a model of `typ
 |-------|-------|
 | `prompt` | Required. 400 if missing/empty. |
 | `model` / `task` | Same resolution rules as chat. |
-| `size` | OpenAI-style `"WxH"`. Snapped to the nearest entry in the model's declared `capabilities.aspectRatios`. |
-| `aspect_ratio` | Direct `"W:H"` — wins over `size`. 422 if not in the model's declared `aspectRatios`. |
+| `size` | OpenAI-style `"WxH"`. Never discarded — forwarded upstream verbatim as `width`/`height` + `size`; the ratio derived from it rides along as `aspect_ratio`. Invalid strings are rejected with 400. |
+| `aspect_ratio` | Direct `"W:H"` composition preset. Wins as the ratio when given alongside `size`/`width`/`height` — the explicit pixels are still forwarded. 422 if not in the model's declared `aspectRatios`. |
+| `width`, `height` | Explicit pixel dimensions, forwarded verbatim (override `size`). Both required, positive integers — 400 otherwise. |
 | `n` | Number of images. 422 above `capabilities.maxN` when declared. |
 | `seed`, `user` | Passed through. |
 | `input_references` | Image-to-image. Array of data-URI/URL strings or `{image_url:{url}}` objects. Requires `capabilities.editing: true` on the model (422 otherwise). References are fetched (SSRF-safe) and auto-conformed to the model's `imageInputLimit.maxDimension` via the media processor — same as chat vision — then always sent upstream as data URIs (zero-retention providers reject remote URLs). |
@@ -1477,7 +1478,7 @@ for await (const event of ticket.stream()) {
 - `dimensions` (number) - Output embedding dimensions
 
 **Image Models:**
-- `aspectRatios` (array of `"W:H"` strings) - Ratios the upstream accepts. Client `size` (`"WxH"`) is snapped to the nearest declared entry; an explicit `aspect_ratio` outside the set is rejected with 422. Undeclared means sizes pass through untouched.
+- `aspectRatios` (array of `"W:H"` strings) - Capability gate for caller-chosen `aspect_ratio` presets (422 outside the set). Explicit pixel dimensions (`size` / `width`+`height`) are never snapped — they pass through verbatim and upstreams prioritize them; the ratio derived from explicit pixels is informational and ungated.
 - `maxN` (number) - Maximum images per request (`n` above it is rejected with 422)
 - `editing` (boolean) - Accepts `input_references` for image-to-image (verified on OpenRouter `qwen/qwen-image-3` 2026-09-25; Krea 2's i2i is broken upstream — data-URI references return 502 RuntimeError)
 - `imageInputLimit` (object, model-level not capability) - `{ maxDimension, maxFileSize, supportedFormats }`. Reference images are resized to `maxDimension` by the media processor before upload; without a media processor they pass through unconformed (logged as warn).

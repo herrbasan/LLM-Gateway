@@ -162,14 +162,72 @@ describe('Image Generation', () => {
             }
         });
 
-        it('maps size WxH to the nearest declared aspect ratio', async () => {
+        it('forwards explicit size as width/height/size with the derived aspect ratio', async () => {
             const adapter = createOpenAIAdapter();
             const { calls, restore } = stubFetch(imageApiResponse());
             try {
-                await adapter.generateImage(modelConfig, { prompt: 'a cat', size: '1920x1080' });
-                expect(calls[0].body.aspect_ratio).to.equal('16:9');
+                await adapter.generateImage(modelConfig, { prompt: 'a cat', size: '3840x2160' });
+                const sent = calls[0].body;
+                expect(sent.width).to.equal(3840);
+                expect(sent.height).to.equal(2160);
+                expect(sent.size).to.equal('3840x2160');
+                expect(sent.aspect_ratio).to.equal('16:9');
             } finally {
                 restore();
+            }
+        });
+
+        it('passes an undeclared derived ratio (2:1) through when explicit pixels are given', async () => {
+            const narrowConfig = {
+                ...modelConfig,
+                capabilities: { aspectRatios: ['1:1', '16:9'] }
+            };
+            const adapter = createOpenAIAdapter();
+            const { calls, restore } = stubFetch(imageApiResponse());
+            try {
+                await adapter.generateImage(narrowConfig, { prompt: 'panorama', size: '1920x960' });
+                const sent = calls[0].body;
+                expect(sent.width).to.equal(1920);
+                expect(sent.height).to.equal(960);
+                expect(sent.size).to.equal('1920x960');
+                expect(sent.aspect_ratio).to.equal('16:9');
+            } finally {
+                restore();
+            }
+        });
+
+        it('forwards explicit width/height verbatim', async () => {
+            const adapter = createOpenAIAdapter();
+            const { calls, restore } = stubFetch(imageApiResponse());
+            try {
+                await adapter.generateImage(modelConfig, { prompt: 'a cat', width: 3840, height: 2160 });
+                const sent = calls[0].body;
+                expect(sent.width).to.equal(3840);
+                expect(sent.height).to.equal(2160);
+                expect(sent.size).to.equal('3840x2160');
+                expect(sent.aspect_ratio).to.equal('16:9');
+            } finally {
+                restore();
+            }
+        });
+
+        it('rejects width without height with 400', async () => {
+            const adapter = createOpenAIAdapter();
+            try {
+                await adapter.generateImage(modelConfig, { prompt: 'a cat', width: 3840 });
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.status).to.equal(400);
+            }
+        });
+
+        it('rejects non-positive width/height with 400', async () => {
+            const adapter = createOpenAIAdapter();
+            try {
+                await adapter.generateImage(modelConfig, { prompt: 'a cat', width: 0, height: 100 });
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.status).to.equal(400);
             }
         });
 
@@ -178,7 +236,10 @@ describe('Image Generation', () => {
             const { calls, restore } = stubFetch(imageApiResponse());
             try {
                 await adapter.generateImage(modelConfig, { prompt: 'a cat', size: '1024x1024', aspect_ratio: '9:16' });
-                expect(calls[0].body.aspect_ratio).to.equal('9:16');
+                const sent = calls[0].body;
+                expect(sent.aspect_ratio).to.equal('9:16');
+                expect(sent.width).to.equal(1024);
+                expect(sent.height).to.equal(1024);
             } finally {
                 restore();
             }

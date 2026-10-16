@@ -22,7 +22,7 @@ export function createOpenAIAdapter() {
                 stream: false
             };
 
-            applyTokenParams(payload, request, capabilities);
+            applyTokenParams(payload, request);
             applyStandardParams(payload, request, modelConfig);
             applyFormatParams(payload, request, capabilities);
             applyToolParams(payload, request);
@@ -71,7 +71,7 @@ export function createOpenAIAdapter() {
                 stream: true
             };
 
-            applyTokenParams(payload, request, capabilities);
+            applyTokenParams(payload, request);
             applyStandardParams(payload, request, modelConfig);
             applyFormatParams(payload, request, capabilities);
             applyToolParams(payload, request);
@@ -226,8 +226,10 @@ export function createOpenAIAdapter() {
          * Generate image(s) via the upstream's OpenAI-native /images endpoint
          * (OpenRouter pattern, verified live 2026-09-24: krea-2-medium-turbo
          * answers { created, data: [{ b64_json, media_type }], usage.cost }).
-         * The gateway's job is parameter normalization — size/aspect_ratio
-         * snapping and capability gating — the response passes through as-is.
+         * The gateway's job is parameter normalization — explicit pixel
+         * dimensions pass through verbatim (upstreams prioritize width/height;
+         * aspect_ratio rides along as metadata) while caller-chosen aspect_ratio
+         * presets are capability-gated — the response passes through as-is.
          */
         async generateImage(modelConfig, request) {
             const { endpoint, apiKey, adapterModel, capabilities, headers: customHeaders } = modelConfig;
@@ -243,9 +245,46 @@ export function createOpenAIAdapter() {
                 prompt: request.prompt
             };
 
-            const aspectRatio = request.aspect_ratio ?? sizeToAspectRatio(request.size);
+            // Explicit pixel dimensions pass through verbatim — upstreams
+            // prioritize width/height and only fall back to their aspect-ratio
+            // table when pixel targets are missing. Snapping a size like
+            // 3840x2160 down to {"aspect_ratio": "16:9"} loses the resolution
+            // tier entirely (4K → upstream default) and distorts arbitrary
+            // ratios (1920x960 → 16:9).
+            let width = null;
+            let height = null;
+            if (request.width != null || request.height != null) {
+                if (!Number.isInteger(request.width) || !Number.isInteger(request.height) || request.width < 1 || request.height < 1) {
+                    const err = new Error(`[OpenAIAdapter] width/height must both be positive integers (got ${JSON.stringify(request.width)}x${JSON.stringify(request.height)})`);
+                    err.status = 400;
+                    throw err;
+                }
+                width = request.width;
+                height = request.height;
+            } else if (typeof request.size === 'string') {
+                const m = /^(\d+)x(\d+)$/.exec(request.size);
+                if (!m) {
+                    const err = new Error(`[OpenAIAdapter] Invalid size "${request.size}" — expected "WxH" (e.g. "1024x1024")`);
+                    err.status = 400;
+                    throw err;
+                }
+                width = Number(m[1]);
+                height = Number(m[2]);
+            }
+            if (width != null) {
+                payload.width = width;
+                payload.height = height;
+                payload.size = `${width}x${height}`;
+            }
+
+            // aspect_ratio is a composition preset. A caller-chosen preset is
+            // gated against the model's declared set; one derived from explicit
+            // dimensions is informational only — the upstream ignores it in
+            // favor of width/height, so an undeclared derived ratio (e.g. 2:1
+            // from 1920x960) must not 422 the request.
+            const aspectRatio = request.aspect_ratio ?? (width != null ? sizeToAspectRatio(`${width}x${height}`) : null);
             if (aspectRatio != null) {
-                if (Array.isArray(capabilities?.aspectRatios) && !capabilities.aspectRatios.includes(aspectRatio)) {
+                if (request.aspect_ratio != null && Array.isArray(capabilities?.aspectRatios) && !capabilities.aspectRatios.includes(aspectRatio)) {
                     const err = new Error(`[OpenAIAdapter] Aspect ratio "${aspectRatio}" not supported (declared: ${capabilities.aspectRatios.join(', ')})`);
                     err.status = 422;
                     throw err;
@@ -413,17 +452,14 @@ function sizeToAspectRatio(size) {
     return best;
 }
 
-function applyTokenParams(payload, request, capabilities) {
-    const maxOutput = capabilities?.maxOutputTokens;
-
+function applyTokenParams(payload, request) {
+    // Forwarded verbatim. The capability ceiling is published as information and
+    // enforces nothing: a client that asks for more than the model allows gets the
+    // upstream's own answer, which names the real limit.
     if (request.maxCompletionTokens != null) {
-        payload.max_completion_tokens = maxOutput
-            ? Math.min(request.maxCompletionTokens, maxOutput)
-            : request.maxCompletionTokens;
+        payload.max_completion_tokens = request.maxCompletionTokens;
     } else if (request.maxTokens != null) {
-        payload.max_tokens = maxOutput
-            ? Math.min(request.maxTokens, maxOutput)
-            : request.maxTokens;
+        payload.max_tokens = request.maxTokens;
     }
 }
 
