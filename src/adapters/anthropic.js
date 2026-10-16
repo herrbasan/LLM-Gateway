@@ -40,7 +40,12 @@ const MAPPED_DELTA_TYPES = new Set(['text_delta', 'thinking_delta', 'input_json_
 // reliably round-trip thinking parts, so each tool_use's preceding thinking
 // block (text + signature) is cached keyed by the tool_use id and re-injected
 // on the next turn. Mirrors the Gemini adapter's thought-signature cache.
-const THINKING_CACHE_DIR = path.join(process.cwd(), 'logs', 'anthropic-thinking');
+// Tests must not write into the gateway's own cache: tests/setup.js points LOG_DIR
+// at tests/_Test_Assets/logs, and the logger honours it, but this path did not — so
+// a suite run left its keys in the live cache dir, where they read as evidence
+// about real traffic during an incident.
+const LOGS_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
+const THINKING_CACHE_DIR = path.join(LOGS_DIR, 'anthropic-thinking');
 const memoryThinkingBlocks = new Map();
 let thinkingCachePruned = false;
 
@@ -164,6 +169,14 @@ function createToolUseIdAllocator(model) {
         return candidate;
     };
 }
+
+// Providers that require an assistant turn's thinking to be echoed on a tool-call
+// continuation (`capabilities.priorReasoning`). Verified live 2026-10-16 against
+// DeepSeek and Kimi: the requirement is STRUCTURAL, not semantic — a turn with no
+// thinking block is a 400, while an EMPTY block is accepted.
+const requiresPriorThinking = (capabilities) =>
+    capabilities?.priorReasoning === 'required'
+    || capabilities?.priorReasoning === 'required-with-tools';
 
 // A history whose last message is the model's own finished answer has nothing
 // left to answer. A prefill (partial assistant text to continue) never carries
@@ -590,7 +603,7 @@ export function createAnthropicAdapter() {
         return result;
     }
 
-    async function formatMessages(messages, capabilities) {
+    async function formatMessages(messages, capabilities, model) {
         if (!messages) return [];
 
         function mapContentParts(contentArray) {
@@ -623,6 +636,15 @@ export function createAnthropicAdapter() {
         // Re-inject the cached thinking block ahead of tool_use blocks when the
         // client did not supply one. DeepSeek requires the prior turn's thinking
         // block to be echoed back on tool-call continuations.
+        //
+        // When neither the client's echo nor the cache can supply it — a turn
+        // produced by a different adapter, or one whose thinking was never captured
+        // — the block goes back EMPTY instead of not at all. No thinking is not
+        // recoverable, but its absence is fatal: the provider refuses every resend
+        // of that history ("The `content[].thinking` in the thinking mode must be
+        // passed back to the API", 2026-10-16), so the session could never continue.
+        // The block asserts nothing about the reasoning — it is empty — and the loss
+        // is logged rather than passed off as real.
         async function injectCachedThinking(content, toolCalls) {
             if (content.some(c => c.type === 'thinking')) return content;
             for (const tc of toolCalls || []) {
@@ -632,6 +654,15 @@ export function createAnthropicAdapter() {
                     if (cached.signature) block.signature = cached.signature;
                     return [block, ...content];
                 }
+            }
+            if (requiresPriorThinking(capabilities)) {
+                const ids = (toolCalls || []).map(tc => tc.id).filter(Boolean);
+                logger.warn('No prior thinking recoverable for a tool-call turn — sending an empty block', {
+                    model,
+                    toolCallIds: ids.slice(0, 3),
+                    toolCallCount: ids.length
+                }, 'AnthropicAdapter');
+                return [{ type: 'thinking', thinking: '' }, ...content];
             }
             return content;
         }
@@ -928,7 +959,7 @@ export function createAnthropicAdapter() {
             const systemPrompt = extractedSystem ?? request.systemPrompt;
 
             const messages = normalizeMessages(rawMessages);
-            const formattedMessages = await formatMessages(messages, capabilities);
+            const formattedMessages = await formatMessages(messages, capabilities, model);
             rejectAnsweredHistory(formattedMessages);
 
             const body = {
@@ -1031,7 +1062,7 @@ export function createAnthropicAdapter() {
             const systemPrompt = extractedSystem ?? request.systemPrompt;
 
             const messages = normalizeMessages(rawMessages);
-            const formattedMessages = await formatMessages(messages, capabilities);
+            const formattedMessages = await formatMessages(messages, capabilities, model);
             rejectAnsweredHistory(formattedMessages);
 
             const body = {
@@ -1471,7 +1502,7 @@ export function createAnthropicAdapter() {
 
             const { messages: rawMessages, systemPrompt } = extractSystemPrompt(messages);
             const normalized = normalizeMessages(rawMessages);
-            const formatted = await formatMessages(normalized, capabilities);
+            const formatted = await formatMessages(normalized, capabilities, model);
 
             const body = { model, messages: formatted };
             if (systemPrompt) body.system = systemPrompt;

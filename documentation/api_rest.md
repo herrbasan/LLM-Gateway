@@ -1275,6 +1275,44 @@ input, not a history to repair.
 
 Verify end-to-end with `node scripts/verify-history-repair-e2e.mjs [modelId]`.
 
+### Prior Thinking on Tool-Call Continuations
+
+A provider declaring `capabilities.priorReasoning` requires an assistant turn's
+thinking to be echoed back by the next request. Clients do not round-trip it, so the
+adapter supplies it, in three tiers:
+
+1. **The client's own echo** — `reasoning_content` or `thinking_blocks` on the
+   assistant message, kept as sent.
+2. **The id-keyed cache** (`logs/anthropic-thinking/`) — saved when a streamed turn
+   reported thinking alongside a tool call, replayed by tool-call id.
+3. **An empty block** — when neither can supply it. The turn came from a different
+   adapter, or its thinking was never captured, and there is nothing truthful to
+   send.
+
+Tier 3 exists because **the requirement is structural, not semantic** — probed live
+2026-10-16 with `scripts/probe-thinking-required.mjs` against DeepSeek:
+
+| Shape on the assistant turn | Result |
+|---|---|
+| thinking block with content | accepted |
+| **no** thinking block | **400** — "The `content[].thinking` in the thinking mode must be passed back to the API" |
+| **empty** thinking block | accepted |
+| empty thinking block, `signature: null` | accepted |
+
+Without tier 3 that 400 repeats on every resend, so the session cannot continue at
+all — the failure the gateway hit on 2026-10-16, `messages.283.content.1`, a turn
+whose tool call predated a restart. The empty block asserts nothing about the
+reasoning and the loss is logged at `warn`
+(`No prior thinking recoverable for a tool-call turn`) naming the model and the
+tool-call ids, so an incident shows what was lost rather than passing an empty
+placeholder off as the model's real reasoning.
+
+Every provider declaring the requirement accepts an empty block — verified per
+provider with `scripts/probe-empty-thinking.mjs` (DeepSeek ×2, Kimi ×3) before the
+fallback was allowed to fire for it, since a provider that refused one would trade a
+missing-thinking 400 for an empty-thinking 400: the same dead session with a worse
+diagnosis.
+
 ### Context-Window Overshoot
 
 A prompt that fills the window plus a large output budget is rejected as a whole:
