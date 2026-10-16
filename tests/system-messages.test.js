@@ -22,7 +22,9 @@ const ANTHROPIC_MODEL = {
     adapterModel: 'deepseek-flash',
     endpoint: 'https://upstream.invalid',
     apiKey: 'test-key',
-    capabilities: { contextWindow: 200000, maxOutputTokens: 4096 }
+    // As configured in config.json for deepseek-flash-chat: the provider requires an
+    // assistant turn's thinking to be echoed back.
+    capabilities: { contextWindow: 200000, maxOutputTokens: 4096, priorReasoning: 'required-with-tools' }
 };
 
 const GEMINI_MODEL = {
@@ -99,10 +101,19 @@ describe('splitInstructions', () => {
         expect(messages).to.have.length(1);
     });
 
-    it('rejects a non-text part in a system message', () => {
-        expect(() => splitInstructions([
+    it('drops a non-text part instead of refusing the request', () => {
+        // Refusing ended the session: the client resends this message every turn.
+        const { systemPrompt } = splitInstructions([
             { role: 'system', content: [{ type: 'image_url', image_url: { url: 'x' } }] }
-        ])).to.throw(/only text parts/).with.property('status', 400);
+        ]);
+        expect(systemPrompt, 'nothing textual was left').to.equal('');
+    });
+
+    it('keeps the text around a dropped part', () => {
+        const { systemPrompt } = splitInstructions([
+            { role: 'system', content: [{ type: 'text', text: 'Be terse. ' }, { type: 'tool_use', id: 'x' }] }
+        ]);
+        expect(systemPrompt).to.equal('Be terse. ');
     });
 });
 
@@ -148,40 +159,41 @@ describe('Anthropic adapter — history that ends on a finished answer', () => {
         { role: 'assistant', content: 'Hi.', reasoning_content: 'Greet back.' }
     ];
 
-    function expectRejectedBeforeUpstream(err, sent) {
-        expect(sent, 'nothing may reach the upstream').to.have.length(0);
-        expect(err).to.include({ status: 400, code: 'ENDS_ON_ANSWER' });
-    }
+    it('sends the trailing turn with its reasoning, instead of refusing the request', async () => {
+        // DeepSeek accepts this shape (probed 2026-10-16). The gateway used to
+        // refuse it with ENDS_ON_ANSWER — rejecting a request that would have
+        // succeeded, on every turn of the session.
+        const body = await sendAndCapture('anthropic', ANTHROPIC_MODEL, { messages: ANSWERED, maxTokens: 256 });
 
-    it('rejects a non-streaming request without calling the upstream', async () => {
-        const sent = captureUpstream();
-        let err = null;
-        try {
-            await adapters.get('anthropic').chatComplete(ANTHROPIC_MODEL, { messages: ANSWERED, maxTokens: 256 });
-        } catch (e) {
-            err = e;
-        }
-        expectRejectedBeforeUpstream(err, sent);
+        const last = body.messages[body.messages.length - 1];
+        expect(last.role).to.equal('assistant');
+        expect(last.content.some(b => b.type === 'thinking' && b.thinking === 'Greet back.'),
+            'the reasoning the provider requires is kept').to.be.true;
+        expect(last.content.some(b => b.type === 'text' && b.text === 'Hi.')).to.be.true;
     });
 
-    it('rejects a streaming request without calling the upstream', async () => {
+    it('does the same on the streaming path', async () => {
         const sent = captureUpstream();
-        let err = null;
         try {
             for await (const _chunk of adapters.get('anthropic').streamComplete(ANTHROPIC_MODEL, { messages: ANSWERED, maxTokens: 256 })) {
-                // unreachable — the request is rejected before any chunk
+                // the stub rejects after capturing the body
             }
-        } catch (e) {
-            err = e;
-        }
-        expectRejectedBeforeUpstream(err, sent);
+        } catch { /* captured */ }
+
+        expect(sent, 'the request reaches the upstream').to.have.length(1);
+        const last = sent[0].messages[sent[0].messages.length - 1];
+        expect(last.content.some(b => b.type === 'thinking')).to.be.true;
     });
 
-    it('still sends a prefill (trailing assistant text without reasoning)', async () => {
+    it('adds an empty block to a trailing turn that has no reasoning', async () => {
         const body = await sendAndCapture('anthropic', ANTHROPIC_MODEL, {
             messages: [{ role: 'user', content: 'Count to three.' }, { role: 'assistant', content: 'One,' }],
             maxTokens: 256
         });
+
+        const last = body.messages[body.messages.length - 1];
+        expect(last.content.filter(b => b.type === 'thinking'), 'the provider requires one').to.have.length(1);
+        expect(last.content[0].thinking).to.equal('');
         expect(body.messages.map(m => m.role)).to.deep.equal(['user', 'assistant']);
     });
 });

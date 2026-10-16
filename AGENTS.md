@@ -121,7 +121,7 @@ Disabled models:
 |---------|-------------|-----------------|-------|
 | `openai` | Standard OpenAI Chat Completions API | chat, embedding, image | Omits `max_tokens` when client omits it; upstream decides default. `generateImage` targets the upstream's OpenAI-native `/images` endpoint (OpenRouter pattern, verified with krea-2-medium-turbo 2026-09-24) |
 | `responses` | OpenAI Responses API (newer format) | chat | — |
-| `anthropic` | Anthropic Claude API | chat | Sends no output budget unless the client sent one or the model declares `defaultMaxTokens`. Repairs malformed tool history, re-issues a tool-call id the upstream repeats — one id never reaches a client twice — and supplies the prior thinking a tool-call continuation requires (client echo → id-keyed cache → empty block + warn). See `documentation/api_rest.md` > Malformed Tool-Call History |
+| `anthropic` | Anthropic Claude API | chat | Sends no output budget unless the client sent one or the model declares `defaultMaxTokens`. Repairs malformed tool history (never refuses a history it can repair or drop) and supplies the prior thinking the thinking mode requires — client echo → id-keyed cache → empty block + warn. See `documentation/api_rest.md` > Prior Thinking |
 | `gemini` | Google Gemini API | chat, embedding | Chat uses the Interactions API (stateless); embeddings stay on generateContent/batchEmbedContents |
 
 > Only these four adapters are registered (`src/core/adapters.js`) and validated (`config-schema.js`). A config naming any other adapter (e.g. the removed `kimi`/`alibaba`/`llamacpp`) fails validation at startup.

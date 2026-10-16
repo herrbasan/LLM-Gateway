@@ -116,3 +116,31 @@ describe('anthropic adapter — prior thinking on tool-call turns', () => {
         expect(assistant.content.some(b => b.type === 'thinking')).to.be.false;
     });
 });
+
+describe('anthropic adapter — the trailing turn must carry thinking', () => {
+    // Probed live 2026-10-16: a trailing assistant turn WITHOUT a thinking block is
+    // a 400 ("The `content[].thinking` in the thinking mode must be passed back"),
+    // one WITH it is accepted even empty, and a MID-history turn needs none.
+    const TRAILING_PREFILL = [
+        { role: 'user', content: 'Count to three.' },
+        { role: 'assistant', content: 'One, two,' }
+    ];
+
+    it('leaves a mid-history turn without thinking untouched', async () => {
+        const body = await send(model('required-with-tools'), [
+            { role: 'user', content: 'Say hi.' },
+            { role: 'assistant', content: 'Hi.' },
+            { role: 'user', content: 'Now count.' }
+        ]);
+        const assistant = body.messages.find(m => m.role === 'assistant');
+
+        expect(assistant.content.some(b => b.type === 'thinking'), 'not required there').to.be.false;
+    });
+
+    it('leaves the trailing turn alone for a model that declares no such requirement', async () => {
+        const body = await send(model(null), TRAILING_PREFILL);
+        const last = body.messages[body.messages.length - 1];
+
+        expect(last.content.some(b => b.type === 'thinking')).to.be.false;
+    });
+});

@@ -178,22 +178,26 @@ const requiresPriorThinking = (capabilities) =>
     capabilities?.priorReasoning === 'required'
     || capabilities?.priorReasoning === 'required-with-tools';
 
-// A history whose last message is the model's own finished answer has nothing
-// left to answer. A prefill (partial assistant text to continue) never carries
-// reasoning, so a trailing assistant turn WITH thinking is a completed turn the
-// client re-sent by mistake. Upstreams do not say so: DeepSeek returns a 400
-// ("content[].thinking ... must be passed back"), Kimi a complete but empty
-// answer that the gateway could only report as a retried 502 — each retry
-// re-sending the whole context.
-export function rejectAnsweredHistory(formatted) {
+// The LAST message, when it is an assistant message, must carry a thinking block on
+// a provider in thinking mode. Probed live 2026-10-16 (scripts/probe-thinking-required.mjs):
+// a trailing assistant turn WITHOUT one is a 400 ("The `content[].thinking` in the
+// thinking mode must be passed back to the API"), one WITH it is accepted even when
+// empty, and a MID-history assistant turn needs none. A client that resends its
+// history every turn cannot fix that; the gateway can, so the block is added empty
+// when the turn has none.
+//
+// This replaces a refusal (`400 ENDS_ON_ANSWER`). That refusal rested on the belief
+// that a trailing turn WITH reasoning is what the upstream rejects — it is the
+// opposite: reasoning is required, and the gateway was rejecting a request that
+// would have succeeded, on every turn of the session.
+export function ensureTrailingThinking(formatted) {
     const last = formatted[formatted.length - 1];
-    if (last.role !== 'assistant') return;
-    if (!last.content.some(block => block.type === 'thinking')) return;
-    const err = new Error('The conversation ends on the model\'s own finished answer (an assistant message with reasoning), so there is nothing to answer. End the history on a user message or a tool result.');
-    err.status = 400;
-    err.type = 'invalid_request_error';
-    err.code = 'ENDS_ON_ANSWER';
-    throw err;
+    if (last?.role !== 'assistant') return;
+    if (last.content.some(block => block?.type === 'thinking')) return;
+    last.content = [{ type: 'thinking', thinking: '' }, ...last.content];
+    logger.warn('Trailing assistant turn carried no thinking — added an empty block (the provider requires one)', {
+        blocks: last.content.length
+    }, 'AnthropicAdapter');
 }
 
 // The outbound history must satisfy the upstream's structural rules. A stateless
@@ -535,18 +539,42 @@ export async function sendWithBudgetRetry(send, body, modelId = null, client = n
 
 export function createAnthropicAdapter() {
     pruneThinkingCache().catch(() => {});
+    // A tool call's arguments must arrive as a JSON object for the provider to accept
+    // it, and a malformed string cannot be repaired into one. It sits in HISTORY,
+    // which the client resends unchanged, so throwing here failed the request on
+    // every future turn and ended the session — the gateway refusing a request it
+    // could simply not carry. Null means "this call cannot be sent": the caller drops
+    // it, the repair pass drops its orphaned result, and the turn continues with a
+    // WARN, because the model then sees that turn without the call. Never `{}` — the
+    // tool would silently receive wrong input.
     function parseArguments(args) {
-        if (typeof args === 'string') {
-            try { return JSON.parse(args); } catch {
-                // Fail loud: a malformed tool-call arguments string must not
-                // silently become {} — the tool would receive wrong input.
-                throw new Error(`[AnthropicAdapter] Malformed tool-call arguments JSON: ${args.slice(0, 120)}`);
-            }
-        }
         if (args == null) {
-            throw new Error('[AnthropicAdapter] Tool-call arguments missing (null/undefined)');
+            logger.warn('Tool call carries no arguments — dropping the call', {}, 'AnthropicAdapter');
+            return null;
         }
-        return args;
+        if (typeof args !== 'string') return args;
+        try {
+            return JSON.parse(args);
+        } catch {
+            logger.warn('Tool call has malformed arguments JSON — dropping the call', {
+                preview: args.slice(0, 120)
+            }, 'AnthropicAdapter');
+            return null;
+        }
+    }
+
+    // The tool_use blocks for one assistant turn. Drops any call whose arguments
+    // cannot be represented (see parseArguments), so what reaches the provider is
+    // always a call it can read.
+    function buildToolUses(toolCalls) {
+        const blocks = [];
+        for (const tc of toolCalls || []) {
+            if (tc?.type !== 'function' || !tc.function) continue;
+            const input = parseArguments(tc.function.arguments);
+            if (input === null) continue;
+            blocks.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input });
+        }
+        return blocks;
     }
 
     // Helper functions defined at factory scope
@@ -691,17 +719,13 @@ export function createAnthropicAdapter() {
                 let content = mapContentParts(m.content).filter(Boolean);
 
                 if (m.role === 'assistant' && m.tool_calls) {
-                    content = await injectCachedThinking(content, m.tool_calls);
-                    m.tool_calls.forEach(tc => {
-                        if (tc.type === 'function' && tc.function) {
-                            content.push({
-                                type: 'tool_use',
-                                id: tc.id,
-                                name: tc.function.name,
-                                input: parseArguments(tc.function.arguments)
-                            });
-                        }
-                    });
+                    // Thinking only when the turn still carries a call: the provider
+                    // requires it for a turn with tool_use, not for one left without.
+                    const toolUses = buildToolUses(m.tool_calls);
+                    if (toolUses.length > 0) {
+                        content = await injectCachedThinking(content, m.tool_calls);
+                        content.push(...toolUses);
+                    }
                 }
 
                 result.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content });
@@ -736,7 +760,10 @@ export function createAnthropicAdapter() {
                 }
             }
 
-            if (m.role === 'assistant' && m.tool_calls) {
+            // Built once, in the order the provider expects: thinking (only when the
+            // turn still carries a call), then the text, then the calls.
+            const toolUses = m.role === 'assistant' && m.tool_calls ? buildToolUses(m.tool_calls) : [];
+            if (toolUses.length > 0) {
                 content = await injectCachedThinking(content, m.tool_calls);
             }
 
@@ -744,18 +771,7 @@ export function createAnthropicAdapter() {
                 content.push({ type: 'text', text: String(m.content) });
             }
 
-            if (m.role === 'assistant' && m.tool_calls) {
-                m.tool_calls.forEach(tc => {
-                    if (tc.type === 'function' && tc.function) {
-                        content.push({
-                            type: 'tool_use',
-                            id: tc.id,
-                            name: tc.function.name,
-                            input: parseArguments(tc.function.arguments)
-                        });
-                    }
-                });
-            }
+            if (toolUses.length > 0) content.push(...toolUses);
             
             result.push({
                 role: m.role === 'assistant' ? 'assistant' : 'user',
@@ -960,7 +976,7 @@ export function createAnthropicAdapter() {
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = await formatMessages(messages, capabilities, model);
-            rejectAnsweredHistory(formattedMessages);
+            if (requiresPriorThinking(capabilities)) ensureTrailingThinking(formattedMessages);
 
             const body = {
                 model,
@@ -1063,7 +1079,7 @@ export function createAnthropicAdapter() {
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = await formatMessages(messages, capabilities, model);
-            rejectAnsweredHistory(formattedMessages);
+            if (requiresPriorThinking(capabilities)) ensureTrailingThinking(formattedMessages);
 
             const body = {
                 model,

@@ -54,6 +54,32 @@ const CASES = [
         { role: 'user', content: [text('Ping host a.')] },
         { role: 'assistant', content: [thinking(' '), call('c5')] },
         { role: 'user', content: [result('c5')] }
+    ] },
+    // The trailing-turn question (stripTrailingReasoning). The gateway strips a
+    // trailing turn's reasoning and sends the rest as a prefill; these two cases
+    // are what that repair has to be right about.
+    { name: 'trailing assistant TEXT (the prefill we send)', messages: [
+        { role: 'user', content: [text('Count to three.')] },
+        { role: 'assistant', content: [text('One, two,')] }
+    ] },
+    { name: 'trailing assistant with thinking (500-style)', messages: [
+        { role: 'user', content: [text('Count to three.')] },
+        { role: 'assistant', content: [thinking('Counting.'), text('One, two,')] }
+    ] },
+    { name: 'trailing assistant, ONLY thinking', messages: [
+        { role: 'user', content: [text('Count to three.')] },
+        { role: 'assistant', content: [thinking('Counting, but no words yet.')] }
+    ] },
+    // Scope of the rule: is it every assistant message, or only the trailing one?
+    { name: 'MID-history assistant without thinking', messages: [
+        { role: 'user', content: [text('Say hi.')] },
+        { role: 'assistant', content: [text('Hi.')] },
+        { role: 'user', content: [text('Now count to three.')] }
+    ] },
+    { name: 'MID-history assistant with EMPTY thinking', messages: [
+        { role: 'user', content: [text('Say hi.')] },
+        { role: 'assistant', content: [thinking(''), text('Hi.')] },
+        { role: 'user', content: [text('Now count to three.')] }
     ] }
 ];
 

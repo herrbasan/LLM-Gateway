@@ -1,3 +1,7 @@
+import { getLogger } from './logger.js';
+
+const logger = getLogger();
+
 // OpenAI `system`/`developer` messages → providers whose API has a single
 // top-level system field (Anthropic `system`, Gemini `system_instruction`).
 //
@@ -10,26 +14,39 @@
 // put it, as a user turn.
 const INSTRUCTION_ROLES = new Set(['system', 'developer']);
 
-function invalidInstruction(detail) {
-    const err = new Error(`Invalid ${detail}`);
-    err.status = 400;
-    err.type = 'invalid_request_error';
-    err.code = 'INVALID_SYSTEM_MESSAGE';
-    return err;
-}
-
+/**
+ * The text of one instruction message. Never refuses: an instruction sits on the
+ * history path, where a client resends the same input on every turn, so throwing
+ * here ended the session rather than the one request (2026-10-16 policy — the
+ * history path repairs or drops and leaves refusing to the provider).
+ *
+ * A part that is not text is dropped with a WARN: a single top-level system string
+ * has nowhere to put an image. Content that is neither a string nor an array of
+ * parts is carried as JSON, so words are not lost to a shape surprise.
+ */
 export function instructionText(message) {
     const { content } = message;
     if (typeof content === 'string') return content;
     if (!Array.isArray(content)) {
-        throw invalidInstruction(`${message.role} message: content must be a string or an array of text parts`);
+        logger.warn('Instruction message content is neither a string nor an array — carried as JSON', {
+            role: message.role,
+            contentType: typeof content
+        }, 'SystemMessages');
+        return JSON.stringify(content ?? '');
     }
-    return content.map((part) => {
-        if (part?.type !== 'text' || typeof part.text !== 'string') {
-            throw invalidInstruction(`${message.role} message: only text parts are allowed, got ${JSON.stringify(part?.type)}`);
-        }
-        return part.text;
+    const dropped = [];
+    const text = content.map((part) => {
+        if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+        dropped.push(part?.type ?? typeof part);
+        return '';
     }).join('');
+    if (dropped.length > 0) {
+        logger.warn('Instruction message parts dropped — only text belongs in a system prompt', {
+            role: message.role,
+            dropped
+        }, 'SystemMessages');
+    }
+    return text;
 }
 
 export function splitInstructions(messages) {

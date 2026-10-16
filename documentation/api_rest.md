@@ -1196,8 +1196,10 @@ OpenAI clients may send `system`/`developer` messages anywhere in `messages`. Th
 - The **leading** run of `system`/`developer` messages becomes the system prompt
   (joined with a blank line).
 - A **later** one stays where the client put it, sent as a user turn.
-- Content must be a string or an array of `text` parts; anything else is a `400`
-  (`INVALID_SYSTEM_MESSAGE`).
+- Only `text` parts reach the system prompt. A part of any other type is dropped
+  with a `WARN` (an image has nowhere to go in a single top-level string), and
+  content that is neither a string nor an array is carried as JSON — a shape
+  surprise never refuses the request.
 
 Copilot appends a system message after the model's last answer. Deleting it — the
 former behaviour — left the history ending on the model's own answer, which the
@@ -1207,13 +1209,22 @@ an empty answer. Both providers accept consecutive user turns, so no merging is 
 
 ### History Ending on a Finished Answer
 
-A history whose last message is an assistant message **with reasoning** is the
-model's own finished turn re-sent — there is nothing to answer. On the `anthropic`
-adapter it is rejected before dispatch with a `400` (`ENDS_ON_ANSWER`) instead of
-being sent: DeepSeek would return its misleading `content[].thinking` 400, Kimi an
-empty completion the gateway could only report as a retried `502` (each attempt
-re-sending the whole context). A prefill — a trailing assistant message of plain
-text, without reasoning — is still sent.
+A history whose last message is an assistant message is the model's own finished turn
+re-sent. Probed live 2026-10-16 (`scripts/probe-thinking-required.mjs`) against
+DeepSeek: a trailing assistant turn **with** its thinking is accepted, one **without**
+is a `400` ("The `content[].thinking` in the thinking mode must be passed back to the
+API"), and an **empty** thinking block satisfies it. A mid-history assistant turn
+needs none.
+
+The `anthropic` adapter therefore ensures the trailing turn carries a thinking block,
+adding an empty one when the client supplied no reasoning, and logs that at `WARN`.
+Nothing is stripped.
+
+This adapter used to do the opposite: it refused the request (`400 ENDS_ON_ANSWER`) on
+the belief that a trailing turn **with** reasoning is what the upstream rejects. That
+is inverted — the reasoning is required — so the gateway was rejecting a request that
+would have succeeded, on every turn of the session. Both shapes are covered by
+`scripts/verify-prior-thinking-e2e.mjs`.
 
 ### Malformed Tool-Call History
 
@@ -1275,19 +1286,27 @@ input, not a history to repair.
 
 Verify end-to-end with `node scripts/verify-history-repair-e2e.mjs [modelId]`.
 
-### Prior Thinking on Tool-Call Continuations
+### Prior Thinking — the Thinking Mode Contract
 
-A provider declaring `capabilities.priorReasoning` requires an assistant turn's
-thinking to be echoed back by the next request. Clients do not round-trip it, so the
-adapter supplies it, in three tiers:
+A provider declaring `capabilities.priorReasoning` (DeepSeek, Kimi) refuses a history
+in thinking mode unless the thinking is echoed back. Two shapes must carry it, and
+nothing else needs to:
+
+| Message | Needed on DeepSeek |
+|---|---|
+| an assistant turn with `tool_use` | **yes** — a call without its thinking is a 400 |
+| the **trailing** assistant turn | **yes** — accepted with an empty block, refused without one |
+| a mid-history assistant turn with text only | not needed — accepted without it |
+
+Clients do not round-trip thinking, so the adapter supplies it, in three tiers:
 
 1. **The client's own echo** — `reasoning_content` or `thinking_blocks` on the
    assistant message, kept as sent.
 2. **The id-keyed cache** (`logs/anthropic-thinking/`) — saved when a streamed turn
    reported thinking alongside a tool call, replayed by tool-call id.
-3. **An empty block** — when neither can supply it. The turn came from a different
-   adapter, or its thinking was never captured, and there is nothing truthful to
-   send.
+3. **An empty block** — when neither can supply it, and only where the rule above
+   requires one. The turn came from a different adapter, its thinking was never
+   captured, or it is a trailing prefill that never had any.
 
 Tier 3 exists because **the requirement is structural, not semantic** — probed live
 2026-10-16 with `scripts/probe-thinking-required.mjs` against DeepSeek:
