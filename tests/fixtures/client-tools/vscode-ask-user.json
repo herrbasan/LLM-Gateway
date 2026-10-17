@@ -1,0 +1,100 @@
+{
+  "source": "VS Code Copilot — the ask_user tool schema as the host sends it (reconstructed 2026-10-17 from the tool definition itself). This is the request that killed a Gemini session: properties are NAMED oneOf and default, and required lists them.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "ask_user",
+        "description": "Ask the user a question and wait for their response.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "A message describing what information you need from the user."
+            },
+            "requestedSchema": {
+              "type": "object",
+              "description": "A form definition describing the fields to collect.",
+              "properties": {
+                "properties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": { "const": "string" },
+                          "title": { "type": "string" },
+                          "description": { "type": "string" },
+                          "enum": { "type": "array", "items": { "type": "string" } },
+                          "enumNames": { "type": "array", "items": { "type": "string" } },
+                          "default": { "type": "string" }
+                        },
+                        "required": ["type", "enum"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": { "const": "string" },
+                          "title": { "type": "string" },
+                          "description": { "type": "string" },
+                          "oneOf": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "const": { "type": "string" },
+                                "title": { "type": "string" }
+                              },
+                              "required": ["const", "title"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "default": { "type": "string" }
+                        },
+                        "required": ["type", "oneOf"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": { "const": "integer" },
+                          "title": { "type": "string" },
+                          "description": { "type": "string" },
+                          "minimum": { "type": "number" },
+                          "maximum": { "type": "number" },
+                          "default": { "type": "number" }
+                        },
+                        "required": ["type"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": { "const": "boolean" },
+                          "title": { "type": "string" },
+                          "description": { "type": "string" },
+                          "default": { "type": "boolean" }
+                        },
+                        "required": ["type"],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              },
+              "required": ["properties"]
+            }
+          },
+          "required": ["message", "requestedSchema"]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "source": "A VS Code style schema with meta-annotations: keyword stripping must still happen at schema positions (format, markdownDescription, $schema, doNotSuggest), without touching property names.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "annotated_tool",
+        "description": "Carries the annotations VS Code adds.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "format": "uri",
+              "markdownDescription": "A **path**",
+              "doNotSuggest": true
+            },
+            "since": {
+              "type": "string",
+              "format": "date-time",
+              "default": "now"
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "format": { "type": "string" },
+                "default": { "type": "string" }
+              },
+              "required": ["format"]
+            }
+          },
+          "required": ["path"]
+        }
+      }
+    }
+  ]
+}

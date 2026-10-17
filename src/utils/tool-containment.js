@@ -1,4 +1,5 @@
 import { getLogger } from './logger.js';
+import { createHash } from 'node:crypto';
 
 const logger = getLogger();
 
@@ -23,12 +24,22 @@ const logger = getLogger();
  * silently change the conversation, which is a lie about what the model saw.
  */
 
-// Names this model has already refused, so the doomed round trip happens once.
+// What a model refused, keyed by the schema it refused rather than by the name.
+// A client can fix a bad schema, and a tool must become available again the moment it
+// does — a name-keyed memory would refuse it until the process restarted, which is a
+// worse bug than the one containment exists to cure.
 const refused = new Map();
 
 const containmentKey = (adapter, model) => `${adapter}|${model}`;
 
 const toolNameOf = (tool) => tool?.function?.name ?? tool?.name ?? null;
+const schemaOf = (tool) => tool?.function?.parameters ?? tool?.parameters ?? tool?.input_schema;
+
+function schemaHash(tool) {
+    const schema = schemaOf(tool);
+    if (schema === undefined) return null;
+    return createHash('sha256').update(JSON.stringify(schema)).digest('hex').slice(0, 16);
+}
 
 /**
  * The tool a rejection is about, or null.
@@ -95,9 +106,13 @@ export async function sendWithToolContainment({ adapter, model, payload, send })
 
     const known = refused.get(key);
     if (known) {
-        for (const name of known) {
-            if (dropToolByName(payload, name)) {
-                logger.debug('Dropped a tool this model refused earlier', { model, tool: name }, 'ToolContainment');
+        for (const [name, hash] of known) {
+            const offered = (payload.tools ?? []).find(t => toolNameOf(t) === name)
+                ?? (payload.functions ?? []).find(t => toolNameOf(t) === name);
+            // Only a schema the provider has already seen refused; a corrected one is
+            // worth one attempt.
+            if (offered && schemaHash(offered) === hash && dropToolByName(payload, name)) {
+                logger.debug('Dropped a tool schema this model refused earlier', { model, tool: name }, 'ToolContainment');
             }
         }
     }
@@ -108,10 +123,14 @@ export async function sendWithToolContainment({ adapter, model, payload, send })
         } catch (error) {
             const name = rejectedToolName(error?.message, payload);
             if (!name || attempt >= 3) throw error;
+
+            const offered = (payload.tools ?? []).find(t => toolNameOf(t) === name)
+                ?? (payload.functions ?? []).find(t => toolNameOf(t) === name);
+            const hash = offered ? schemaHash(offered) : null;
             if (!dropToolByName(payload, name)) throw error;
 
-            if (!refused.has(key)) refused.set(key, new Set());
-            refused.get(key).add(name);
+            if (!refused.has(key)) refused.set(key, new Map());
+            refused.get(key).set(name, hash);
 
             logger.warn('Provider refused a tool schema — dropped it so the turn can continue', {
                 adapter,

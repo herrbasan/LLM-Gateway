@@ -136,6 +136,40 @@ describe('sendWithToolContainment', () => {
         expect(sent, 'pre-dropped, one attempt').to.deep.equal([['storage_read']]);
     });
 
+    it('re-offers a tool whose schema has changed since it was refused', async () => {
+        // A client can fix a bad schema. Refusing the NAME forever would keep the tool
+        // unavailable until the process restarted, long after the cause was gone.
+        const model = freshModel();
+        let attempts = 0;
+        await sendWithToolContainment({
+            adapter: 'test',
+            model,
+            payload: payloadWith('ask_user', 'storage_read'),
+            send: async () => {
+                attempts++;
+                if (attempts === 1) throw new Error(GEMINI_REJECTION);
+                return { ok: true };
+            }
+        });
+
+        // Same name, corrected schema: it must be offered, not pre-dropped.
+        const corrected = {
+            tools: [
+                { type: 'function', function: { name: 'ask_user', parameters: { type: 'object', properties: { m: { type: 'string' } } } } },
+                openAiTool('storage_read')
+            ]
+        };
+        const sent = [];
+        await sendWithToolContainment({
+            adapter: 'test',
+            model,
+            payload: corrected,
+            send: async (body) => { sent.push(body.tools.map(t => t.function.name)); return { ok: true }; }
+        });
+
+        expect(sent, 'the corrected schema gets its chance').to.deep.equal([['ask_user', 'storage_read']]);
+    });
+
     it('leaves a rejection that names no tool untouched', async () => {
         let attempts = 0;
         const error = new Error('HTTP Error 400: Bad Request: maximum context length is 1048576 tokens');

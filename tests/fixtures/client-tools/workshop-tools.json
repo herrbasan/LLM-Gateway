@@ -1,0 +1,81 @@
+{
+  "source": "Workshop tools (mcp_server) as the chat app sends them — approximated from the tool reference in Agents_Prime: nested objects, arrays of objects, enums, required lists at several depths.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "memory_store",
+        "description": "Save a memory.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "description": { "type": "string" },
+            "category": { "type": "string" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "data": { "type": "string" }
+          },
+          "required": ["description"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "storage_write",
+        "description": "Write a file.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" },
+            "content": { "type": "string" },
+            "encoding": { "type": "string", "enum": ["utf8", "base64"] }
+          },
+          "required": ["path", "content"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "forge_call",
+        "description": "Execute a forge tool.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "args": { "type": "object", "properties": {}, "additionalProperties": true },
+            "payload": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "timeout": { "type": "number" },
+            "model": { "type": "string" }
+          },
+          "required": ["name"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "notepad_add",
+        "description": "Create a notepad item.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["idea", "pin", "task", "date", "contact"] },
+            "title": { "type": "string" },
+            "notes": { "type": "string" },
+            "body": { "type": "string" },
+            "context": { "type": "string" },
+            "due": { "type": "string" },
+            "when": { "type": "string" },
+            "steps": { "type": "array", "items": { "type": "string" } },
+            "ref": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["type", "title"]
+        }
+      }
+    }
+  ]
+}

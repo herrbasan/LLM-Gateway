@@ -11,6 +11,7 @@ import { MediaProcessorClient } from '../utils/media-client.js';
 import { imageFetcher } from '../utils/image-fetcher.js';
 import { chatCompletionsToResponse, convertStreamToResponseEvents } from '../utils/response-format.js';
 import { responseToChatCompletion } from '../adapters/responses.js';
+import { captureToolSchemas } from '../utils/tool-capture.js';
 
 const logger = getLogger();
 
@@ -227,6 +228,10 @@ export class ModelRouter {
 
         // Transform request to adapter format
         const opts = this._buildChatOptions(effectiveRequest, modelConfig, modelId);
+
+        // Opt-in corpus building (CAPTURE_TOOLS_DIR): the schemas clients actually
+        // send, which is what makes the conformance fixtures real. Inert by default.
+        captureToolSchemas(modelId, opts.tools);
 
         // Process images only if requested (fetch remote URLs and resize/transcode)
         const processedMessages = await this._processImagesInMessages(
