@@ -10,6 +10,7 @@ import path from 'node:path';
 import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
 import { splitInstructions } from '../utils/system-messages.js';
+import { sendWithToolContainment } from '../utils/tool-containment.js';
 
 const logger = getLogger('AnthropicAdapter');
 
@@ -1030,17 +1031,22 @@ export function createAnthropicAdapter() {
                 }
             }
 
-            const res = await sendWithBudgetRetry(
-                (payload) => httpRequest(`${endpoint}/v1/messages`, {
-                    method: 'POST',
-                    headers: buildHeaders(apiKey, capabilities),
-                    signal: request.signal,
-                    body: JSON.stringify(payload)
-                }),
-                            body,
-                            model,
-                            request.client ?? null
-                        );
+            const res = await sendWithToolContainment({
+                adapter: 'anthropic',
+                model,
+                payload: body,
+                send: (payload) => sendWithBudgetRetry(
+                    (sent) => httpRequest(`${endpoint}/v1/messages`, {
+                        method: 'POST',
+                        headers: buildHeaders(apiKey, capabilities),
+                        signal: request.signal,
+                        body: JSON.stringify(sent)
+                    }),
+                    payload,
+                    model,
+                    request.client ?? null
+                )
+            });
 
                         const data = await res.json();
 
@@ -1125,17 +1131,22 @@ export function createAnthropicAdapter() {
                 }
             }
 
-            const res = await sendWithBudgetRetry(
-                (payload) => httpRequest(`${endpoint}/v1/messages`, {
-                    method: 'POST',
-                    headers: buildHeaders(apiKey, capabilities),
-                    signal: request.signal,
-                    body: JSON.stringify(payload)
-                }),
-                            body,
-                            model,
-                            request.client ?? null
-                        );
+            const res = await sendWithToolContainment({
+                adapter: 'anthropic',
+                model,
+                payload: body,
+                send: (payload) => sendWithBudgetRetry(
+                    (sent) => httpRequest(`${endpoint}/v1/messages`, {
+                        method: 'POST',
+                        headers: buildHeaders(apiKey, capabilities),
+                        signal: request.signal,
+                        body: JSON.stringify(sent)
+                    }),
+                    payload,
+                    model,
+                    request.client ?? null
+                )
+            });
 
                         if (!res.ok) {
                 const errorStr = await res.text();

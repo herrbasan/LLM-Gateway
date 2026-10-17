@@ -9,6 +9,7 @@ import path from 'node:path';
 import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 import { getLogger } from '../utils/logger.js';
 import { splitInstructions } from '../utils/system-messages.js';
+import { sendWithToolContainment } from '../utils/tool-containment.js';
 
 const logger = getLogger();
 
@@ -119,10 +120,15 @@ export function createGeminiAdapter() {
             const payload = await buildInteractionPayload(request, capabilities);
             payload.model = model;
 
-            const res = await httpRequest(`${endpoint}/interactions?key=${apiKey}`, {
-                method: 'POST',
-                signal: request.signal,
-                body: JSON.stringify(payload)
+            const res = await sendWithToolContainment({
+                adapter: 'gemini',
+                model,
+                payload,
+                send: (body) => httpRequest(`${endpoint}/interactions?key=${apiKey}`, {
+                    method: 'POST',
+                    signal: request.signal,
+                    body: JSON.stringify(body)
+                })
             });
 
             const data = await res.json();
@@ -226,10 +232,15 @@ export function createGeminiAdapter() {
             payload.model = model;
             payload.stream = true;
 
-            const res = await httpRequest(`${endpoint}/interactions?key=${apiKey}`, {
-                method: 'POST',
-                signal: request.signal,
-                body: JSON.stringify(payload)
+            const res = await sendWithToolContainment({
+                adapter: 'gemini',
+                model,
+                payload,
+                send: (body) => httpRequest(`${endpoint}/interactions?key=${apiKey}`, {
+                    method: 'POST',
+                    signal: request.signal,
+                    body: JSON.stringify(body)
+                })
             });
 
             const reader = res.body.getReader();

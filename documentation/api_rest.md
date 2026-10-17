@@ -1226,6 +1226,33 @@ is inverted — the reasoning is required — so the gateway was rejecting a req
 would have succeeded, on every turn of the session. Both shapes are covered by
 `scripts/verify-prior-thinking-e2e.mjs`.
 
+### A Refused Tool Does Not End the Turn
+
+A stateless client resends its whole request every turn, so a provider refusing *one
+tool* fails every future turn identically — the session dies over a schema the client
+will never change. Gemini refusing VS Code's `ask_user` schema did exactly that on
+2026-10-17 (`specifies required field 'oneOf' which is not defined in properties`).
+
+When a rejection **names a tool**, the gateway drops that tool from the payload, sends
+again, and completes the turn:
+
+- the provider's own message is logged at `WARN` (`Provider refused a tool schema —
+  dropped it so the turn can continue`) with the tool, the model and the reason;
+- the refusal is remembered per model, so later turns do not pay the rejected round
+  trip — at most three tools are given up on one request, and a payload that keeps
+  failing is not a tool problem;
+- `tool_choice` is cleared when it named the dropped tool, and `tools` is omitted when
+  nothing is left to offer.
+
+The trade-off is real and deliberate: the model cannot call that tool in that model's
+conversations. The turn completes, and the log says so — the alternative was a dead
+session.
+
+**Only a named tool is containable.** Auth, rate limits, context length, content
+refusals and every history problem stay fatal, because the only way to "continue" past
+them would be to drop a message — silently changing what the model saw. That is a lie
+about the conversation, and it corrupts an agent loop rather than stopping it.
+
 ### Malformed Tool-Call History
 
 Anthropic-protocol upstreams reject structurally invalid histories — and because the

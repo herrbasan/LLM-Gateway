@@ -4,6 +4,7 @@
  */
 
 import { request as httpRequest, readWithDeadline } from '../utils/http.js';
+import { sendWithToolContainment } from '../utils/tool-containment.js';
 
 export function createOpenAIAdapter() {
     return {
@@ -38,11 +39,16 @@ export function createOpenAIAdapter() {
             }
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
-            const res = await httpRequest(`${endpoint}/chat/completions`, {
-                method: 'POST',
-                headers,
-                signal: request.signal,
-                body: JSON.stringify(payload)
+            const res = await sendWithToolContainment({
+                adapter: 'openai',
+                model,
+                payload,
+                send: (body) => httpRequest(`${endpoint}/chat/completions`, {
+                    method: 'POST',
+                    headers,
+                    signal: request.signal,
+                    body: JSON.stringify(body)
+                })
             });
 
             const data = await res.json();
@@ -91,11 +97,16 @@ export function createOpenAIAdapter() {
             }
 
             const headers = buildHeaders(apiKey, { 'Accept': 'text/event-stream' }, customHeaders);
-            const res = await httpRequest(`${endpoint}/chat/completions`, {
-                method: 'POST',
-                headers,
-                signal: request.signal,
-                body: JSON.stringify(payload)
+            const res = await sendWithToolContainment({
+                adapter: 'openai',
+                model,
+                payload,
+                send: (body) => httpRequest(`${endpoint}/chat/completions`, {
+                    method: 'POST',
+                    headers,
+                    signal: request.signal,
+                    body: JSON.stringify(body)
+                })
             });
 
             if (!res.ok) {
