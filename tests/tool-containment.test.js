@@ -268,4 +268,26 @@ describe('adapters — a refused tool does not end the turn', () => {
 
         expect(bodies[1].tools.map(t => t.function.name)).to.deep.equal(['keep_me']);
     });
+
+    it('anthropic (composed with the output-budget retry)', async () => {
+        const bodies = stubRefuseThenSucceed({
+            id: 'msg_1', type: 'message', role: 'assistant',
+            content: [{ type: 'text', text: 'hi' }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 }
+        });
+        const model = {
+            type: 'chat', adapter: 'anthropic', adapterModel: 'deepseek-flash',
+            endpoint: 'https://upstream.invalid', apiKey: 'k',
+            capabilities: { contextWindow: 100000, maxOutputTokens: 1000 }
+        };
+
+        const response = await adapters.get('anthropic').chatComplete(model, {
+            messages: [{ role: 'user', content: 'hi' }], tools: TOOLS, maxTokens: 32, stream: false
+        });
+
+        expect(bodies).to.have.length(2);
+        expect(bodies[1].tools.map(t => t.name)).to.deep.equal(['keep_me']);
+        expect(response.choices[0].message.content).to.equal('hi');
+    });
 });
