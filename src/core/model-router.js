@@ -571,7 +571,13 @@ export class ModelRouter {
                     reasoning_effort = mapped;
                 }
             } else {
-                logger.warn(`[ModelRouter] "${modelId}" has no capabilities.thinkingLevels — dropping reasoning_effort="${reasoning_effort}"`, { model: modelId }, 'ModelRouter');
+                // Routine tolerance, not a fault: clients and task presets send an
+                // effort for whatever model they route to, and a model with no level
+                // scale simply cannot honour it. Dropping it is the correct outcome,
+                // so this is a trace (`debug`) rather than something a human must
+                // read — a WARN here fires on every request of such a session
+                // (2026-10-17: 21 identical lines for one model).
+                logger.debug(`[ModelRouter] "${modelId}" declares no thinkingLevels — reasoning_effort="${reasoning_effort}" dropped`, { model: modelId }, 'ModelRouter');
                 reasoning_effort = undefined;
             }
         }
