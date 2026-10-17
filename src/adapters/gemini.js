@@ -511,21 +511,69 @@ const GEMINI_UNSUPPORTED_SCHEMA_KEYS = new Set([
     'doNotSuggest',         // VS Code / OpenAPI extension
 ]);
 
-function sanitizeSchemaForGemini(schema) {
+/**
+ * Keys whose VALUE is a map of arbitrary names to subschemas. Inside one of these a
+ * key is a property NAME, not a schema keyword: a tool may legitimately declare a
+ * property called `oneOf`, `default`, `format` or `if`. Stripping those by name
+ * deleted real data AND left `required` pointing at a property that no longer
+ * existed, which Gemini rejects outright:
+ *
+ *   Invalid schema in function tool 'ask_user' parameters: specifies required field
+ *   'oneOf' which is not defined in properties.
+ *
+ * VS Code's own `ask_user` schema has exactly such properties, so every Gemini turn
+ * carrying tools died. The tools array is resent on every turn, so that is a dead
+ * session, not a failed request.
+ */
+const NAME_MAPS = new Set(['properties']);
+// `patternProperties` is deliberately NOT here: Gemini does not support the keyword
+// at all, so dropping it wholesale is correct — and its inner names go with it.
+
+/**
+ * Gemini's validator requires every entry of `required` to exist in `properties`.
+ * Any schema reaching this point must satisfy that, so it is enforced here rather
+ * than left to the upstream: a name that names nothing is a rejection on every turn.
+ * It should never fire once names are preserved above — if it does, the client's
+ * schema is genuinely inconsistent and the dropped names are worth a WARN.
+ */
+function pruneDanglingRequired(schema, dropped) {
+    if (!Array.isArray(schema.required)) return schema;
+    const declared = schema.properties && typeof schema.properties === 'object'
+        ? new Set(Object.keys(schema.properties))
+        : new Set();
+    const dangling = schema.required.filter(name => !declared.has(name));
+    if (dangling.length === 0) return schema;
+
+    dropped.push(...dangling);
+    const kept = schema.required.filter(name => declared.has(name));
+    if (kept.length > 0) schema.required = kept;
+    else delete schema.required;
+    return schema;
+}
+
+function sanitizeSchemaForGemini(schema, dropped = []) {
     if (!schema || typeof schema !== 'object') return schema;
     if (Array.isArray(schema)) {
-        return schema.map(sanitizeSchemaForGemini);
+        return schema.map(entry => sanitizeSchemaForGemini(entry, dropped));
     }
     const cleaned = {};
     for (const [key, value] of Object.entries(schema)) {
+        if (NAME_MAPS.has(key)) {
+            const map = {};
+            for (const [name, sub] of Object.entries(value ?? {})) {
+                map[name] = sanitizeSchemaForGemini(sub, dropped);
+            }
+            cleaned[key] = map;
+            continue;
+        }
         // Blanket strip all $ prefix keys (meta-schema annotations, no known $ key is valid for Gemini)
         if (key.startsWith('$')) continue;
         if (GEMINI_UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
         // Strip any key starting with known vendor extension prefixes
         if (key.startsWith('x-') || key.startsWith('X-')) continue;
-        cleaned[key] = sanitizeSchemaForGemini(value);
+        cleaned[key] = sanitizeSchemaForGemini(value, dropped);
     }
-    return cleaned;
+    return pruneDanglingRequired(cleaned, dropped);
 }
 
 function buildInteractionTools(openAiTools) {
@@ -541,7 +589,14 @@ function buildInteractionTools(openAiTools) {
                 description: f.description || ''
             };
             if (f.parameters) {
-                decl.parameters = sanitizeSchemaForGemini(f.parameters);
+                const dropped = [];
+                decl.parameters = sanitizeSchemaForGemini(f.parameters, dropped);
+                if (dropped.length > 0) {
+                    logger.warn('Tool schema named a required field that does not exist — dropped', {
+                        tool: f.name,
+                        dropped
+                    }, 'GeminiAdapter');
+                }
             }
             return decl;
         });
@@ -664,11 +719,20 @@ async function buildInteractionPayload(request, capabilities) {
         }
 
     if (request.schema && capabilities?.structuredOutput) {
+        // Same traversal as the tool schemas, for the same reason: Gemini validates
+        // this against its own schema subset, and a keyword it does not know rejects
+        // the whole request.
+        const dropped = [];
         payload.response_format = [{
             type: 'text',
             mime_type: 'application/json',
-            schema: request.schema
+            schema: sanitizeSchemaForGemini(request.schema, dropped)
         }];
+        if (dropped.length > 0) {
+            logger.warn('Structured-output schema named a required field that does not exist — dropped', {
+                dropped
+            }, 'GeminiAdapter');
+        }
     }
 
     return payload;
