@@ -170,13 +170,17 @@ function createToolUseIdAllocator(model) {
     };
 }
 
-// Providers that require an assistant turn's thinking to be echoed on a tool-call
-// continuation (`capabilities.priorReasoning`). Verified live 2026-10-16 against
-// DeepSeek and Kimi: the requirement is STRUCTURAL, not semantic — a turn with no
-// thinking block is a 400, while an EMPTY block is accepted.
-const requiresPriorThinking = (capabilities) =>
-    capabilities?.priorReasoning === 'required'
-    || capabilities?.priorReasoning === 'required-with-tools';
+// The one measured fact a policy name cannot express: whether the provider REFUSES
+// an assistant turn that carries no thinking block. Probed live 2026-10-16 — DeepSeek
+// refuses it (400 "The `content[].thinking` in the thinking mode must be passed
+// back") and accepts an EMPTY block; Kimi accepts the same history with no block at
+// all. `priorReasoning` says "echo the client's reasoning back", which is a different
+// claim, so a provider that merely tolerates the echo must not receive placeholders.
+//
+// Placeholders are the routine case, not an incident: a model often produces no
+// thinking for a short turn, and then there is nothing to replay. They are logged at
+// debug — claiming a loss would be a guess about what was never there.
+const requiresThinkingBlock = (capabilities) => capabilities?.thinkingBlockRequired === true;
 
 // The LAST message, when it is an assistant message, must carry a thinking block on
 // a provider in thinking mode. Probed live 2026-10-16 (scripts/probe-thinking-required.mjs):
@@ -195,7 +199,7 @@ export function ensureTrailingThinking(formatted) {
     if (last?.role !== 'assistant') return;
     if (last.content.some(block => block?.type === 'thinking')) return;
     last.content = [{ type: 'thinking', thinking: '' }, ...last.content];
-    logger.warn('Trailing assistant turn carried no thinking — added an empty block (the provider requires one)', {
+    logger.debug('Trailing assistant turn carried no thinking — added an empty block', {
         blocks: last.content.length
     }, 'AnthropicAdapter');
 }
@@ -683,9 +687,9 @@ export function createAnthropicAdapter() {
                     return [block, ...content];
                 }
             }
-            if (requiresPriorThinking(capabilities)) {
+            if (requiresThinkingBlock(capabilities)) {
                 const ids = (toolCalls || []).map(tc => tc.id).filter(Boolean);
-                logger.warn('No prior thinking recoverable for a tool-call turn — sending an empty block', {
+                logger.debug('No prior thinking recoverable for a tool-call turn — added an empty block', {
                     model,
                     toolCallIds: ids.slice(0, 3),
                     toolCallCount: ids.length
@@ -976,7 +980,7 @@ export function createAnthropicAdapter() {
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = await formatMessages(messages, capabilities, model);
-            if (requiresPriorThinking(capabilities)) ensureTrailingThinking(formattedMessages);
+            if (requiresThinkingBlock(capabilities)) ensureTrailingThinking(formattedMessages);
 
             const body = {
                 model,
@@ -1079,7 +1083,7 @@ export function createAnthropicAdapter() {
 
             const messages = normalizeMessages(rawMessages);
             const formattedMessages = await formatMessages(messages, capabilities, model);
-            if (requiresPriorThinking(capabilities)) ensureTrailingThinking(formattedMessages);
+            if (requiresThinkingBlock(capabilities)) ensureTrailingThinking(formattedMessages);
 
             const body = {
                 model,

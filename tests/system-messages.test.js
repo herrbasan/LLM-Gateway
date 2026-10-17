@@ -22,9 +22,12 @@ const ANTHROPIC_MODEL = {
     adapterModel: 'deepseek-flash',
     endpoint: 'https://upstream.invalid',
     apiKey: 'test-key',
-    // As configured in config.json for deepseek-flash-chat: the provider requires an
-    // assistant turn's thinking to be echoed back.
-    capabilities: { contextWindow: 200000, maxOutputTokens: 4096, priorReasoning: 'required-with-tools' }
+    capabilities: {
+        contextWindow: 200000,
+        maxOutputTokens: 4096,
+        priorReasoning: 'required-with-tools',
+        thinkingBlockRequired: true
+    }
 };
 
 const GEMINI_MODEL = {

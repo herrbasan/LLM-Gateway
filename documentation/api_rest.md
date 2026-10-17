@@ -1288,9 +1288,20 @@ Verify end-to-end with `node scripts/verify-history-repair-e2e.mjs [modelId]`.
 
 ### Prior Thinking — the Thinking Mode Contract
 
-A provider declaring `capabilities.priorReasoning` (DeepSeek, Kimi) refuses a history
-in thinking mode unless the thinking is echoed back. Two shapes must carry it, and
-nothing else needs to:
+Two declarations govern this, and they are not the same claim:
+
+- `capabilities.priorReasoning` — the **echo policy**: whether the client's
+  `reasoning_content` is passed back (`required`, `required-with-tools`) or stripped
+  (`ignored`). Applies to DeepSeek, Kimi, Grok, GLM.
+- `capabilities.thinkingBlockRequired` — a **measured fact**: the provider refuses an
+  assistant turn that carries no thinking block, and accepts an empty one. Set on the
+  two DeepSeek models only.
+
+Conflating them cost real noise: `priorReasoning` alone sent empty placeholders to
+Kimi, which accepts the same history without one — 5,207 warning lines in a single
+gateway log for blocks nothing needed.
+
+What the provider actually requires (probed live 2026-10-16, DeepSeek):
 
 | Message | Needed on DeepSeek |
 |---|---|
@@ -1304,9 +1315,15 @@ Clients do not round-trip thinking, so the adapter supplies it, in three tiers:
    assistant message, kept as sent.
 2. **The id-keyed cache** (`logs/anthropic-thinking/`) — saved when a streamed turn
    reported thinking alongside a tool call, replayed by tool-call id.
-3. **An empty block** — when neither can supply it, and only where the rule above
-   requires one. The turn came from a different adapter, its thinking was never
-   captured, or it is a trailing prefill that never had any.
+3. **An empty block** — when neither can supply it, and **only** for a model that
+   declares `thinkingBlockRequired`. The turn came from a different adapter, its
+   thinking was never captured, or it is a trailing turn that never had any.
+
+Tier 3 is logged at `debug`, not `warn`. It is the routine path — a model often emits
+no thinking for a short turn, so there is nothing to replay and nothing was lost.
+A warning on the normal path makes the level meaningless and buries the incidents it
+exists for; 6,391 identical lines were the result. Turn the level up when tracing
+thinking, and the placeholder is visible per turn again.
 
 Tier 3 exists because **the requirement is structural, not semantic** — probed live
 2026-10-16 with `scripts/probe-thinking-required.mjs` against DeepSeek:

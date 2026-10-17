@@ -147,6 +147,16 @@ function validateChatCapabilities(modelId, caps) {
         }
     }
 
+    // thinkingBlockRequired: measured, not a policy — the provider refuses an
+    // assistant turn that carries no thinking block, and accepts an EMPTY one
+    // (DeepSeek yes, Kimi no; probed 2026-10-16). Only a model that sets this
+    // receives the empty placeholder. `priorReasoning` cannot stand in for it:
+    // "echo the reasoning back" and "the field must be present" are different
+    // claims, and conflating them sent placeholders to Kimi, which needs none.
+    if ('thinkingBlockRequired' in caps && typeof caps.thinkingBlockRequired !== 'boolean') {
+        throw new Error(`[Config] Model "${modelId}": capabilities.thinkingBlockRequired must be boolean`);
+    }
+
     // clearThinkingSupport: z.AI/GLM accepts thinking.clear_thinking; when
     // priorReasoning keeps reasoning on the wire, the adapter sends
     // clear_thinking:false so the server doesn't discard it anyway.

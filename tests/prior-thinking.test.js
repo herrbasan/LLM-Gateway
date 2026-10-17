@@ -22,14 +22,18 @@ import { createAdapters } from '../src/core/adapters.js';
 
 const adapters = createAdapters();
 
-const model = (priorReasoning) => ({
+// `thinkingBlockRequired` is a measured fact, separate from the echo policy: DeepSeek
+// refuses an assistant turn with no thinking block (and accepts an empty one), Kimi
+// accepts the same history without one.
+const model = (caps = {}) => ({
     type: 'chat',
     adapter: 'anthropic',
     adapterModel: 'deepseek-flash',
     endpoint: 'https://upstream.invalid',
     apiKey: 'test-key',
-    capabilities: { contextWindow: 200000, maxOutputTokens: 4096, ...(priorReasoning ? { priorReasoning } : {}) }
+    capabilities: { contextWindow: 200000, maxOutputTokens: 4096, ...caps }
 });
+const DEEPSEEK = { priorReasoning: 'required-with-tools', thinkingBlockRequired: true };
 
 let realFetch = null;
 function captureUpstream() {
@@ -75,7 +79,7 @@ const blocksOf = (body, index) => body.messages[index].content;
 describe('anthropic adapter — prior thinking on tool-call turns', () => {
     it('sends an empty thinking block when nothing can be recovered', async () => {
         // The 2026-10-16 session-killer: no client echo, no cache entry.
-        const body = await send(model('required-with-tools'), TURN);
+        const body = await send(model(DEEPSEEK), TURN);
 
         const thinking = blocksOf(body, 1).filter(b => b.type === 'thinking');
         expect(thinking, 'the provider requires one; its absence is a 400').to.have.length(1);
@@ -85,7 +89,7 @@ describe('anthropic adapter — prior thinking on tool-call turns', () => {
     });
 
     it('uses the client echo when the client sent one', async () => {
-        const body = await send(model('required-with-tools'), [
+        const body = await send(model(DEEPSEEK), [
             TURN[0],
             { ...TURN[1], reasoning_content: 'Weighing the ping.' },
             TURN[2]
@@ -97,17 +101,26 @@ describe('anthropic adapter — prior thinking on tool-call turns', () => {
     });
 
     it('adds no block when the model declares no such requirement', async () => {
-        const body = await send(model(null), TURN);
+        const body = await send(model(), TURN);
         expect(blocksOf(body, 1).some(b => b.type === 'thinking')).to.be.false;
     });
 
     it('adds no block when the provider discards prior reasoning', async () => {
-        const body = await send(model('ignored'), TURN);
+        const body = await send(model({ priorReasoning: 'ignored' }), TURN);
+        expect(blocksOf(body, 1).some(b => b.type === 'thinking')).to.be.false;
+    });
+
+    it('sends no placeholder to a provider that only requires the echo', async () => {
+        // Kimi declares priorReasoning 'required' and ACCEPTS a tool-call turn with no
+        // thinking block (probed 2026-10-16). Sending it an empty block logged a
+        // warning on every tool turn of every request — 5207 lines in one log — for
+        // a block nothing needed.
+        const body = await send(model({ priorReasoning: 'required' }), TURN);
         expect(blocksOf(body, 1).some(b => b.type === 'thinking')).to.be.false;
     });
 
     it('leaves a turn without tool calls alone', async () => {
-        const body = await send(model('required-with-tools'), [
+        const body = await send(model(DEEPSEEK), [
             { role: 'user', content: 'Ping host a.' },
             { role: 'assistant', content: 'Checking.' },
             { role: 'user', content: 'Continue.' }
@@ -127,7 +140,7 @@ describe('anthropic adapter — the trailing turn must carry thinking', () => {
     ];
 
     it('leaves a mid-history turn without thinking untouched', async () => {
-        const body = await send(model('required-with-tools'), [
+        const body = await send(model(DEEPSEEK), [
             { role: 'user', content: 'Say hi.' },
             { role: 'assistant', content: 'Hi.' },
             { role: 'user', content: 'Now count.' }
@@ -138,7 +151,7 @@ describe('anthropic adapter — the trailing turn must carry thinking', () => {
     });
 
     it('leaves the trailing turn alone for a model that declares no such requirement', async () => {
-        const body = await send(model(null), TRAILING_PREFILL);
+        const body = await send(model(), TRAILING_PREFILL);
         const last = body.messages[body.messages.length - 1];
 
         expect(last.content.some(b => b.type === 'thinking')).to.be.false;
