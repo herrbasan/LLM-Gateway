@@ -592,7 +592,22 @@ export class ModelRouter {
 
         // Effort wins over boolean when both are present — it is strictly more
         // specific. 'none'/'off' effort means thinking off; otherwise thinking on.
-        const effort = reasoning_effort ?? undefined;
+        let effort = reasoning_effort ?? undefined;
+
+        // A model that declares its levels and omits 'none' cannot switch thinking
+        // off at all — the boolean form must not smuggle `thinking: disabled`
+        // past that declaration. Kimi K3.1 Pro answers 400 ("does not support
+        // disabled thinking mode") and its docs state thinking mode only; the
+        // honest translation of "off" is the cheapest thinking it does offer.
+        // Same rule nearestEffortLevel already applies to an explicit 'none'.
+        if (enable_thinking === false && effort == null) {
+            const levels = modelConfig.capabilities?.thinkingLevels;
+            if (Array.isArray(levels) && levels.length > 0 && !levels.includes('none')) {
+                effort = lowestOf(levels);
+                logger.debug(`[ModelRouter] "${modelId}" cannot disable thinking — enable_thinking=false becomes reasoning_effort="${effort}"`, { model: modelId }, 'ModelRouter');
+            }
+        }
+
         const effective = effort != null
             ? (effort === 'none' || effort === 'off' ? false : true)
             : enable_thinking;
