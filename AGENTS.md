@@ -25,8 +25,9 @@
 - **Chat cancellation**: HTTP client disconnect aborts the upstream provider request for fetch-based chat adapters. (The WebSocket transport was removed — see below.)
 - **Zero-output streams fail over HTTP**: SSE headers are withheld until a chunk carries output the client renders — answer content, a tool call, or reasoning. An upstream that produces nothing at all is answered with an HTTP error + JSON body rather than a 200 stream whose first chunk already claimed `finish_reason: "stop"`.
 - **Reasoning streams live**: reasoning deltas are released the moment they arrive, never held back until the first answer token. A thinking model can reason for minutes, and a client that sees no bytes at all aborts and retries the whole request. An attempt that streamed reasoning but never produced an answer is reported in-band (`ZERO_CONTENT`, "streamed reasoning but never produced an answer") instead of being retried.
+- **A thinking turn can legitimately end with no answer** (DeepSeek, measured 2026-11-08): `reasoning_content` carries the plan, `content` is empty or a vestige, no `tool_use`, `stop_reason: end_turn`. The client shows a thought and the turn is over — the "chat just stopped" symptom. The `anthropic` adapter logs it at `warn` (`Anthropic stream completed with thinking but no answer`) with the stop reason, output tokens and request shape, because from the client's side that state is indistinguishable from a truncation. See `documentation/LLM APIs/provider_deepseek.md`.
 - **Output budget**: the client's `max_tokens` / `max_completion_tokens` is forwarded verbatim and never clamped. When the client sends none, the gateway sends none — `capabilities.maxOutputTokens` is published in `/v1/models` as a fact about the model and never becomes a request. A model whose upstream *requires* the field declares `defaultMaxTokens` (verified live 2026-10-16: Kimi and native Anthropic answer 400 without it; DeepSeek and MiniMax do not care).
-- **Context telemetry (SSE)**: The gateway attaches a `context` object to the `finish_reason` chunk and injects a final usage chunk so REST clients get cumulative token counts.
+- **Context telemetry (SSE)**: The gateway attaches a `context` object to the `finish_reason` chunk and injects a final usage chunk so REST clients get cumulative token counts. When the upstream reports usage of its own, its numbers — including `prompt_tokens_details.cached_tokens` — are logged at `debug` (`Upstream usage`) beside the gateway's estimate. The log is the observation; the client-facing stream is unchanged.
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
 - **Kimi K3.1 Pro is thinking-only**: `thinking: { type: "disabled" }` is a 400 upstream, so `kimi-k31-chat` declares `thinkingLevels: [low, high, max]` and no `none`. A model that declares levels without `none` cannot disable thinking at all — `_resolveThinking` turns `enable_thinking: false` into its lowest declared level instead of a rejection (see `documentation/LLM APIs/provider_kimi.md`).
 - **A typo'd Kimi `adapterModel` does not fail**: `/v1/messages` answers 200 for an unknown ID, echoes the bogus ID back, and silently serves K2.8 Preview without thinking. Validate new IDs against `GET /coding/v1/models` — the response `model` field is an echo, not an answer.
@@ -98,6 +99,7 @@ Each model is independently configured with:
 **Capability flags:**
 - `thinking: "chat_template_kwargs"` — Model supports `chat_template_kwargs.enable_thinking` (llama.cpp/Qwen). Without this, the thinking param is silently dropped for OpenAI-adapter models.
 - `excludeParams: ["temperature", "top_p", ...]` — Parameters to strip from the upstream payload. Used for reasoning models that reject sampling params.
+- `streamUsage: true` — **planned, not implemented.** The upstream reports usage on a stream only when asked (`stream_options.include_usage`), which would make `cached_tokens` visible to a streaming caller. z.ai's acceptance of that field is unverified and some OpenAI-compatible endpoints reject it, so this stays a probe (`scripts/probe-glm-cache.mjs`) until a live 200 proves it.
 
 ### Disabling Models
 
@@ -123,7 +125,7 @@ Disabled models:
 |---------|-------------|-----------------|-------|
 | `openai` | Standard OpenAI Chat Completions API | chat, embedding, image | Omits `max_tokens` when client omits it; upstream decides default. `generateImage` targets the upstream's OpenAI-native `/images` endpoint (OpenRouter pattern, verified with krea-2-medium-turbo 2026-09-24) |
 | `responses` | OpenAI Responses API (newer format) | chat | — |
-| `anthropic` | Anthropic Claude API | chat | Sends no output budget unless the client sent one or the model declares `defaultMaxTokens`. Repairs malformed tool history (never refuses a history it can repair or drop) and supplies the prior thinking the thinking mode requires — client echo → id-keyed cache → empty block, the last one only for models declaring `capabilities.thinkingBlockRequired` (measured per provider) and logged at `debug`. A tool the provider refuses by name is dropped so the turn completes (see `src/utils/tool-containment.js`). See `documentation/api_rest.md` > Prior Thinking |
+| `anthropic` | Anthropic Claude API | chat | Sends no output budget unless the client sent one or the model declares `defaultMaxTokens`. Repairs malformed tool history (never refuses a history it can repair, reorder or drop — a result one message late is hoisted back under its call, reported as `hoistedResults`) and supplies the prior thinking the thinking mode requires — client echo → id-keyed cache → empty block, the last one only for models declaring `capabilities.thinkingBlockRequired` (measured per provider) and logged at `debug`. A tool the provider refuses by name is dropped so the turn completes (see `src/utils/tool-containment.js`). See `documentation/api_rest.md` > Prior Thinking |
 | `gemini` | Google Gemini API | chat, embedding | Chat uses the Interactions API (stateless); embeddings stay on generateContent/batchEmbedContents |
 
 > Only these four adapters are registered (`src/core/adapters.js`) and validated (`config-schema.js`). A config naming any other adapter (e.g. the removed `kimi`/`alibaba`/`llamacpp`) fails validation at startup.
@@ -218,7 +220,7 @@ Tasks provide semantic routing with preset parameters defined in `config.json`:
 ### Active Chat Behavior
 
 - HTTP chat requests abort upstream generation when the client disconnects
-- OpenAI-spec responses do not include gateway-specific `context` metadata as a separate named event; the gateway attaches `context` to the `finish_reason` chunk and injects a final usage chunk so clients get cumulative token counts. Usage `prompt_tokens` is overridden with the gateway's context estimate.
+- OpenAI-spec responses do not include gateway-specific `context` metadata as a separate named event; the gateway attaches `context` to the `finish_reason` chunk and injects a final usage chunk so clients get cumulative token counts. Usage `prompt_tokens` is overridden with the gateway's context estimate; when the upstream reported its own usage — `cached_tokens` included — that is logged at `debug` so the real numbers are observable without changing what the client receives.
 - Kimi chat requests sanitize prior assistant thinking traces before estimation and upstream dispatch
 - Token estimation is local tiktoken only (telemetry). No upstream tokenizer endpoints are called.
 - Qwen models support `enable_thinking` toggle via `extraBody.chat_template_kwargs` — set to `false` to disable verbose reasoning
@@ -285,6 +287,28 @@ endpoint: "https://api.z.ai/api/anthropic"
 > **Trade-off**: The Anthropic adapter had rich thinking control and native tool-call format conversion. The openai adapter uses standard OpenAI tool format. If thinking control or Anthropic-native tools become critical, switch back by restoring the anthropic endpoint + adapter.
 >
 > **Thinking on the openai adapter**: z.ai GLM thinking is on by default. The gateway's `openai` adapter does not natively translate `enable_thinking` into z.ai's `thinking` field — to disable thinking, set `extraBody: { "thinking": { "type": "disabled" } }`.
+
+#### Coding Plan quota is credits, and caching is most of the lever (verified 2026-11-05)
+
+`credits = (fresh input × mult + cached input × cachedMult + output × mult) / 10_000`
+— GLM-5.3: **6.9 / 1.7 / 24**; GLM-5.3-Flash: 2.3 / 0.56 / 8. Lite 2,000 credits
+per 5 h (10,000/week), Pro 12,000 (60,000), Max 28,000 (140,000). **Peak hours are
+Monday–Friday 14:00–18:00 UTC+8 (07:00–11:00 CET) and off-peak is 50% of the rate** —
+a morning session is the most expensive time of day to run one. z.ai's own
+"estimated token allowance" table only closes at a **95–98% cache hit rate**, which is
+the correct reading: a cache miss multiplies the input line by 4.
+
+Consequences worth knowing before blaming the model:
+
+- One agentic turn is not one request. A 20-turn client session in this repo's own
+  logs cost **455–1,243 upstream requests**, each re-sending the full history
+  (`msgCount` grew to 1,166). At 200 k tokens that is tens of millions of billed
+  input tokens per session, so even a perfect cache can exceed a Lite 5-hour window.
+- Output is priced at 24 credits/10k — 3.5× the fresh-input rate — and GLM-5.3
+  thinking is forced on. `reasoning_effort` defaults to `max` upstream, so the
+  model's config value (or the client's) is what keeps thinking shallow. The
+  `medium` → `high` tie-break in `_resolveThinking` rounds *up*.
+- `capabilities.streamUsage` is **not implemented** — it was the candidate mechanism (send `stream_options: { include_usage: true }`) for getting `cached_tokens` back on a stream, and it is deliberately absent until `scripts/probe-glm-cache.mjs` proves z.ai accepts the field. Until then, the cache question is answered by the `debug` `Upstream usage` log when z.ai reports usage on its own, and by z.ai's Charge Type page (which shows cached-input volume directly).
 
 ### Thinking Control (Per-Request)
 The gateway supports disabling/enabling model reasoning per-request over REST. All sources resolve to a single normalized `enable_thinking` field before reaching adapters.

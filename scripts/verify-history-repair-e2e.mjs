@@ -84,6 +84,48 @@ const rawDuplicateTurn = [
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_dup', content: 'pong' }] }
 ];
 
+// The 2026-11-07 shape (issue #15): the client put one of its own turns between the
+// tool call and the results that answer it — here a mid-history system turn, which
+// splitInstructions keeps in place as a user turn (system-messages.js). Nothing
+// pairs in that order, so the pass hoists the results back under their calls.
+const separatedByClientTurn = [
+    { role: 'user', content: 'Ping host a and host b.' },
+    {
+        role: 'assistant',
+        content: 'Checking both.',
+        reasoning_content: 'The client echoes the model\'s reasoning back, and DeepSeek refuses a tool-call continuation without it.',
+        tool_calls: [
+            { type: 'function', id: 'call_sep_a', function: { name: 'ping', arguments: '{"host":"a"}' } },
+            { type: 'function', id: 'call_sep_b', function: { name: 'ping', arguments: '{"host":"b"}' } }
+        ]
+    },
+    { role: 'system', content: 'You have 3 tool calls left.' },
+    { role: 'tool', tool_call_id: 'call_sep_a', content: 'pong a' },
+    { role: 'tool', tool_call_id: 'call_sep_b', content: 'pong b' }
+];
+
+// The same order as raw Anthropic blocks — what the adapter would emit if it hoisted
+// nothing, sent straight upstream to show the gap is fatal.
+const rawSeparatedTurn = [
+    { role: 'user', content: [{ type: 'text', text: 'Ping host a and host b.' }] },
+    {
+        role: 'assistant',
+        content: [
+            { type: 'text', text: 'Checking both.' },
+            { type: 'tool_use', id: 'call_sep_a', name: 'ping', input: { host: 'a' } },
+            { type: 'tool_use', id: 'call_sep_b', name: 'ping', input: { host: 'b' } }
+        ]
+    },
+    { role: 'user', content: [{ type: 'text', text: 'You have 3 tool calls left.' }] },
+    {
+        role: 'user',
+        content: [
+            { type: 'tool_result', tool_use_id: 'call_sep_a', content: 'pong a' },
+            { type: 'tool_result', tool_use_id: 'call_sep_b', content: 'pong b' }
+        ]
+    }
+];
+
 console.log(`model: ${modelId}  (${modelConfig.adapterModel} @ ${modelConfig.endpoint})`);
 const adapter = createAnthropicAdapter();
 
@@ -142,6 +184,39 @@ try {
     console.log(`   ACCEPTED: ${JSON.stringify(response).slice(0, 180)}`);
 } catch (error) {
     console.log(`   REJECTED: ${error.message.slice(0, 240)}`);
+}
+
+console.log('\n5. the 2026-11-07 shape (issue #15: a client turn between call and result) — expect success');
+try {
+    const response = await adapter.chatComplete(modelConfig, {
+        messages: separatedByClientTurn,
+        tools: TOOLS,
+        maxTokens: 32,
+        stream: false
+    });
+    console.log(`   ACCEPTED: ${JSON.stringify(response).slice(0, 180)}`);
+} catch (error) {
+    console.log(`   REJECTED: ${error.message.slice(0, 240)}`);
+}
+
+console.log('\n6. same separated order sent raw (pass bypassed) — expect rejection');
+{
+    const response = await fetch(`${modelConfig.endpoint}/v1/messages`, {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'x-api-key': modelConfig.apiKey,
+            'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({ model: modelConfig.adapterModel, max_tokens: 32, messages: rawSeparatedTurn })
+    });
+    const body = await response.text();
+    if (response.ok) {
+        console.log('   UNEXPECTED 200 — this upstream tolerates the gap, so hoisting is a');
+        console.log('   repair for the providers that do not (Kimi, native Anthropic), not for this one');
+    } else {
+        console.log(`   REJECTED as expected (${response.status}): ${body.replace(/\s+/g, ' ').slice(0, 200)}`);
+    }
 }
 
 console.log('\nRead the pair: step 3 shows the exact rejection the incidents produced');

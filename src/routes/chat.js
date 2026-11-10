@@ -315,6 +315,23 @@ export function createChatHandler(router, ticketRegistry) {
 
             // Upstream provider's actual usage numbers pass through unchanged.
             // Client accumulates token counts itself across the conversation.
+            // Logged because cached_tokens is the only evidence that an implicit
+            // cache engaged; without it a metered plan's burn is unattributable.
+            const upstreamUsage = normalized.usage;
+            if (typeof upstreamUsage?.prompt_tokens === 'number' && upstreamUsage.prompt_tokens > 0) {
+                const cached = upstreamUsage.prompt_tokens_details?.cached_tokens
+                    ?? upstreamUsage.cache_read_input_tokens
+                    ?? 0;
+                logger.debug('Upstream usage', {
+                    model: req.body?.model,
+                    promptTokens: upstreamUsage.prompt_tokens,
+                    completionTokens: upstreamUsage.completion_tokens ?? 0,
+                    cachedTokens: cached,
+                    cacheHitPercent: Math.round((cached / upstreamUsage.prompt_tokens) * 1000) / 10,
+                    estimatedPromptTokens: context?.used_tokens ?? null,
+                    client
+                }, 'ChatRoute');
+            }
 
             res.status(200).json(normalized);
 

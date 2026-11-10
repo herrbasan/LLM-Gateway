@@ -280,6 +280,19 @@ data: {"id":"chatcmpl-gw-...","object":"chat.completion.chunk","created":...,"mo
 data: [DONE]
 ```
 
+**Whose usage numbers you get.** The upstream's own usage frame passes through
+verbatim — including `prompt_tokens_details.cached_tokens`, which is the only
+evidence that a provider's implicit cache engaged. The gateway additionally
+appends the context-estimate chunk shown above, and logs the upstream's numbers
+at `debug` (`Upstream usage`: `promptTokens`, `completionTokens`, `cachedTokens`,
+`cacheHitPercent`, `estimatedPromptTokens`) so the two can be compared. The log
+is the observation; the stream shape is unchanged.
+
+An upstream that reports usage only on request would need
+`stream_options: { include_usage: true }`. That is **not** implemented — z.ai's
+acceptance of the field is unverified and a rejection would 400 every streaming
+call. `scripts/probe-glm-cache.mjs` is the test that gates it.
+
 > Oversized streaming requests are rejected with `413 Payload Too Large` (or a `202 Accepted` ticket if `X-Async: true` was set). The gateway does not inject gateway-specific progress events into the stream.
 
 If the HTTP client disconnects during streaming or before a non-streaming response completes, the gateway aborts the upstream provider request for fetch-based chat adapters instead of continuing generation in the background.
@@ -1279,6 +1292,21 @@ results in the message immediately after them — dropping either side when it c
 pair — and drops any message left empty, since neither filler is legal on both
 providers (`[]` breaks DeepSeek, an empty text block breaks Kimi). Dropping messages
 is only safe because neither provider enforces role alternation.
+
+**A result one message late is hoisted, not dropped.** A client can put one of its own
+turns between a tool call and the results that answer it — Copilot appends a system
+turn after the model's last answer, and a mid-history instruction is carried in place as
+a user turn (see *System and Developer Messages*). Read literally, nothing pairs there:
+the call is unanswered and its result an orphan, so both used to be dropped, the tool
+output was lost, and because the client resends its own copy the same repair ran again
+on every turn (issue #15, 2026-11-07 — it never converged). The order is repairable
+instead: the message carrying *only* tool results for that turn's calls is hoisted back
+under them, and whatever separated the two follows it. The provider requires the result
+in the immediately next message, so the alternative is losing both halves. A message
+that also carries text of its own is left where it stands, and a result beyond another
+assistant turn is never hoisted — the boundary is what keeps the repair from moving
+something that is saying its own thing. A hoist is reported as `hoistedResults` on
+the same `warn` line that names every other change.
 
 A repeated call id is **re-issued**, not dropped. One upstream slip — the model emits
 one id for two calls — arrives in two shapes that need opposite halves repaired

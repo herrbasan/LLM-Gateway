@@ -365,3 +365,50 @@ describe('Anthropic adapter → StreamHandler — the zero-content shape', funct
         expect(res.body).to.include('data: [DONE]');
     });
 });
+
+/**
+ * A thinking turn that produced no answer is not a clean success, and the two facts
+ * that make it diagnosable after the fact are the finish reason and the split between
+ * reasoning and answer. DeepSeek ends such turns on its own (measured 2026-11-08:
+ * `effort: max` on a long-output task spent 63,375 output tokens inside the thinking
+ * block and emitted 50 characters of answer), and the client renders it as "the chat
+ * just stopped".
+ *
+ * `max_tokens` used to reach the client unchanged — a value outside the OpenAI enum,
+ * and one no client can act on. `length` is what tells it the answer was cut.
+ */
+describe('Anthropic adapter — a thinking turn with no answer', function () {
+    this.timeout(10000);
+
+    const thinkingOnly = (stopReason) => [
+        { type: 'message_start', message: { id: 'msg_think', usage: { input_tokens: 100 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Let me probe: ' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: stopReason }, usage: { output_tokens: 60000 } },
+        { type: 'message_stop' }
+    ];
+
+    it('carries the reasoning, no answer, and still finishes', async () => {
+        const result = await collect(thinkingOnly('end_turn'));
+
+        expect(result.reasoning).to.equal('Let me probe: ');
+        expect(result.content).to.equal('');
+        expect(result.finished).to.be.true;
+    });
+
+    it('reports a budget-ended turn as OpenAI length, not the Anthropic name', async () => {
+        const result = await collect(thinkingOnly('max_tokens'));
+        const terminal = result.chunks.find(c => c.choices?.[0]?.finish_reason);
+
+        expect(terminal.choices[0].finish_reason).to.equal('length');
+    });
+
+    it('keeps end_turn and tool_use on their OpenAI names', async () => {
+        const stop = await collect(thinkingOnly('end_turn'));
+        expect(stop.chunks.find(c => c.choices?.[0]?.finish_reason).choices[0].finish_reason).to.equal('stop');
+
+        const tool = await collect(thinkingOnly('tool_use'));
+        expect(tool.chunks.find(c => c.choices?.[0]?.finish_reason).choices[0].finish_reason).to.equal('tool_calls');
+    });
+});

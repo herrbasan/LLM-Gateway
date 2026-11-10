@@ -62,7 +62,12 @@ export class StreamHandler {
     }
 
     async process(chunkGenerator, contextPayload = null, meta = null) {
-        let seenUpstreamUsage = false;
+        // The upstream's own usage frame is the only truthful account of what the
+        // request cost — it carries prompt_tokens_details.cached_tokens, which is
+        // the sole evidence of whether a provider's implicit cache engaged. Kept
+        // here so the end of the stream can log it next to the gateway estimate
+        // the client receives.
+        let lastUpstreamUsage = null;
         let hasContent = false;
         // Frames that arrived before any content. Writing one flushes the SSE
         // headers and forfeits the HTTP-error path, so they wait here until
@@ -137,9 +142,11 @@ export class StreamHandler {
                     }
                 }
 
-                // Track whether upstream provided usage data
+                // Track upstream-provided usage. Reported at the end of the stream
+                // (with the cache-hit share) so a metered provider's bill can be
+                // reconciled from the gateway's own log.
                 if (chunk.usage && (chunk.usage.prompt_tokens != null || chunk.usage.total_tokens != null)) {
-                    seenUpstreamUsage = true;
+                    lastUpstreamUsage = chunk.usage;
                     // Upstream provider's actual usage numbers pass through unchanged.
                     // Client accumulates token counts itself across the conversation.
                 }
@@ -183,9 +190,26 @@ export class StreamHandler {
                 await writeWithBackpressure(chunk);
             }
 
-            // Always inject the gateway's context estimate as a final usage chunk
-            // if upstream didn't provide usage or provided partial (cached-only) data.
-            // This ensures clients always see the full cumulative token count.
+            // Keep the gateway's context estimate as the final usage chunk: client
+            // behaviour is built on it, and changing what is on the wire is not a
+            // diagnostic. Log the upstream's own numbers alongside it instead —
+            // cached_tokens is the only evidence that an implicit cache engaged,
+            // and a metered plan's burn cannot be attributed without it.
+            if (lastUpstreamUsage) {
+                const cached = lastUpstreamUsage.prompt_tokens_details?.cached_tokens
+                    ?? lastUpstreamUsage.cache_read_input_tokens
+                    ?? 0;
+                const prompt = lastUpstreamUsage.prompt_tokens ?? 0;
+                logger.debug('Upstream usage', {
+                    ...opMeta,
+                    promptTokens: prompt,
+                    completionTokens: lastUpstreamUsage.completion_tokens ?? 0,
+                    cachedTokens: cached,
+                    cacheHitPercent: prompt > 0 ? Math.round((cached / prompt) * 1000) / 10 : null,
+                    estimatedPromptTokens: contextPayload?.used_tokens ?? null
+                }, 'StreamHandler');
+            }
+
             if (headersSent && contextPayload && typeof contextPayload.used_tokens === 'number') {
                 const usage = {
                     prompt_tokens: contextPayload.used_tokens ?? 0,

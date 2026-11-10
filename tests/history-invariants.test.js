@@ -215,4 +215,106 @@ describe('enforceHistoryInvariants', () => {
         const before = JSON.parse(JSON.stringify(messages));
         expect(enforceHistoryInvariants(messages)).to.deep.equal(before);
     });
+
+    it('empties a tool_result whose only content part is an empty text block', () => {
+        // 2026-10-30: kimi-k31-chat refused every resend of a history containing
+        // this shape with "text content is empty" — the session could not continue
+        // (probe-k31-empty-text.mjs case G). An empty string result is accepted.
+        const messages = [
+            user(text('ping')),
+            assistant(call('t1')),
+            user({ type: 'tool_result', tool_use_id: 't1', content: [text('')] }),
+            assistant(text('done'))
+        ];
+
+        const out = enforceHistoryInvariants(messages);
+
+        expect(out[2].content).to.deep.equal([
+            { type: 'tool_result', tool_use_id: 't1', content: '' }
+        ]);
+    });
+
+    it('keeps the real parts of a tool_result content array, dropping only empty text', () => {
+        const messages = [
+            user(text('ping')),
+            assistant(call('t1')),
+            user({
+                type: 'tool_result',
+                tool_use_id: 't1',
+                content: [text(''), text('measured: 42')]
+            }),
+            assistant(text('done'))
+        ];
+
+        const out = enforceHistoryInvariants(messages);
+
+        expect(out[2].content).to.deep.equal([
+            { type: 'tool_result', tool_use_id: 't1', content: [text('measured: 42')] }
+        ]);
+    });
+
+    it('leaves a string tool_result content untouched', () => {
+        const messages = [
+            user(text('ping')),
+            assistant(call('t1')),
+            user({ type: 'tool_result', tool_use_id: 't1', content: '' }),
+            assistant(text('done'))
+        ];
+        const before = JSON.parse(JSON.stringify(messages));
+        expect(enforceHistoryInvariants(messages)).to.deep.equal(before);
+    });
+
+    it('hoists a result message back under the call a client turn separated it from', () => {
+        // 2026-11-07, issue #15: Copilot appends a system turn after the model's last
+        // answer, and splitInstructions turns it into a user turn in place
+        // (system-messages.js). When the answer was a tool call, the result arrives
+        // one message late — and both halves used to be dropped, on every turn, for
+        // as long as the client kept resending.
+        const messages = [
+            user(text('look up both hosts')),
+            assistant(call('a'), call('b')),
+            user(text('You have 3 tool calls left.')),
+            user(result('a'), result('b')),
+            assistant(text('both answered'))
+        ];
+
+        const out = enforceHistoryInvariants(messages);
+
+        expect(out.map(m => m.role), 'nothing is dropped').to.deep.equal(
+            ['user', 'assistant', 'user', 'user', 'assistant']
+        );
+        expect(idsOf(out[1]), 'both calls survive').to.deep.equal(['a', 'b']);
+        expect(resultIdsOf(out[2]), 'the results sit under their calls').to.deep.equal(['a', 'b']);
+        expect(out[3].content, 'the separating turn follows them').to.deep.equal([text('You have 3 tool calls left.')]);
+    });
+
+    it('leaves a separated result that answers a different call where it stands', () => {
+        const messages = [
+            user(text('ping')),
+            assistant(call('a')),
+            user(text('aside')),
+            user(result('other')),
+            assistant(text('done'))
+        ];
+
+        const out = enforceHistoryInvariants(messages);
+
+        expect(out.map(m => m.role), 'the emptied turns are dropped, as before').to.deep.equal(['user', 'user', 'assistant']);
+        expect(out[1].content, 'the separating turn is untouched').to.deep.equal([text('aside')]);
+        expect(out.map(m => JSON.stringify(m)).join('')).to.not.include('other');
+    });
+
+    it('does not hoist a result across another assistant turn', () => {
+        const messages = [
+            user(text('ping')),
+            assistant(call('a')),
+            user(text('aside')),
+            assistant(text('interjection')),
+            user(result('a'))
+        ];
+
+        const out = enforceHistoryInvariants(messages);
+
+        expect(out.map(m => JSON.stringify(m)).join('')).to.not.include('tool_result');
+    });
 });

@@ -115,6 +115,20 @@ async function pruneThinkingCache() {
 // Compact, content-free summary of an outbound /v1/messages body for failure
 // logs: roles and block types of the last turns, thinking-block health, and
 // the generation settings. Never the text itself.
+// Anthropic's stop reasons are not OpenAI's, and the two that matter are not
+// cosmetic: `max_tokens` reaching a client unchanged is a value outside the OpenAI
+// enum, while `length` is what tells the client the answer was cut short — the whole
+// difference between "the model stopped talking" and "the turn was truncated".
+// Gemini's adapter already reports `incomplete` as `length`; this is the same
+// convention.
+function toOpenAIFinishReason(stopReason) {
+    if (stopReason === 'end_turn') return 'stop';
+    if (stopReason === 'tool_use') return 'tool_calls';
+    if (stopReason === 'max_tokens') return 'length';
+    if (stopReason === 'stop_sequence') return 'stop';
+    return stopReason;
+}
+
 export function describeRequestShape(body) {
     const thinkingBlocks = { total: 0, empty: 0, unsigned: 0 };
     const turns = body.messages.map((m) => {
@@ -241,6 +255,16 @@ export function ensureTrailingThinking(formatted) {
 // ordinary parallel calls; a result left with no call to answer is dropped as an
 // orphan, which is what the one-result shape reduces to.
 //
+// A result does not always arrive in the message right after its call, and when it
+// does not, the two sides were previously dropped together — the call reported as
+// unanswered and its result as an orphan, the tool output lost, and the same broken
+// history sent again on the next turn because the client resends its own copy
+// (issue #15, 2026-11-07: the repair never converged and the 500s never stopped).
+// The order is repairable: the message carrying only tool results is hoisted back
+// under the call it answers, and whatever separated them follows it. That is not a
+// judgement about the client's turn order — the provider requires the result in the
+// immediately next message, so the alternative is losing both halves.
+//
 // Nothing is repaired silently: one WARN names everything that changed.
 export function enforceHistoryInvariants(formatted) {
     const report = {
@@ -250,6 +274,7 @@ export function enforceHistoryInvariants(formatted) {
         idlessCallIds: 0,
         unansweredCalls: [],
         orphanResults: [],
+        hoistedResults: [],
         droppedMessages: 0
     };
     // What actually left the history, and what was rewritten to stay in it. The WARN
@@ -288,6 +313,27 @@ export function enforceHistoryInvariants(formatted) {
             return false;
         }
         return true;
+    });
+
+    // cleanBlocks sees only the top level; a tool_result's content array is one
+    // level deeper, and an empty text part inside it is the same 400 on Kimi
+    // ("text content is empty", measured 2026-10-30, probe-k31-empty-text.mjs
+    // case G). A content array that empties out becomes '' — an empty tool
+    // result both Kimi and native Anthropic accept (probe case F).
+    const cleanToolResultContent = (blocks) => blocks.map((block) => {
+        if (block?.type !== 'tool_result' || !Array.isArray(block.content)) return block;
+        let dropped = 0;
+        const kept = block.content.filter((part) => {
+            if (part?.type === 'text' && (part.text ?? '') === '') {
+                dropped++;
+                noteDropped('emptyToolResultText', part);
+                return false;
+            }
+            return true;
+        });
+        if (dropped === 0) return block;
+        report.emptyTextBlocks += dropped;
+        return { ...block, content: kept.length > 0 ? kept : '' };
     });
 
     // Reconcile one assistant turn with the message immediately after it: ids are
@@ -395,7 +441,31 @@ export function enforceHistoryInvariants(formatted) {
     };
 
     const out = [];
+    // Indices already emitted by a hoist — the message was placed under its call and
+    // must not be visited again where it stood.
+    const hoisted = new Set();
+
+    // The first message after `i` that carries nothing but tool results for one of
+    // this turn's calls, before the next assistant turn. A message with text of its
+    // own is left where it is: moving something that says its own thing is a
+    // different repair, and the provider reads it as part of the conversation.
+    const separatedResultsIndex = (messages, i) => {
+        const callIds = new Set(messages[i].content
+            .filter(block => block?.type === 'tool_use' && typeof block.id === 'string')
+            .map(block => block.id));
+        if (callIds.size === 0) return -1;
+        for (let j = i + 2; j < messages.length; j++) {
+            const candidate = messages[j];
+            if (candidate?.role === 'assistant') return -1;
+            if (!Array.isArray(candidate?.content)) continue;
+            if (!candidate.content.every(block => block?.type === 'tool_result')) continue;
+            if (candidate.content.some(block => callIds.has(block.tool_use_id))) return j;
+        }
+        return -1;
+    };
+
     for (let i = 0; i < formatted.length; i++) {
+        if (hoisted.has(i)) continue;
         const msg = formatted[i];
         if (!Array.isArray(msg.content)) {
             out.push(msg);
@@ -405,7 +475,7 @@ export function enforceHistoryInvariants(formatted) {
         if (msg.role !== 'assistant') {
             // Not consumed as the second half of a pair, so any tool_result here
             // has no call immediately before it — it cannot be attached to one.
-            const kept = cleanBlocks(msg.content).filter((block) => {
+            const kept = cleanToolResultContent(cleanBlocks(msg.content)).filter((block) => {
                 if (block?.type !== 'tool_result') return true;
                 report.orphanResults.push(block.tool_use_id ?? null);
                 noteDropped('orphanResult', block);
@@ -416,11 +486,26 @@ export function enforceHistoryInvariants(formatted) {
             continue;
         }
 
-        const next = formatted[i + 1];
-        const nextHasResults = next?.role !== 'assistant'
+        let resultIndex = i + 1;
+        const next = formatted[resultIndex];
+        let nextHasResults = next?.role !== 'assistant'
             && Array.isArray(next?.content)
             && next.content.some(block => block?.type === 'tool_result');
-        const nextBlocks = nextHasResults ? cleanBlocks(next.content) : null;
+
+        if (!nextHasResults) {
+            const found = separatedResultsIndex(formatted, i);
+            if (found !== -1) {
+                resultIndex = found;
+                nextHasResults = true;
+                hoisted.add(found);
+                for (const block of formatted[found].content) {
+                    report.hoistedResults.push(block.tool_use_id);
+                }
+            }
+        }
+
+        const resultMsg = formatted[resultIndex];
+        const nextBlocks = nextHasResults ? cleanToolResultContent(cleanBlocks(resultMsg.content)) : null;
 
         const reconciled = reconcilePair(cleanBlocks(msg.content), nextBlocks);
 
@@ -428,9 +513,9 @@ export function enforceHistoryInvariants(formatted) {
         else report.droppedMessages++;
 
         if (nextHasResults) {
-            if (reconciled.nextBlocks.length > 0) out.push({ ...next, content: reconciled.nextBlocks });
+            if (reconciled.nextBlocks.length > 0) out.push({ ...resultMsg, content: reconciled.nextBlocks });
             else report.droppedMessages++;
-            i++;
+            if (resultIndex === i + 1) i++;
         }
     }
 
@@ -444,9 +529,10 @@ export function enforceHistoryInvariants(formatted) {
         throw err;
     }
 
-    const { emptyTextBlocks, duplicateCallIds, reusedCallIds, idlessCallIds, unansweredCalls, orphanResults, droppedMessages } = report;
+    const { emptyTextBlocks, duplicateCallIds, reusedCallIds, idlessCallIds, unansweredCalls, orphanResults, hoistedResults, droppedMessages } = report;
     const changed = emptyTextBlocks > 0 || duplicateCallIds.length > 0 || reusedCallIds.length > 0
-        || idlessCallIds > 0 || unansweredCalls.length > 0 || orphanResults.length > 0;
+        || idlessCallIds > 0 || unansweredCalls.length > 0 || orphanResults.length > 0
+        || hoistedResults.length > 0;
     if (changed) {
         logger.warn('Repaired outbound history to satisfy upstream rules', {
             emptyTextBlocks,
@@ -455,6 +541,7 @@ export function enforceHistoryInvariants(formatted) {
             toolUseWithoutId: idlessCallIds,
             unansweredCalls,
             orphanResults,
+            hoistedResults,
             droppedMessages,
             messageCount: formatted.length,
             sentMessages: out.length
@@ -464,7 +551,8 @@ export function enforceHistoryInvariants(formatted) {
             reissued: reissuedTrail,
             trailTruncated: report.emptyTextBlocks + report.duplicateCallIds.length
                 + report.reusedCallIds.length + report.unansweredCalls.length
-                + report.orphanResults.length > droppedTrail.length + reissuedTrail.length
+                + report.orphanResults.length + report.hoistedResults.length
+                > droppedTrail.length + reissuedTrail.length
         }, 'AnthropicAdapter');
     }
 
@@ -923,7 +1011,7 @@ export function createAnthropicAdapter() {
             choices: [{
                 index: 0,
                 message,
-                finish_reason: data.stop_reason === 'end_turn' ? 'stop' : (data.stop_reason === 'tool_use' ? 'tool_calls' : data.stop_reason)
+                finish_reason: toOpenAIFinishReason(data.stop_reason)
             }],
             usage: {
                 prompt_tokens: data.usage?.input_tokens || 0,
@@ -1234,7 +1322,18 @@ export function createAnthropicAdapter() {
                         if (event.delta?.type) count(inv.deltaTypes, event.delta.type);
 
                         if (event.type === 'error') {
-                            logger.error('Anthropic stream emitted error event', null, { error: event.error }, 'AnthropicAdapter');
+                            // The request shape rides along. A 500 from a third-party
+                            // Anthropic endpoint says nothing about which request it
+                            // refused, and the next turn resends it unchanged — without
+                            // this, an outage is diagnosable only by guessing (MiniMax,
+                            // 2026-11-07: 95 error events, no record of what was sent).
+                            // The model belongs here too: the same error arrives from
+                            // several configured upstreams and an unattributed failure
+                            // has already cost this repo two wrong conclusions.
+                            logger.error('Anthropic stream emitted error event', {
+                                model,
+                                ...describeRequestShape(body)
+                            }, { error: event.error }, 'AnthropicAdapter');
                             throw new Error(`Upstream API Stream Error: ${event.error?.message || JSON.stringify(event.error)}`);
                         }
 
@@ -1408,9 +1507,7 @@ export function createAnthropicAdapter() {
                             if (event.usage) {
                                 outputTokens = event.usage.output_tokens || 0;
                             }
-                            let finishReason = event.delta?.stop_reason;
-                            if (finishReason === 'end_turn') finishReason = 'stop';
-                            else if (finishReason === 'tool_use') finishReason = 'tool_calls';
+                            const finishReason = toOpenAIFinishReason(event.delta?.stop_reason);
 
                             if (finishReason === 'tool_calls' && (thinkingText || thinkingSignature)) {
                                 for (const id of toolUseIds) {
@@ -1477,6 +1574,23 @@ export function createAnthropicAdapter() {
                         model,
                         completed,
                         usable,
+                        inputTokens,
+                        outputTokens,
+                        ...inv,
+                        request: describeRequestShape(body)
+                    }, 'AnthropicAdapter');
+                } else if (inv.textChars === 0 && (inv.blockTypes.tool_use ?? 0) === 0) {
+                    // Completed, carried thinking, and answered nothing. This is the
+                    // shape a client sees as "it thought and then just stopped", and
+                    // until now the gateway reported it only downstream, as
+                    // ZERO_CONTENT — with no stop reason, no output budget and no
+                    // request shape, so the cause (the model ending the turn, the
+                    // budget running out inside the thinking block, a history that
+                    // reads as already-answered) could not be told apart after the
+                    // fact. One line per occurrence, because each one costs a turn.
+                    logger.warn('Anthropic stream completed with thinking but no answer', {
+                        model,
+                        stopReason: inv.stopReason,
                         inputTokens,
                         outputTokens,
                         ...inv,
