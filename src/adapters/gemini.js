@@ -705,11 +705,13 @@ async function buildInteractionPayload(request, capabilities) {
     if (request.reasoning_effort != null) {
         // Effort → thinking_level. Model-specific clamping is handled by the
         // declared thinkingLevels in config — the value arriving here is already
-        // valid for this model. xhigh/max have no Gemini equivalent → high.
-        const levelMap = { none: 'low', minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high', max: 'high' };
+        // valid for this model, so a level the upstream lacks cannot reach this
+        // map. xhigh is a real Gemini level on 4 Hydrogen (verified live
+        // 2026-11-12); 'max' has no Gemini equivalent, its ceiling is xhigh.
+        const levelMap = { none: 'low', minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh' };
         generationConfig.thinking_level = levelMap[request.reasoning_effort] || 'high';
     } else if (request.enable_thinking != null) {
-        // thinking_level enum: low | medium | high (gemini 3.x dropped 'minimal').
+        // thinking_level enum: low | medium | high | xhigh (Gemini 4 Hydrogen).
         // 'low' is the floor — thinking cannot be fully disabled on this model.
         generationConfig.thinking_level = request.enable_thinking ? 'high' : 'low';
     }

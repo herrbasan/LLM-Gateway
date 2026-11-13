@@ -353,8 +353,8 @@ Generate an image. Synchronous — no ticket machinery. Requires a model of `typ
 |-------|-------|
 | `prompt` | Required. 400 if missing/empty. |
 | `model` / `task` | Same resolution rules as chat. |
-| `size` | OpenAI-style `"WxH"`. Never discarded — forwarded upstream verbatim as `width`/`height` + `size`; the ratio derived from it rides along as `aspect_ratio`. Invalid strings are rejected with 400. |
-| `aspect_ratio` | Direct `"W:H"` composition preset. Wins as the ratio when given alongside `size`/`width`/`height` — the explicit pixels are still forwarded. 422 if not in the model's declared `aspectRatios`. |
+| `size` | OpenAI-style `"WxH"`. Never discarded — forwarded upstream verbatim as `width`/`height` + `size`; the ratio derived from it rides along as `aspect_ratio`, unless the model declares `rejectsAspectRatioWithSize` (MiniMax 400s on the pair, so only `size` is sent). Invalid strings are rejected with 400. |
+| `aspect_ratio` | Direct `"W:H"` composition preset. Wins as the ratio when given alongside `size`/`width`/`height` — the explicit pixels are still forwarded. 422 if not in the model's declared `aspectRatios`. On a model declaring `rejectsAspectRatioWithSize`, the explicit pixels win and the ratio is dropped with a WARN — the upstream accepts one sizing mechanism per request. |
 | `width`, `height` | Explicit pixel dimensions, forwarded verbatim (override `size`). Both required, positive integers — 400 otherwise. |
 | `n` | Number of images. 422 above `capabilities.maxN` when declared. |
 | `seed`, `user` | Passed through. |
@@ -910,7 +910,7 @@ POST /v1/chat/completions
 | Adapter | `enable_thinking` becomes |
 |---------|--------------------------|
 | `openai` | `chat_template_kwargs.enable_thinking` (only if `capabilities.thinking === "chat_template_kwargs"`) |
-| `gemini` | `generation_config.thinking_level` (`high`/`low`) |
+| `gemini` | `generation_config.thinking_level` (`low`/`medium`/`high`/`xhigh`) |
 | `anthropic` | `thinking` block |
 | `responses` | `reasoning.effort` |
 
@@ -999,7 +999,7 @@ POST /v1/chat/completions
 
 ### Media Generation
 
-**Image generation** is supported via `POST /v1/images/generations` (see Endpoints Reference) — synchronous, OpenAI-shaped, currently backed by OpenRouter image models (Krea 2). Text-to-speech and video remain outside the gateway: speech is handled by the dedicated nVoice/nSpeech services.
+**Image generation** is supported via `POST /v1/images/generations` (see Endpoints Reference) — synchronous, OpenAI-shaped, currently backed by OpenRouter image models (Krea 2) and MiniMax's `MiniMax-H3-Image` (mounted at `/v1/images/generations` via `capabilities.imagePath`). Text-to-speech and video remain outside the gateway: speech is handled by the dedicated nVoice/nSpeech services.
 
 ### Tool Use / Function Calling
 
@@ -1635,6 +1635,8 @@ for await (const event of ticket.stream()) {
 **Image Models:**
 - `aspectRatios` (array of `"W:H"` strings) - Capability gate for caller-chosen `aspect_ratio` presets (422 outside the set). Explicit pixel dimensions (`size` / `width`+`height`) are never snapped — they pass through verbatim and upstreams prioritize them; the ratio derived from explicit pixels is informational and ungated.
 - `maxN` (number) - Maximum images per request (`n` above it is rejected with 422)
+- `imagePath` (string) - The upstream's generation path when its OpenAI-shaped API is not mounted at `/images` (default). MiniMax: `/images/generations`.
+- `rejectsAspectRatioWithSize` (boolean) - The upstream answers 400 when a ratio accompanies a `WxH` size (MiniMax). Explicit dimensions win; a caller-supplied ratio is dropped with a WARN instead of being sent.
 - `editing` (boolean) - Accepts `input_references` for image-to-image (verified on OpenRouter `qwen/qwen-image-3` 2026-09-25; Krea 2's i2i is broken upstream — data-URI references return 502 RuntimeError)
 - `imageInputLimit` (object, model-level not capability) - `{ maxDimension, maxFileSize, supportedFormats }`. Reference images are resized to `maxDimension` by the media processor before upload; without a media processor they pass through unconformed (logged as warn).
 - Provider extras (seed, creativity, Krea's `intensity`/`complexity`/`movement` sliders) are not capability-gated — they ride `extraBody` / `extra_body`.

@@ -123,7 +123,7 @@ Disabled models:
 
 | Adapter | Description | Supported Types | Notes |
 |---------|-------------|-----------------|-------|
-| `openai` | Standard OpenAI Chat Completions API | chat, embedding, image | Omits `max_tokens` when client omits it; upstream decides default. `generateImage` targets the upstream's OpenAI-native `/images` endpoint (OpenRouter pattern, verified with krea-2-medium-turbo 2026-09-24) |
+| `openai` | Standard OpenAI Chat Completions API | chat, embedding, image | Omits `max_tokens` when client omits it; upstream decides default. `generateImage` targets the upstream's OpenAI-native `/images` path (OpenRouter pattern, verified with krea-2-medium-turbo 2026-09-24) unless the model declares `capabilities.imagePath` (MiniMax: `/images/generations`, verified live 2026-11-12); `capabilities.rejectsAspectRatioWithSize` drops a ratio that would collide with an explicit `WxH` size |
 | `responses` | OpenAI Responses API (newer format) | chat | — |
 | `anthropic` | Anthropic Claude API | chat | Sends no output budget unless the client sent one or the model declares `defaultMaxTokens`. Repairs malformed tool history (never refuses a history it can repair, reorder or drop — a result one message late is hoisted back under its call, reported as `hoistedResults`) and supplies the prior thinking the thinking mode requires — client echo → id-keyed cache → empty block, the last one only for models declaring `capabilities.thinkingBlockRequired` (measured per provider) and logged at `debug`. A tool the provider refuses by name is dropped so the turn completes (see `src/utils/tool-containment.js`). See `documentation/api_rest.md` > Prior Thinking |
 | `gemini` | Google Gemini API | chat, embedding | Chat uses the Interactions API (stateless); embeddings stay on generateContent/batchEmbedContents |
@@ -233,7 +233,7 @@ The Gemini chat paths (`chatComplete`, `streamComplete`) were migrated from the 
 - **Input step mapping** (OpenAI messages → `input` steps): user → `user_input`, assistant text → `model_output`, assistant `tool_calls` → `thought` + `function_call`, tool → `function_result`.
 - **Function calls carry a native `id`**, and Gemini rejects an echoed `function_call` without its preceding `thought` step. The thought `signature` is cached to disk keyed by the call id (`logs/gemini-signatures/`) and replayed on the next turn — the same cache as the old `thought_signature` solution, now keyed by the native id instead of a synthesized one.
 - **No `tool_choice`/`tool_config`** in the Interactions API. `tool_choice: "none"` is honoured by omitting tools; other choices are unsupported (model decides).
-- **`enable_thinking`** maps to `generation_config.thinking_level` — `true` → `high`, `false` → `low`. The upstream enum is `low|medium|high`: `minimal` was dropped in Gemini 3.x and there is no off switch (`none` is not a level).
+- **`enable_thinking`** maps to `generation_config.thinking_level` — `true` → `high`, `false` → `low`. `reasoning_effort` maps `none|minimal|low` → `low`, `medium` → `medium`, `high` → `high`, `xhigh|max` → `xhigh`. The upstream enum is `low|medium|high|xhigh` (`xhigh` arrived with Gemini 4 Hydrogen, verified live 2026-11-12: identical prompt, thought tokens 0 → 25 → 32 → 81 across the four levels); `minimal` was dropped in Gemini 3.x and there is no off switch (`none` is not a level). Which levels a model actually accepts is declared in `capabilities.thinkingLevels` and clamped by the router, so the adapter only ever forwards a level the model claims.
 - Embeddings and `listModels` are **unchanged** (still `generateContent`/`batchEmbedContents` — the Interactions API does not cover them).
 
 ### Gemini Terminal Statuses and Long Decode (2026-10-13)
@@ -250,7 +250,15 @@ Unlocking it is code, not policy: send `store: true` and drive background execut
 
 > Google's background-execution guide claims `store=false` is accepted with background (24h TTL). The API disagrees; the probe above is authoritative.
 
-Gemini 4 Argon (`gemini-4-argon`, config `gemini-argon-chat`) is the flagship reasoning model: one 1,048,576-token window shared by input, thinking and output; thinking levels `low|medium|high` with `medium` the default and no way to switch thinking off; `temperature`/`top_p`/`top_k` ignored, hence `excludeParams`.
+The Gemini 4 family (`gemini-4-argon` / `-carbon` / `-hydrogen`) shares one 1,048,576-token window across input, thinking and output; thinking cannot be switched off on any of them; `temperature`/`top_p`/`top_k` are ignored, hence `excludeParams`; explicit caching (`cachedContents`) is unsupported — implicit only.
+
+| Config id | Model | Thinking levels (default) | Role |
+|---|---|---|---|
+| `gemini-carbon-chat` | `gemini-4-carbon` | `low\|medium\|high` (`medium`) | Strongest reasoner — more thinking tokens per turn than Argon (GA 2026-11-10, verified live 2026-11-12) |
+| `gemini-argon-chat` | `gemini-4-argon` | `low\|medium\|high` (`medium`) | Frontier efficiency; the everyday advanced-coder default |
+| `gemini-hydrogen-chat` | `gemini-4-hydrogen` | `low\|medium\|high\|xhigh` (`high`) | Fast agentic work, Google's recommended replacement for 3.8 Flash (GA 2026-11-12, verified live: all four levels answer 200) |
+
+Per-hop output ceilings differ inside the family: Hydrogen 65,536 on both streaming and non-streaming, Carbon/Argon 32,768 non-streaming REST (65,536 streaming). `capabilities.maxOutputTokens` is metadata and never becomes a request, so these ceilings are the upstream's to enforce.
 
 **Implicit caching is the cost lever, and it is best-effort.** On by default for Gemini 2.5+ (minimum 4,096 input tokens on Argon), it works with `store: false` — retention is not the enabler — and discounts cached input by 95%. It is not dependable: verified live 2026-10-13, three identical requests sent back-to-back all reported 0 cached tokens, while the same prefix ten seconds apart hit for 2,193 of 4,242 input tokens, and hits and misses alternated with no change in the request. The adapter reports hits as `usage.prompt_tokens_details.cached_tokens` (the gateway's convention, see `src/utils/response-format.js`) so the discount is observable instead of assumed.
 
@@ -340,7 +348,7 @@ The gateway supports disabling/enabling model reasoning per-request over REST. A
 | Adapter | `enable_thinking` becomes | Gate |
 |---------|--------------------------|------|
 | `openai` | `chat_template_kwargs.enable_thinking` | Only if `capabilities.thinking === "chat_template_kwargs"` |
-| `gemini` | `generation_config.thinking_level` (`high`\|`low`) | Always |
+| `gemini` | `generation_config.thinking_level` (`low`\|`medium`\|`high`\|`xhigh`) | Always |
 | `anthropic` | `thinking` block | Always |
 | `responses` | `reasoning.effort` | Always |
 

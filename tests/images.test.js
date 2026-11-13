@@ -59,6 +59,14 @@ describe('Image Generation', () => {
             expect(() => validateConfig(config)).to.throw(/aspectRatios/);
         });
 
+        it('accepts imagePath and rejects one that is not a rooted path', () => {
+            const config = baseConfig();
+            config.models['krea-2-image'].capabilities.imagePath = '/images/generations';
+            expect(() => validateConfig(config)).to.not.throw();
+            config.models['krea-2-image'].capabilities.imagePath = 'images/generations';
+            expect(() => validateConfig(config)).to.throw(/imagePath/);
+        });
+
         it('rejects invalid maxN', () => {
             const config = baseConfig();
             config.models['krea-2-image'].capabilities.maxN = 0;
@@ -276,6 +284,48 @@ describe('Image Generation', () => {
                 expect(err.message).to.match(/no images/);
             } finally {
                 restore();
+            }
+        });
+
+        it('posts to capabilities.imagePath when the upstream is not mounted at /images', async () => {
+            const minimaxConfig = {
+                ...modelConfig,
+                endpoint: 'https://api.minimax.io/v1',
+                adapterModel: 'MiniMax-H3-Image',
+                capabilities: { imagePath: '/images/generations', maxN: 10 }
+            };
+            const adapter = createOpenAIAdapter();
+            const { calls, restore } = stubFetch(imageApiResponse());
+            try {
+                await adapter.generateImage(minimaxConfig, { prompt: 'a cat', size: '1024x1024' });
+                expect(calls[0].url).to.equal('https://api.minimax.io/v1/images/generations');
+                expect(calls[0].body.size).to.equal('1024x1024');
+            } finally {
+                restore();
+            }
+        });
+
+        it('drops the ratio alongside an explicit size when the model rejects the pair', async () => {
+            const minimaxConfig = {
+                ...modelConfig,
+                capabilities: { imagePath: '/images/generations', rejectsAspectRatioWithSize: true }
+            };
+            const adapter = createOpenAIAdapter();
+            const bySize = stubFetch(imageApiResponse());
+            try {
+                await adapter.generateImage(minimaxConfig, { prompt: 'a cat', size: '1024x1024', aspect_ratio: '1:1' });
+                const sent = bySize.calls[0].body;
+                expect(sent.size).to.equal('1024x1024');
+                expect(sent).to.not.have.property('aspect_ratio');
+            } finally {
+                bySize.restore();
+            }
+            const byRatio = stubFetch(imageApiResponse());
+            try {
+                await adapter.generateImage(minimaxConfig, { prompt: 'a cat', aspect_ratio: '1:1' });
+                expect(byRatio.calls[0].body.aspect_ratio).to.equal('1:1');
+            } finally {
+                byRatio.restore();
             }
         });
 

@@ -83,12 +83,15 @@
       "adapter": "gemini",
       "endpoint": "https://generativelanguage.googleapis.com/v1beta",
       "apiKey": "your-gemini-api-key",
-      "adapterModel": "gemini-2.0-flash",
+      "adapterModel": "gemini-4-hydrogen",
       "capabilities": {
-        "contextWindow": 1000000,
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536,
         "vision": true,
         "structuredOutput": "json_schema",
-        "streaming": true
+        "streaming": true,
+        "thinkingLevels": ["low", "medium", "high", "xhigh"],
+        "excludeParams": ["temperature", "top_p", "top_k"]
       }
     },
     "gemini-embedding": {
@@ -96,9 +99,9 @@
       "adapter": "gemini",
       "endpoint": "https://generativelanguage.googleapis.com/v1beta",
       "apiKey": "your-gemini-api-key",
-      "adapterModel": "embedding-001",
+      "adapterModel": "gemini-embedding-2",
       "capabilities": {
-        "contextWindow": 2048,
+        "contextWindow": 8192,
         "dimensions": 768
       }
     },

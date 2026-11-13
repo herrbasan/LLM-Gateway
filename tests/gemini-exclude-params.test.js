@@ -27,7 +27,10 @@ afterEach(() => {
 
 function captureUpstream() {
     const sent = [];
-    realFetch = globalThis.fetch;
+    // `??` not `=`: a test that dispatches more than once must not capture its
+    // own stub as the thing to restore, or the stub outlives the file and every
+    // later suite talks to a 400.
+    realFetch = realFetch ?? globalThis.fetch;
     globalThis.fetch = async (_url, init) => {
         sent.push(JSON.parse(init.body));
         return new Response(JSON.stringify({ error: { message: 'captured' } }), {
@@ -91,6 +94,16 @@ describe('Gemini adapter — excludeParams', () => {
     it('never strips thinking_level — the supported control, not a sampling override', async () => {
         const body = await dispatch(EXCLUDING, { reasoning_effort: 'medium' });
         expect(body.generation_config.thinking_level).to.equal('medium');
+    });
+
+    // Gemini 4 Hydrogen introduced 'xhigh' as a fourth level (verified live
+    // 2026-11-12); the adapter used to fold it down to 'high', which silently
+    // skipped the deepest reasoning the model offers.
+    it('forwards xhigh on the model that declares it', async () => {
+        const hydrogen = { ...BASE, adapterModel: 'gemini-4-hydrogen' };
+        expect((await dispatch(hydrogen, { reasoning_effort: 'xhigh' })).generation_config.thinking_level).to.equal('xhigh');
+        expect((await dispatch(hydrogen, { reasoning_effort: 'max' })).generation_config.thinking_level).to.equal('xhigh');
+        expect((await dispatch(hydrogen, { reasoning_effort: 'minimal' })).generation_config.thinking_level).to.equal('low');
     });
 
     it('keeps non-sampling generation config intact', async () => {

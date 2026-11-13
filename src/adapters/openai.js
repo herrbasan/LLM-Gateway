@@ -5,6 +5,9 @@
 
 import { request as httpRequest, readWithDeadline } from '../utils/http.js';
 import { sendWithToolContainment } from '../utils/tool-containment.js';
+import { getLogger } from '../utils/logger.js';
+
+const logger = getLogger();
 
 export function createOpenAIAdapter() {
     return {
@@ -293,6 +296,11 @@ export function createOpenAIAdapter() {
             // dimensions is informational only — the upstream ignores it in
             // favor of width/height, so an undeclared derived ratio (e.g. 2:1
             // from 1920x960) must not 422 the request.
+            // aspect_ratio is a composition preset. A caller-chosen preset is
+            // gated against the model's declared set; one derived from explicit
+            // dimensions is informational only — the upstream ignores it in
+            // favor of width/height, so an undeclared derived ratio (e.g. 2:1
+            // from 1920x960) must not 422 the request.
             const aspectRatio = request.aspect_ratio ?? (width != null ? sizeToAspectRatio(`${width}x${height}`) : null);
             if (aspectRatio != null) {
                 if (request.aspect_ratio != null && Array.isArray(capabilities?.aspectRatios) && !capabilities.aspectRatios.includes(aspectRatio)) {
@@ -300,7 +308,17 @@ export function createOpenAIAdapter() {
                     err.status = 422;
                     throw err;
                 }
-                payload.aspect_ratio = aspectRatio;
+                // MiniMax answers 400 when aspect_ratio or area accompanies a
+                // WxH size, so an upstream declaring this keeps size exclusive.
+                // Explicit dimensions carry the resolution tier; the ratio is
+                // only its shadow.
+                if (capabilities?.rejectsAspectRatioWithSize === true && width != null) {
+                    if (request.aspect_ratio != null) {
+                        logger.warn(`[OpenAIAdapter] aspect_ratio "${request.aspect_ratio}" dropped: this upstream rejects it alongside size ${payload.size}`, {}, 'OpenAIAdapter');
+                    }
+                } else {
+                    payload.aspect_ratio = aspectRatio;
+                }
             }
 
             if (request.n != null) {
@@ -340,7 +358,8 @@ export function createOpenAIAdapter() {
             }
 
             const headers = buildHeaders(apiKey, {}, customHeaders);
-            const res = await httpRequest(`${endpoint}/images`, {
+            const imagePath = capabilities?.imagePath ?? '/images';
+            const res = await httpRequest(`${endpoint}${imagePath}`, {
                 method: 'POST',
                 headers,
                 signal: request.signal,

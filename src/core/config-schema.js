@@ -190,7 +190,13 @@ function validateImageCapabilities(modelId, caps) {
     if ('maxN' in caps && (typeof caps.maxN !== 'number' || caps.maxN < 1)) {
         throw new Error(`[Config] Model "${modelId}": capabilities.maxN must be a positive number`);
     }
-    const boolCaps = ['editing', 'streaming'];
+    // imagePath: the upstream's generation path, for APIs that are OpenAI-shaped
+    // but not mounted at /images (MiniMax: /images/generations). Undeclared means
+    // the OpenRouter/local default.
+    if ('imagePath' in caps && (typeof caps.imagePath !== 'string' || !caps.imagePath.startsWith('/'))) {
+        throw new Error(`[Config] Model "${modelId}": capabilities.imagePath must be a path string starting with "/" (e.g. "/images/generations")`);
+    }
+    const boolCaps = ['editing', 'streaming', 'rejectsAspectRatioWithSize'];
     for (const cap of boolCaps) {
         if (cap in caps && typeof caps[cap] !== 'boolean') {
             throw new Error(`[Config] Model "${modelId}": capabilities.${cap} must be boolean`);
