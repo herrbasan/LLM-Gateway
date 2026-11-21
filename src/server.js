@@ -8,6 +8,7 @@ import { createResponsesHandler } from './routes/responses.js';
 import { createModelsHandler } from './routes/models.js';
 import { createTaskListHandler, createTasksHandler, createTasksStreamHandler } from './routes/tasks.js';
 import { createEmbeddingsHandler } from './routes/embeddings.js';
+import { createWizkidEmbeddingsHandler } from './routes/embeddings-wizkid.js';
 import { createImagesHandler } from './routes/images.js';
 import { createSystemEventsHandler } from './routes/events.js';
 import { createConfigGetHandler, createConfigStoreHandler } from './routes/config.js';
@@ -195,6 +196,7 @@ export function createServer(config) {
 
   // Embeddings — thin proxy, gateway owns the model
   app.post('/v1/embeddings', createEmbeddingsHandler());
+  app.post('/v1/embeddings/wizkid', createWizkidEmbeddingsHandler(router));
 
   app.post('/v1/images/generations', createImagesHandler(router));
 

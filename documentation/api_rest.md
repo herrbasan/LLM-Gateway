@@ -330,6 +330,18 @@ Generate embeddings for text input.
 }
 ```
 
+### POST /v1/embeddings/wizkid
+
+Generate embeddings on Wizkid without changing the existing `/v1/embeddings` backend. This endpoint is for re-embedding workloads; migration of existing callers is separate.
+
+```json
+{
+  "input": ["text to embed", "second text"]
+}
+```
+
+The upstream model is fixed to `qwen3-embedding-4b`. Optional `dimensions` and `encoding_format` fields are forwarded. Wizkid accepts at most 4 inputs per request, 8192 tokens per input, and 4096 combined tokens for a multi-input request. Errors pass through unchanged, including `429 queue_full` and `503 not_ready` with `Retry-After`.
+
 ---
 
 ### POST /v1/images/generations
@@ -392,7 +404,9 @@ GET /v1/models?type=image
   "object": "list",
   "data": [
     {
-      "id": "gemini-flash",
+      "id": "gemini-flash-chat",
+      "prettyName": "Gemini 3.8 Flash",
+      "provider": "Google",
       "object": "model",
       "owned_by": "gemini",
       "type": "chat",
@@ -405,6 +419,8 @@ GET /v1/models?type=image
   ]
 }
 ```
+
+`owned_by` is the **adapter** — the wire protocol that reaches the model (`openai`, `gemini`, `anthropic`, `responses`), not the vendor. `provider` is the model's vendor as declared by the config's top-level `provider` field (`Google`, `Moonshot`, `OpenAI`, `Anthropic`, `xAI`, `Z.ai`, `DeepSeek`, `MiniMax`, `Mistral`, `Alibaba`, ...), display-ready, and is the field to group by. It names the model family, not the machine serving it — a locally hosted Gemma answers `Google` while `tier: "local"` carries the hosting. The field is optional: when a model declares none it is omitted from the response, so a client renders that model ungrouped rather than guessing.
 
 ---
 

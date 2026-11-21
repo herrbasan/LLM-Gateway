@@ -579,6 +579,7 @@ function applyThinkingControl(payload, request, capabilities) {
     }
 
     applyReasoningHistoryPolicy(payload, capabilities);
+    applyMistralThinkingHistory(payload, capabilities);
 }
 
 // Per-provider prior-reasoning policy (2026-08-29, provider docs verified — see
@@ -633,6 +634,48 @@ function applyReasoningHistoryPolicy(payload, capabilities) {
         });
     }
 }
+
+// Mistral rejects reasoning_content as an unknown field (422). Rebuild the
+// documented ThinkChunk history from the OpenAI-normalized client shape.
+function applyMistralThinkingHistory(payload, capabilities) {
+    if (capabilities?.thinkingChunks !== 'mistral' || !Array.isArray(payload.messages)) return;
+
+    payload.messages = payload.messages.map(message => {
+        if (message.role !== 'assistant') return message;
+
+        const cleaned = { ...message };
+        if (cleaned.refusal == null) delete cleaned.refusal;
+        if (Array.isArray(cleaned.annotations) && cleaned.annotations.length === 0) delete cleaned.annotations;
+        if (cleaned.function_call == null) delete cleaned.function_call;
+        delete cleaned.thinking_signature;
+
+        const { reasoning_content, ...rest } = cleaned;
+        if (typeof reasoning_content !== 'string' || reasoning_content.length === 0) return rest;
+
+        const thinking = {
+            type: 'thinking',
+            thinking: [{ type: 'text', text: reasoning_content }]
+        };
+        if (Array.isArray(message.content)) {
+            return {
+                ...rest,
+                content: message.content.some(part => part?.type === 'thinking')
+                    ? message.content
+                    : [thinking, ...message.content]
+            };
+        }
+
+        const content = [thinking];
+        if (typeof message.content === 'string' && message.content.length > 0) {
+            content.push({ type: 'text', text: message.content });
+        }
+        return { ...rest, content };
+    });
+}
+
+// Exported for unit tests (tests/mistral.test.js). Not part of the adapter
+// interface — pure payload-shaping helper.
+export { applyMistralThinkingHistory };
 
 // Exported for unit tests (tests/reasoning-policy.test.js). Not part of the
 // adapter interface — pure payload-shaping helper.

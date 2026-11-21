@@ -37,6 +37,7 @@ const VALID_CONFIG = {
         'local-llama': {
             type: 'chat',
             adapter: 'openai',
+            provider: 'Meta',
             endpoint: 'http://localhost:11434',
             adapterModel: 'llama-local',
             capabilities: {
@@ -127,6 +128,25 @@ describe('Config Schema', () => {
             };
             expect(() => validateModelConfig('test-model', config))
                 .to.throw('contextWindow must be a positive number');
+        });
+
+        it('should accept a declared provider and reject an unusable one', () => {
+            const base = {
+                type: 'chat',
+                adapter: 'openai',
+                endpoint: 'https://api.example.com',
+                adapterModel: 'some-model',
+                capabilities: { contextWindow: 1000 }
+            };
+
+            expect(() => validateModelConfig('m', { ...base, provider: 'Moonshot' })).to.not.throw();
+            expect(() => validateModelConfig('m', base)).to.not.throw();
+            expect(() => validateModelConfig('m', { ...base, provider: '' }))
+                .to.throw('provider must be a non-empty string');
+            expect(() => validateModelConfig('m', { ...base, provider: '   ' }))
+                .to.throw('provider must be a non-empty string');
+            expect(() => validateModelConfig('m', { ...base, provider: 42 }))
+                .to.throw('provider must be a non-empty string');
         });
     });
 
@@ -240,6 +260,20 @@ describe('ModelRegistry', () => {
         expect(model).to.have.property('maxOutputTokens');
         expect(model).to.have.property('limit');
         expect(model.limit).to.have.property('context');
+    });
+
+    it('should publish provider for models that declare one and omit it otherwise', () => {
+        const list = registry.listModels();
+        const declared = list.data.find(m => m.id === 'local-llama');
+        const undeclared = list.data.find(m => m.id === 'gemini-flash');
+
+        expect(declared.provider).to.equal('Meta');
+        // Absent, not undefined-valued: clients check the key, not falsiness
+        expect(undeclared).to.not.have.property('provider');
+
+        const byType = registry.listModelsByType();
+        expect(byType.chat.find(m => m.id === 'local-llama').provider).to.equal('Meta');
+        expect(byType.chat.find(m => m.id === 'gemini-flash')).to.not.have.property('provider');
     });
 
     it('should return global config', () => {

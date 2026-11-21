@@ -146,6 +146,7 @@ export class ModelRegistry {
             data.push({
                 id,
                 prettyName: config.prettyName,
+                ...(config.provider !== undefined && { provider: config.provider }),
                 object: 'model',
                 owned_by: config.adapter,
                 type: config.type,
@@ -194,6 +195,7 @@ export class ModelRegistry {
             const modelInfo = {
                 id,
                 prettyName: config.prettyName,
+                ...(config.provider !== undefined && { provider: config.provider }),
                 object: 'model',
                 owned_by: config.adapter,
                 context_length: contextWindow,

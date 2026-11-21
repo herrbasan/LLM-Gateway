@@ -42,6 +42,13 @@ export function validateModelConfig(modelId, config) {
         throw new Error(`[Config] Model "${modelId}": adapterModel is required and must be a non-empty string (the upstream model id)`);
     }
 
+    // provider is the model's vendor, not its transport. Optional — an absent
+    // provider leaves the model ungrouped in a client's selector — but a declared
+    // one must be a usable display label, because clients render it verbatim.
+    if ('provider' in config && (typeof config.provider !== 'string' || config.provider.trim() === '')) {
+        throw new Error(`[Config] Model "${modelId}": provider must be a non-empty string naming the model's vendor (e.g. "Google", "Moonshot")`);
+    }
+
     // Type validation
     if (!MODEL_TYPES.includes(config.type)) {
         throw new Error(`[Config] Model "${modelId}": invalid type "${config.type}". Must be one of: ${MODEL_TYPES.join(', ')}`);
@@ -135,6 +142,10 @@ function validateChatCapabilities(modelId, caps) {
                 throw new Error(`[Config] Model "${modelId}": capabilities.thinkingLevels contains invalid level "${level}" — valid: ${validLevels.join(', ')}`);
             }
         }
+    }
+
+    if ('thinkingChunks' in caps && caps.thinkingChunks !== 'mistral') {
+        throw new Error(`[Config] Model "${modelId}": capabilities.thinkingChunks must be "mistral"`);
     }
 
     // priorReasoning: the provider's contract for prior reasoning_content in

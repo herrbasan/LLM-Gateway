@@ -21,6 +21,7 @@ describe('Configuration Manager', () => {
     process.env.GLM_API_KEY = 'test-glm-key';
     process.env.QWEN_API_KEY = 'test-qwen-key';
     process.env.MINIMAX_API_KEY = 'test-minimax-key';
+    process.env.MISTRAL_API_KEY = 'test-mistral-key';
   });
 
   afterEach(() => {

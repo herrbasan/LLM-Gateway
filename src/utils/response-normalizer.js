@@ -25,6 +25,36 @@ function adoptReasoningAlias(obj) {
     return { ...obj, reasoning_content: text };
 }
 
+// Mistral reasoning responses carry ThinkChunk/TextChunk arrays instead of an
+// OpenAI string plus reasoning_content. Only convert arrays made entirely of
+// those documented chunks; richer content (citations, for example) passes through.
+function adoptMistralContentChunks(obj) {
+    if (!obj || !Array.isArray(obj.content)) return obj;
+    const chunks = obj.content;
+    if (!chunks.some(part => part?.type === 'thinking')) return obj;
+    const supported = chunks.every(part => {
+        if (part?.type === 'text') return typeof part.text === 'string';
+        if (part?.type !== 'thinking' || !Array.isArray(part.thinking)) return false;
+        return part.thinking.every(inner => inner?.type === 'text' && typeof inner.text === 'string');
+    });
+    if (!supported) return obj;
+
+    const content = chunks
+        .filter(part => part.type === 'text')
+        .map(part => part.text)
+        .join('');
+    const reasoning = chunks
+        .filter(part => part.type === 'thinking')
+        .flatMap(part => part.thinking)
+        .map(part => part.text)
+        .join('');
+    const normalized = { ...obj, content };
+    if (reasoning.length > 0 && obj.reasoning_content === undefined) {
+        normalized.reasoning_content = reasoning;
+    }
+    return normalized;
+}
+
 function reasoningDetailsText(details) {
     if (!Array.isArray(details)) return '';
     return details
@@ -81,11 +111,11 @@ export function normalizeStreamChunk(chunk) {
 function normalizeMessage(message) {
     if (!message) return message;
 
-    const normalized = adoptReasoningAlias({
+    const normalized = adoptReasoningAlias(adoptMistralContentChunks({
         ...message,
         refusal: message.refusal ?? null,
         annotations: message.annotations ?? []
-    });
+    }));
 
     if (normalized.function_call === undefined) {
         normalized.function_call = null;
@@ -112,7 +142,7 @@ function normalizeMessage(message) {
 function normalizeDelta(delta) {
     if (!delta) return delta;
 
-    const normalized = adoptReasoningAlias({ ...delta });
+    const normalized = adoptReasoningAlias(adoptMistralContentChunks({ ...delta }));
 
     if (delta.refusal !== undefined) {
         normalized.refusal = delta.refusal;

@@ -1,14 +1,19 @@
-// Load .env into process.env (native, Node >= 21.7). Mirrors dotenv's
-// behavior of silently skipping a missing file.
-try {
-  process.loadEnvFile();
-} catch {
-  // No .env file — config may rely entirely on process.env already set.
-}
+// Load .env into process.env (native, Node >= 21.7). The path is resolved
+// against this module, not the working directory: loadEnvFile() with no
+// argument reads './.env', so starting the gateway from any other directory
+// lost every key and startup died on the first missing ${VAR} in config.json.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';
 import { createLogger } from './utils/logger.js';
+
+const envPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env');
+if (fs.existsSync(envPath)) {
+    process.loadEnvFile(envPath);
+}
 
 async function main() {
   // Initialize logger first - creates timestamped log file

@@ -8,3 +8,5 @@
 import path from 'node:path';
 
 process.env.LOG_DIR = path.join(process.cwd(), 'tests', '_Test_Assets', 'logs');
+process.env.MISTRAL_API_KEY = 'test-mistral-key';
+process.env.OVEM_API_TOKEN = 'test-ovem-token';
