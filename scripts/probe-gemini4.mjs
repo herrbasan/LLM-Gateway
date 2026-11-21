@@ -15,7 +15,10 @@ const targets = models.length > 0
     ? models
     : ['gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-4-argon'];
 
-const levels = { 'gemini-4-hydrogen': ['low', 'medium', 'high', 'xhigh'] };
+const levels = {
+    'gemini-4-hydrogen': ['low', 'medium', 'high', 'xhigh'],
+    'gemini-4-neon': ['low', 'medium', 'high', 'xhigh']
+};
 
 for (const model of targets) {
     for (const level of levels[model] ?? ['medium']) {

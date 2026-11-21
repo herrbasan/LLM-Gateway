@@ -31,6 +31,7 @@
 - **Kimi K2.5 output budgeting**: The gateway sends both `max_tokens` and `max_completion_tokens` for Kimi chat completions
 - **Kimi K3.1 Pro is thinking-only**: `thinking: { type: "disabled" }` is a 400 upstream, so `kimi-k31-chat` declares `thinkingLevels: [low, high, max]` and no `none`. A model that declares levels without `none` cannot disable thinking at all — `_resolveThinking` turns `enable_thinking: false` into its lowest declared level instead of a rejection (see `documentation/LLM APIs/provider_kimi.md`).
 - **A typo'd Kimi `adapterModel` does not fail**: `/v1/messages` answers 200 for an unknown ID, echoes the bogus ID back, and silently serves K2.8 Preview without thinking. Validate new IDs against `GET /coding/v1/models` — the response `model` field is an echo, not an answer.
+- **Native Mistral Large 4 + Small 4**: `mistral-large-chat` and `mistral-small-chat` use the `openai` adapter with Mistral's strict reasoning-history conversion (`capabilities.thinkingChunks: "mistral"`). Live-verified streaming, multi-turn reasoning and a Small tool round trip on 2026-11-13. These are the only Mistral entries — the OpenRouter `mistral-large4-chat` duplicate was removed.
 - **OpenAI-spec tool use**: Function calling (`tools`, `tool_choice`, `parallel_tool_calls`) works across REST with adapter-specific format conversion (COMPLETE)
 - **OpenAI Responses API**: `POST /v1/responses` proxies to the `responses` adapter with streaming and non-streaming support
 - **Admin endpoints**: `/config` (GET) and `/config/store` (POST) for config management with hot-reload (localhost-only)
@@ -52,7 +53,7 @@ storage/documentation/LLM APIs/provider_<name>.md
 ```
 
 Covers anthropic, gemini, openai, deepseek, kimi, minimax, xai, zai, alibaba,
-openrouter, nvidia_nim, plus the wire-protocol specs (`api_completions.md`,
+openrouter, mistral, nvidia_nim, plus the wire-protocol specs (`api_completions.md`,
 `api_messages.md`, `api_responses_spec_reference.md`) and `README.md` as the domain
 index.
 
@@ -92,12 +93,14 @@ The LLM Gateway is a lightweight, high-performance Node.js API that sits between
 Each model is independently configured with:
 - **Type**: chat, embedding
 - **Adapter**: Protocol handler (gemini, openai, anthropic, responses)
+- **Provider**: The model's vendor (`Google`, `Moonshot`, `OpenAI`, `xAI`, `Z.ai`, ...), published as `provider` in `/v1/models` so clients group by vendor. Optional — an absent value leaves the model ungrouped. Never derive it from the adapter: `owned_by` is the adapter, not the vendor, and locally hosted models carry the real family (Gemma → `Google`, Qwen → `Alibaba`) while `tier: "local"` carries the hosting.
 - **Capabilities**: Explicit declaration (contextWindow, vision, thinking, excludeParams, etc.)
 - **Endpoint/Auth**: Per-model configuration
 - **Disabled**: Set `disabled: true` to temporarily disable a model without removing it from config
 
 **Capability flags:**
 - `thinking: "chat_template_kwargs"` — Model supports `chat_template_kwargs.enable_thinking` (llama.cpp/Qwen). Without this, the thinking param is silently dropped for OpenAI-adapter models.
+- `thinkingChunks: "mistral"` — Rebuilds Mistral's required `ThinkChunk` history from OpenAI-normalized `reasoning_content`; the response normalizer performs the reverse mapping for streaming and non-streaming replies. Native Mistral rejects `reasoning_content` and empty response-only assistant fields with 422.
 - `excludeParams: ["temperature", "top_p", ...]` — Parameters to strip from the upstream payload. Used for reasoning models that reject sampling params.
 - `streamUsage: true` — **planned, not implemented.** The upstream reports usage on a stream only when asked (`stream_options.include_usage`), which would make `cached_tokens` visible to a streaming caller. z.ai's acceptance of that field is unverified and some OpenAI-compatible endpoints reject it, so this stays a probe (`scripts/probe-glm-cache.mjs`) until a live 200 proves it.
 
@@ -233,7 +236,7 @@ The Gemini chat paths (`chatComplete`, `streamComplete`) were migrated from the 
 - **Input step mapping** (OpenAI messages → `input` steps): user → `user_input`, assistant text → `model_output`, assistant `tool_calls` → `thought` + `function_call`, tool → `function_result`.
 - **Function calls carry a native `id`**, and Gemini rejects an echoed `function_call` without its preceding `thought` step. The thought `signature` is cached to disk keyed by the call id (`logs/gemini-signatures/`) and replayed on the next turn — the same cache as the old `thought_signature` solution, now keyed by the native id instead of a synthesized one.
 - **No `tool_choice`/`tool_config`** in the Interactions API. `tool_choice: "none"` is honoured by omitting tools; other choices are unsupported (model decides).
-- **`enable_thinking`** maps to `generation_config.thinking_level` — `true` → `high`, `false` → `low`. `reasoning_effort` maps `none|minimal|low` → `low`, `medium` → `medium`, `high` → `high`, `xhigh|max` → `xhigh`. The upstream enum is `low|medium|high|xhigh` (`xhigh` arrived with Gemini 4 Hydrogen, verified live 2026-11-12: identical prompt, thought tokens 0 → 25 → 32 → 81 across the four levels); `minimal` was dropped in Gemini 3.x and there is no off switch (`none` is not a level). Which levels a model actually accepts is declared in `capabilities.thinkingLevels` and clamped by the router, so the adapter only ever forwards a level the model claims.
+- **`enable_thinking`** maps to `generation_config.thinking_level` — `true` → `high`, `false` → `low`. `reasoning_effort` maps `none|minimal|low` → `low`, `medium` → `medium`, `high` → `high`, `xhigh|max` → `xhigh`. The upstream enum is `low|medium|high|xhigh` (`xhigh` arrived with Gemini 4 Hydrogen and is also Neon's top level, verified live 2026-11-12: identical prompt, thought tokens 0 → 25 → 32 → 81 across the four levels); `minimal` was dropped in Gemini 3.x and there is no off switch (`none` is not a level). Which levels a model actually accepts is declared in `capabilities.thinkingLevels` and clamped by the router, so the adapter only ever forwards a level the model claims.
 - Embeddings and `listModels` are **unchanged** (still `generateContent`/`batchEmbedContents` — the Interactions API does not cover them).
 
 ### Gemini Terminal Statuses and Long Decode (2026-10-13)
@@ -250,15 +253,16 @@ Unlocking it is code, not policy: send `store: true` and drive background execut
 
 > Google's background-execution guide claims `store=false` is accepted with background (24h TTL). The API disagrees; the probe above is authoritative.
 
-The Gemini 4 family (`gemini-4-argon` / `-carbon` / `-hydrogen`) shares one 1,048,576-token window across input, thinking and output; thinking cannot be switched off on any of them; `temperature`/`top_p`/`top_k` are ignored, hence `excludeParams`; explicit caching (`cachedContents`) is unsupported — implicit only.
+The Gemini 4 family (`gemini-4-argon` / `-carbon` / `-hydrogen` / `-neon`) shares one 1,048,576-token window across input, thinking and output; thinking cannot be switched off on any of them; `temperature`/`top_p`/`top_k` are ignored, hence `excludeParams` (Neon's docs add that out-of-range values 400); explicit caching (`cachedContents`) is unsupported — implicit only.
 
 | Config id | Model | Thinking levels (default) | Role |
 |---|---|---|---|
 | `gemini-carbon-chat` | `gemini-4-carbon` | `low\|medium\|high` (`medium`) | Strongest reasoner — more thinking tokens per turn than Argon (GA 2026-11-10, verified live 2026-11-12) |
+| `gemini-neon-chat` | `gemini-4-neon` | `low\|medium\|high\|xhigh` (`high`) | Between Hydrogen and Carbon for high-frequency complex work; paid tier only, $3/$15 per 1M (verified live 2026-11-21: all four levels answer 200) |
 | `gemini-argon-chat` | `gemini-4-argon` | `low\|medium\|high` (`medium`) | Frontier efficiency; the everyday advanced-coder default |
 | `gemini-hydrogen-chat` | `gemini-4-hydrogen` | `low\|medium\|high\|xhigh` (`high`) | Fast agentic work, Google's recommended replacement for 3.8 Flash (GA 2026-11-12, verified live: all four levels answer 200) |
 
-Per-hop output ceilings differ inside the family: Hydrogen 65,536 on both streaming and non-streaming, Carbon/Argon 32,768 non-streaming REST (65,536 streaming). `capabilities.maxOutputTokens` is metadata and never becomes a request, so these ceilings are the upstream's to enforce.
+Per-hop output ceilings differ inside the family: Hydrogen and Neon 65,536 on both streaming and non-streaming, Carbon/Argon 32,768 non-streaming REST (65,536 streaming). `capabilities.maxOutputTokens` is metadata and never becomes a request, so these ceilings are the upstream's to enforce.
 
 **Implicit caching is the cost lever, and it is best-effort.** On by default for Gemini 2.5+ (minimum 4,096 input tokens on Argon), it works with `store: false` — retention is not the enabler — and discounts cached input by 95%. It is not dependable: verified live 2026-10-13, three identical requests sent back-to-back all reported 0 cached tokens, while the same prefix ten seconds apart hit for 2,193 of 4,242 input tokens, and hits and misses alternated with no change in the request. The adapter reports hits as `usage.prompt_tokens_details.cached_tokens` (the gateway's convention, see `src/utils/response-format.js`) so the discount is observable instead of assumed.
 
