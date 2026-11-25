@@ -1,7 +1,8 @@
-import { describe, it, afterEach } from 'mocha';
+import { describe, it, beforeEach, afterEach } from 'mocha';
 import { expect } from 'chai';
 import { loadConfig } from '../src/config.js';
 import { ModelRegistry } from '../src/core/model-registry.js';
+import { createEmbeddingsHandler } from '../src/routes/embeddings.js';
 import { createWizkidEmbeddingsHandler } from '../src/routes/embeddings-wizkid.js';
 
 function response(body, status = 200, headers = {}) {
@@ -31,6 +32,42 @@ function makeRes() {
         send(body) { this.body = body; return this; }
     };
 }
+
+describe('Generic embeddings route', () => {
+    let restoreFetch = null;
+    let previousToken;
+
+    beforeEach(() => {
+        previousToken = process.env.OVEM_API_TOKEN;
+    });
+
+    afterEach(() => {
+        if (restoreFetch) restoreFetch();
+        restoreFetch = null;
+        if (previousToken === undefined) delete process.env.OVEM_API_TOKEN;
+        else process.env.OVEM_API_TOKEN = previousToken;
+    });
+
+    it('forwards the configured provider token as a bearer header without logging it', async () => {
+        const providerToken = 'provider-token-that-must-stay-private';
+        process.env.OVEM_API_TOKEN = providerToken;
+        const stub = stubFetch(response({ object: 'list', data: [] }));
+        restoreFetch = stub.restore;
+        const handler = createEmbeddingsHandler();
+        const res = makeRes();
+        const nextErrors = [];
+
+        await handler({ body: { input: 'hello' } }, res, err => nextErrors.push(err));
+
+        expect(nextErrors).to.be.empty;
+        expect(res.statusCode).to.equal(200);
+        expect(stub.calls[0].options.headers).to.deep.equal({
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${providerToken}`
+        });
+        expect(JSON.stringify(stub.calls[0].body)).to.not.include(providerToken);
+    });
+});
 
 describe('Wizkid embeddings route', () => {
     let restoreFetch = null;
