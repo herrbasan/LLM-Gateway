@@ -21,9 +21,15 @@ const EMBED_TIMEOUT_MS = 360000; // > client 5-min guard (300s) so the client al
 export function createEmbeddingsHandler() {
     return async (req, res, next) => {
         try {
+            const headers = { 'Content-Type': 'application/json' };
+            const providerToken = process.env.OVEM_API_TOKEN;
+            if (providerToken) {
+                headers.Authorization = `Bearer ${providerToken}`;
+            }
+
             const upstream = await fetch(EMBED_WRAPPER_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({
                     input: req.body.input,
                     model: EMBED_MODEL,
